@@ -1,0 +1,357 @@
+**REPLIT AGENT PROMPT --- TFC CRM DEMO (AI-ASSISTED, EXCEL-BACKED)**
+==================================================================
+
+> Paste everything below into the Replit Agent.
+
+> Do **not** shorten it.
+
+* * * * *
+
+**ROLE & GOAL**
+---------------
+
+You are a **Replit Agent** tasked with scaffolding a **lightweight CRM demo** for **The Family Connection (TFC)**.
+
+This is **not a production system yet**.
+
+This is a **working prototype** meant to demonstrate:
+
+-   A faster, clearer admin workflow than a raw spreadsheet
+
+-   How AI can *analyze and advise* without slowing admins down
+
+-   How existing Excel + n8n automations remain the system of record
+
+The goal is to **visually and functionally demonstrate the future state**, not to rebuild the backend.
+
+* * * * *
+
+**CORE CONSTRAINTS (VERY IMPORTANT)**
+-------------------------------------
+
+-   **Excel remains the source of truth**
+
+-   **All data access must go through n8n webhooks**
+
+-   **Do NOT connect directly to Excel APIs**
+
+-   **Do NOT implement auth, RBAC, or multi-tenancy**
+
+-   **Do NOT over-engineer HIPAA** (this is a demo)
+
+-   **Do NOT invent new business rules**
+
+-   **AI is advisory, not the main UI**
+
+* * * * *
+
+**TECH STACK (LOCK THIS IN)**
+-----------------------------
+
+-   **Frontend:** Next.js (App Router) + React
+
+-   **Styling:** Tailwind CSS
+
+-   **State:** Local component state (no Redux)
+
+-   **Backend:** Next.js API routes (proxy only)
+
+-   **Hosting target:** Fly.io (later)
+
+-   **Mode:** Mock data first → live data toggle
+
+* * * * *
+
+**DATA SOURCES (ALREADY EXIST)**
+--------------------------------
+
+### **n8n Webhooks (PRODUCTION)**
+
+1.  **Contact snapshot (read-only)**
+
+```
+POST https://n8n-familyconnection.agentglu.agency/webhook/get-contact-snapshot
+```
+
+1.  Input:
+
+```
+{ "contactName": "Emilio Castro" }
+```
+
+1.
+
+2.  **Waitlist summary (read-only)**
+
+```
+POST https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-summary
+```
+
+These endpoints are **stable and tested**.
+
+* * * * *
+
+**APP STRUCTURE (REQUIRED)**
+----------------------------
+
+### **Pages / Screens**
+
+#### **1️⃣ **
+
+#### **Home / Today View**
+
+#### ** (**
+
+#### **/**
+
+#### **)**
+
+Purpose: "What do I need to do right now?"
+
+-   Priority queues (mocked initially):
+
+    -   Over 60 days waiting
+
+    -   Ready to schedule
+
+    -   Needs follow-up
+
+-   Snapshot metrics:
+
+    -   Active waitlist count
+
+    -   Avg wait time
+
+    -   Longest waiting
+
+-   AI suggestions panel (static text at first)
+
+* * * * *
+
+#### **2️⃣ **
+
+#### **Waitlist / Pipeline View**
+
+#### ** (**
+
+#### **/waitlist**
+
+#### **)**
+
+Purpose: Replace spreadsheet scanning.
+
+-   Kanban-style or column list view
+
+-   Columns based on status buckets
+
+-   Each card shows:
+
+    -   Name
+
+    -   Days on waitlist
+
+    -   Requesting service for
+
+* * * * *
+
+#### **3️⃣ **
+
+#### **Contact Detail Page**
+
+#### ** (**
+
+#### **/contact/[name]**
+
+#### **)**
+
+Purpose: Work on one person fast.
+
+-   Contact info
+
+-   Status dropdown (UI only for now)
+
+-   Notes (append-only UI)
+
+-   AI context panel ("Why is this person still waiting?")
+
+* * * * *
+
+#### **4️⃣ **
+
+#### **Insights / Summary View**
+
+#### ** (**
+
+#### **/insights**
+
+#### **)**
+
+Purpose: Leadership confidence.
+
+-   Uses get-waitlist-summary
+
+-   Shows:
+
+    -   Avg wait
+
+    -   Over 30 / 60 days
+
+    -   Longest waiting
+
+* * * * *
+
+**DATA HANDLING STRATEGY**
+--------------------------
+
+### **Phase A --- Mock Mode (default)**
+
+-   Use local JSON files that match **exactly** the webhook response shapes
+
+-   No live calls
+
+-   Fast iteration
+
+### **Phase B --- Live Mode (toggle)**
+
+-   Add a simple config flag:
+
+```
+const USE_LIVE_DATA = false;
+```
+
+-   When true:
+
+    -   API routes proxy to n8n webhooks
+
+    -   Frontend consumes live data
+
+**Do NOT change UI logic between modes.**
+
+* * * * *
+
+**API ROUTES (PROXY ONLY)**
+---------------------------
+
+Implement:
+
+-   /api/get-contact-snapshot
+
+-   /api/get-waitlist-summary
+
+These routes:
+
+-   Accept frontend requests
+
+-   Forward them to n8n
+
+-   Return JSON
+
+-   Handle loading + error states cleanly
+
+* * * * *
+
+**AI BEHAVIOR (DEMO ONLY)**
+---------------------------
+
+-   AI suggestions are **static placeholders** for now
+
+-   Do NOT call OpenAI yet
+
+-   UI should clearly show:
+
+    -   "AI Insight"
+
+    -   "Suggested Action"
+
+This is to **demonstrate intent**, not intelligence.
+
+* * * * *
+
+**UX PRINCIPLES (DO NOT IGNORE)**
+---------------------------------
+
+-   **Fast first paint**
+
+-   **No blocking spinners for AI**
+
+-   **Admins can click before AI responds**
+
+-   **Spreadsheet should never feel faster than this UI**
+
+* * * * *
+
+**FILE STRUCTURE EXPECTATION**
+------------------------------
+
+```
+/app
+  /page.tsx              (Home)
+  /waitlist/page.tsx
+  /contact/[name]/page.tsx
+  /insights/page.tsx
+
+/app/api
+  /get-contact-snapshot/route.ts
+  /get-waitlist-summary/route.ts
+
+/lib
+  /mock-data.ts
+  /types.ts
+```
+
+* * * * *
+
+**OUTPUT EXPECTATION**
+----------------------
+
+When finished, you should:
+
+1.  Have a runnable app (npm run dev)
+
+2.  All screens render with mock data
+
+3.  Live mode toggle is wired but off
+
+4.  Code is readable and intentionally simple
+
+5.  No unfinished TODO explosions
+
+* * * * *
+
+**IMPORTANT: WHAT NOT TO BUILD**
+--------------------------------
+
+-   ❌ Authentication
+
+-   ❌ Permissions
+
+-   ❌ Provider matching logic
+
+-   ❌ Email sending
+
+-   ❌ Full AI reasoning
+
+-   ❌ Spreadsheet editing
+
+This is a **visual + functional demo**, not a final product.
+
+* * * * *
+
+**FINAL INSTRUCTION**
+---------------------
+
+Scaffold the project cleanly and explain:
+
+-   How to run it
+
+-   How to switch mock → live
+
+-   What is intentionally left out
+
+Do **not** propose extra features unless explicitly asked.
+
+* * * * *
+
+### **END PROMPT**
+
+* * * * *
