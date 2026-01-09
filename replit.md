@@ -66,6 +66,35 @@ When `USE_LIVE_DATA` is `true`, the API routes will forward requests to the n8n 
 - Contact snapshot: `https://n8n-familyconnection.agentglu.agency/webhook/get-contact-snapshot`
 - Waitlist summary: `https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-summary`
 
+## New UX Features
+
+### Drag & Drop Status Updates
+- Cards can be dragged between columns on the Waitlist Pipeline page
+- Status updates immediately (optimistic UI)
+- Toast confirms the change
+- Background API call persists to server
+- Automatic rollback if server write fails
+
+### Quick-Add Note from Card
+- Hover over any card to reveal the + button (top-right)
+- Click to open a lightweight modal
+- Add note without leaving the pipeline view
+- Notes appear in the contact detail timeline
+- Toast confirms success
+
+### Status Mapping
+Status codes are defined in `client/src/lib/status-config.ts`:
+```typescript
+const STATUS_MAP = {
+  intake: 100,
+  waiting: 101,
+  ready_to_schedule: 200,
+  scheduled: 202,
+  on_hold: 300,
+  closed: 400,
+};
+```
+
 ## Intentionally Left Out
 
 - ❌ Authentication / Permissions
