@@ -4,7 +4,7 @@ import { createServer, type Server } from "http";
 // Configuration for mock vs live data mode
 // Change to "live" to use real n8n webhooks instead of mock data
 type DataMode = "mock" | "live";
-const DATA_MODE: DataMode = "mock";
+const DATA_MODE: DataMode = "live";
 
 // n8n webhook URLs from environment variables (server-only, never exposed to frontend)
 const N8N_ENDPOINTS = {
