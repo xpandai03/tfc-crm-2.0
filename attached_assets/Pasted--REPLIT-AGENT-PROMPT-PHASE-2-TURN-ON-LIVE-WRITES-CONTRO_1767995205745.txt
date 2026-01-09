@@ -1,0 +1,286 @@
+**REPLIT AGENT PROMPT --- PHASE 2: TURN ON LIVE WRITES (CONTROLLED)**
+===================================================================
+
+> Paste everything below into the Replit Agent.
+
+> Do **not** shorten it.
+
+* * * * *
+
+**CONTEXT (DO NOT REBUILD)**
+----------------------------
+
+You are working inside an **existing Next.js CRM demo app** for **The Family Connection (TFC)**.
+
+**Phase 1 is already complete**, including:
+
+-   Global DATA_MODE toggle (mock | live)
+
+-   Live read API routes:
+
+    -   /api/get-contact-snapshot
+
+    -   /api/get-waitlist-summary
+
+-   Manual refresh button + "Last synced" indicator
+
+-   Safe fallback to mock data on read failures
+
+Do **not** change Phase 1 behavior.
+
+* * * * *
+
+**PHASE 2 GOAL (VERY IMPORTANT)**
+---------------------------------
+
+Enable **controlled live write operations** so the CRM becomes a **real operational interface**:
+
+-   Dragging a card between columns **updates Excel**
+
+-   Adding a note from the card **appends to Excel**
+
+-   UI remains **fast and optimistic**
+
+-   Excel remains the **source of truth**
+
+-   UI reconciles after writes
+
+* * * * *
+
+**NON-NEGOTIABLE CONSTRAINTS**
+------------------------------
+
+-   ❌ Do NOT write directly to Excel
+
+-   ❌ Do NOT bypass existing API routes
+
+-   ❌ Do NOT block the UI on network calls
+
+-   ❌ Do NOT add polling or real-time sync
+
+-   ❌ Do NOT add authentication or permissions
+
+-   ✅ Optimistic UI
+
+-   ✅ Async background writes
+
+-   ✅ Re-fetch after success
+
+-   ✅ Silent correction if Excel differs
+
+* * * * *
+
+**WRITE ENDPOINTS (ALREADY EXIST)**
+-----------------------------------
+
+Use the existing API routes that proxy to n8n:
+
+-   **Update status**
+
+```
+POST /api/update-status
+```
+
+-   Payload:
+
+```
+{
+  "contactName": "Emilio Castro",
+  "statusCode": 200
+}
+```
+
+-   **Add note**
+
+```
+POST /api/add-note
+```
+
+-   Payload:
+
+```
+{
+  "contactName": "Emilio Castro",
+  "note": "Left voicemail on Jan 9"
+}
+```
+
+Do not modify their backend logic.
+
+* * * * *
+
+**FEATURE A --- DRAG CARD BETWEEN COLUMNS → LIVE STATUS UPDATE**
+--------------------------------------------------------------
+
+### **Required behavior**
+
+1.  **Drag & drop**
+
+    -   Cards can be dragged between pipeline columns on the Waitlist page
+
+2.  **Single status mapping**
+
+    -   Each column maps to exactly one numeric status code
+
+    -   Define this mapping **once** in a frontend config object
+
+    Example:
+
+```
+const STATUS_BY_COLUMN = {
+  intake: 100,
+  waiting: 101,
+  ready: 200,
+  scheduled: 202,
+  inactive: 400,
+};
+```
+
+1.
+
+2.  **Optimistic UI**
+
+    -   On drop:
+
+        -   Move the card immediately
+
+        -   Update column counts
+
+        -   Show toast: "Status updated"
+
+3.  **Background write**
+
+    -   Fire /api/update-status with the mapped status code
+
+    -   Do NOT await before updating UI
+
+4.  **Reconciliation**
+
+    -   After success:
+
+        -   Re-fetch either:
+
+            -   the affected contact snapshot **or**
+
+            -   the waitlist summary
+
+    -   If write fails:
+
+        -   Show non-blocking error
+
+        -   Revert card to original column
+
+* * * * *
+
+**FEATURE B --- QUICK-ADD NOTE (➕ BUTTON) → LIVE NOTE APPEND**
+------------------------------------------------------------
+
+### **Required behavior**
+
+1.  **UI affordance**
+
+    -   Small ➕ icon on each card
+
+    -   Clicking opens a lightweight modal
+
+2.  **Modal contents**
+
+    -   One multiline text input
+
+    -   "Add note" and "Cancel" buttons
+
+3.  **Optimistic UI**
+
+    -   On submit:
+
+        -   Close modal immediately
+
+        -   Show toast: "Note added"
+
+        -   Update card's "Last note" indicator
+
+4.  **Background write**
+
+    -   Fire /api/add-note
+
+    -   n8n appends with:
+
+        -   timestamp
+
+        -   editor
+
+        -   append-only behavior
+
+5.  **Reconciliation**
+
+    -   Re-fetch contact snapshot after success
+
+    -   Ensure full notes timeline matches Excel
+
+6.  **Failure handling**
+
+    -   If write fails:
+
+        -   Show subtle error
+
+        -   Do not silently drop the note
+
+* * * * *
+
+**RECONCILIATION RULES (KEEP SIMPLE)**
+--------------------------------------
+
+Trigger a re-fetch:
+
+-   After any successful write
+
+-   On page navigation
+
+-   On manual refresh
+
+Do **not** add background polling.
+
+* * * * *
+
+**DATA MODE RULE**
+------------------
+
+-   Live writes **only run when** **DATA_MODE === "live"**
+
+-   In mock mode:
+
+    -   Simulate success
+
+    -   Update local state only
+
+* * * * *
+
+**DELIVERABLE CHECKLIST**
+-------------------------
+
+Confirm when done:
+
+1.  Dragging a card updates Excel
+
+2.  Adding a note appends in Excel
+
+3.  UI updates instantly (no waiting)
+
+4.  Refresh shows Excel-correct data
+
+5.  Failures are visible but non-blocking
+
+6.  No writes occur in mock mode
+
+Briefly explain:
+
+-   Where optimistic updates happen
+
+-   How reconciliation is triggered
+
+-   How failures are handled
+
+* * * * *
+
+**FINAL INSTRUCTION**
+---------------------
