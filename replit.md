@@ -71,8 +71,20 @@ The UI automatically displays:
 
 ## n8n Webhook URLs (Production)
 
+Webhook URLs are stored as environment variables (server-only, never exposed to frontend):
+
+```
+N8N_GET_CONTACT_SNAPSHOT_URL    - Read contact details
+N8N_GET_WAITLIST_SUMMARY_URL    - Read waitlist summary
+N8N_UPDATE_CONTACT_STATUS_URL   - Update contact status in Excel
+N8N_UPDATE_AGENT_NOTES_URL      - Add notes to Excel
+```
+
+Default endpoints (if env vars not set):
 - Contact snapshot: `https://n8n-familyconnection.agentglu.agency/webhook/get-contact-snapshot`
 - Waitlist summary: `https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-summary`
+- Update status: `https://n8n-familyconnection.agentglu.agency/webhook/update-contact-status`
+- Add note: `https://n8n-familyconnection.agentglu.agency/webhook/update-agent-notes`
 
 ## New UX Features
 
