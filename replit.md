@@ -163,6 +163,26 @@ Key functions:
 - **Ready to Schedule**: `statusCode === 200`
 - **Average Wait Time**: Average `daysOnWaitlist` across Active Waitlist only
 
+### Honest Data Source Indicators
+The UI tracks data sources per-screen to ensure transparency:
+
+```typescript
+type DataSource = "live" | "fallback" | "mock";
+```
+
+- **summarySource**: Tracks `/api/get-waitlist-summary` response source
+- **contactsSource**: Tracks `/api/waitlist-contacts` response source
+- **isFullyLive**: True only when both summary AND contacts are live
+
+Screen-specific behavior:
+- **Today/Insights**: Show "Aggregate metrics are live — contact data is demo" when summary is live but contacts are fallback
+- **Waitlist Pipeline**: 
+  - Shows "Contact-level live data not enabled — showing demo rows. Aggregate metrics are live." when contacts are demo
+  - Disables drag-to-status and quick-add note in demo mode
+  - Displays toast notifications when attempting disabled actions
+
+This ensures users are never misled about what data is real vs demo.
+
 ## Intentionally Left Out
 
 - ❌ Authentication / Permissions

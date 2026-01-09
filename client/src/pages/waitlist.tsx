@@ -32,13 +32,22 @@ import {
 } from "@/lib/status-config";
 import type { WaitlistContact } from "@shared/schema";
 
+/**
+ * NOTE:
+ * Kanban requires contact-level rows.
+ * Aggregates alone are insufficient.
+ * Do NOT mark Kanban as live unless rows come from Excel-backed source.
+ */
 export default function Waitlist() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { updateSource, updateSyncTime, lastSyncTime, isFallback } = useDataSource();
+  const { updateContactsSource, updateSyncTime, lastSyncTime, isContactsLive, summarySource } = useDataSource();
   const [activeCard, setActiveCard] = useState<WaitlistContact | null>(null);
   const [noteModalContact, setNoteModalContact] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  // Determine if we're in demo mode (contacts not live)
+  const isDemoMode = !isContactsLive;
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -65,10 +74,10 @@ export default function Waitlist() {
 
   useEffect(() => {
     if (contactsData?._source) {
-      updateSource(contactsData._source as "mock" | "live" | "fallback");
+      updateContactsSource(contactsData._source as "mock" | "live" | "fallback");
       updateSyncTime();
     }
-  }, [contactsData, updateSource, updateSyncTime]);
+  }, [contactsData, updateContactsSource, updateSyncTime]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -141,6 +150,16 @@ export default function Waitlist() {
     const { active, over } = event;
     setActiveCard(null);
 
+    // Disable drag in demo mode
+    if (isDemoMode) {
+      toast({
+        title: "Demo Mode",
+        description: "Status updates are disabled when viewing demo data.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (!over || !contacts) return;
 
     const contactName = active.id as string;
@@ -170,6 +189,15 @@ export default function Waitlist() {
   };
 
   const handleAddNote = (contactName: string) => {
+    // Disable notes in demo mode
+    if (isDemoMode) {
+      toast({
+        title: "Demo Mode",
+        description: "Adding notes is disabled when viewing demo data.",
+        variant: "destructive",
+      });
+      return;
+    }
     setNoteModalContact(contactName);
   };
 
@@ -223,15 +251,30 @@ export default function Waitlist() {
 
   const unknownContacts = getUnknownContacts();
 
+  // Generate demo mode banner message
+  const getDemoBannerMessage = () => {
+    if (summarySource === "live") {
+      return "Contact-level live data not enabled — showing demo rows. Aggregate metrics are live.";
+    }
+    return "Showing demo data. Connect to live Excel to enable real-time updates.";
+  };
+
   return (
     <PageLayout>
-      <FallbackBanner show={isFallback} />
+      <FallbackBanner 
+        show={isDemoMode} 
+        message={getDemoBannerMessage()}
+        variant="info"
+      />
       <div className="space-y-6">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-2xl font-semibold text-foreground" data-testid="text-page-title">Waitlist Pipeline</h1>
             <p className="text-sm text-muted-foreground mt-1" data-testid="text-page-subtitle">
-              Drag cards between columns to update status
+              {isDemoMode 
+                ? "Demo rows (drag & drop disabled)" 
+                : "Drag cards between columns to update status"
+              }
             </p>
           </div>
           <SyncStatus 

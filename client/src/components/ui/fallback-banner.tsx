@@ -1,22 +1,43 @@
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle, Info, X } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 
 interface FallbackBannerProps {
   show: boolean;
+  message?: string;
+  variant?: "warning" | "info";
 }
 
-export function FallbackBanner({ show }: FallbackBannerProps) {
+export function FallbackBanner({ 
+  show, 
+  message = "Live data temporarily unavailable - showing demo data",
+  variant = "warning"
+}: FallbackBannerProps) {
   const [dismissed, setDismissed] = useState(false);
 
   if (!show || dismissed) return null;
 
+  const isInfo = variant === "info";
+  const Icon = isInfo ? Info : AlertTriangle;
+
   return (
-    <div className="bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-800 px-4 py-2 flex items-center justify-between gap-4">
+    <div className={`${
+      isInfo 
+        ? "bg-blue-50 dark:bg-blue-950/30 border-b border-blue-200 dark:border-blue-800" 
+        : "bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-800"
+    } px-4 py-2 flex items-center justify-between gap-4`}>
       <div className="flex items-center gap-2">
-        <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
-        <span className="text-sm text-amber-800 dark:text-amber-200" data-testid="text-fallback-warning">
-          Live data temporarily unavailable - showing demo data
+        <Icon className={`h-4 w-4 flex-shrink-0 ${
+          isInfo 
+            ? "text-blue-600 dark:text-blue-400" 
+            : "text-amber-600 dark:text-amber-400"
+        }`} />
+        <span className={`text-sm ${
+          isInfo 
+            ? "text-blue-800 dark:text-blue-200" 
+            : "text-amber-800 dark:text-amber-200"
+        }`} data-testid="text-fallback-warning">
+          {message}
         </span>
       </div>
       <Button 

@@ -30,8 +30,12 @@ import type { WaitlistSummary, WaitlistContact } from "@shared/schema";
  */
 export default function Home() {
   const queryClient = useQueryClient();
-  const { updateSource, updateSyncTime, lastSyncTime, isFallback } = useDataSource();
+  const { updateSummarySource, updateContactsSource, updateSyncTime, lastSyncTime, summarySource, contactsSource, isContactsLive } = useDataSource();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  // Check data sources for honest indicators
+  const isSummaryLive = summarySource === "live";
+  const isFullyLive = isSummaryLive && isContactsLive;
 
   const { 
     data: summaryData, 
@@ -60,10 +64,16 @@ export default function Home() {
 
   useEffect(() => {
     if (summaryData?._source) {
-      updateSource(summaryData._source as "mock" | "live" | "fallback");
+      updateSummarySource(summaryData._source as "mock" | "live" | "fallback");
       updateSyncTime();
     }
-  }, [summaryData, updateSource, updateSyncTime]);
+  }, [summaryData, updateSummarySource, updateSyncTime]);
+
+  useEffect(() => {
+    if (contactsData?._source) {
+      updateContactsSource(contactsData._source as "mock" | "live" | "fallback");
+    }
+  }, [contactsData, updateContactsSource]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -176,7 +186,17 @@ export default function Home() {
 
   return (
     <PageLayout>
-      <FallbackBanner show={isFallback} />
+      <FallbackBanner 
+        show={!isFullyLive} 
+        message={
+          isSummaryLive && !isContactsLive 
+            ? "Aggregate metrics are live — contact data is demo"
+            : summarySource === "fallback" 
+              ? "Live data temporarily unavailable — showing cached data"
+              : "Viewing demo data"
+        }
+        variant="info"
+      />
       <div className="space-y-8">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>

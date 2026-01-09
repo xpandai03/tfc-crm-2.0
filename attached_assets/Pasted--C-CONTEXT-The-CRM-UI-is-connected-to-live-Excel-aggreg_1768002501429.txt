@@ -1,0 +1,163 @@
+
+**C --- CONTEXT**
+---------------
+
+The CRM UI is connected to **live Excel aggregate data** via:
+
+```
+/api/get-waitlist-summary
+```
+
+This endpoint returns **aggregate metrics only** (counts, averages, longest wait).
+
+The Kanban board currently relies on:
+
+```
+/api/waitlist-contacts
+```
+
+which is returning **fallback/mock contact rows**.
+
+This causes the UI to appear live while actually mixing data sources.
+
+* * * * *
+
+**L --- LOGIC ERROR TO FIX**
+--------------------------
+
+The UI currently:
+
+-   Shows "Live Excel data" globally
+
+-   Uses live data for Today/Insights
+
+-   Uses fallback data for Kanban
+
+-   Does NOT communicate this difference clearly
+
+-   Makes it appear as if Kanban is live when it is not
+
+This is misleading and confusing.
+
+* * * * *
+
+**E --- EXPECTED BEHAVIOR**
+-------------------------
+
+After this fix:
+
+-   The UI is **explicit and correct** about data sources
+
+-   Kanban does NOT pretend to be live unless it truly is
+
+-   No mixed live/fallback states are hidden
+
+-   Developers and users understand exactly what is live vs demo
+
+* * * * *
+
+**A --- ACTIONS REQUIRED**
+------------------------
+
+### **STEP 1 --- DATA SOURCE TRUTH FLAG**
+
+Introduce a strict rule in the frontend:
+
+```
+type DataSource = "live" | "fallback";
+```
+
+For each screen, compute:
+
+-   summarySource from /api/get-waitlist-summary._source
+
+-   contactsSource from /api/waitlist-contacts._source
+
+* * * * *
+
+### **STEP 2 --- ENFORCE CONSISTENT MODES**
+
+If:
+
+```
+summarySource === "live" && contactsSource !== "live"
+```
+
+Then:
+
+-   Display a banner on Kanban:
+
+    > "Contact-level live data not enabled --- showing demo rows"
+
+-   Force Kanban into **explicit fallback mode**
+
+-   Disable drag-to-status
+
+-   Disable quick-add note
+
+-   Disable "Live Excel data" indicator for that screen
+
+* * * * *
+
+### **STEP 3 --- REMOVE IMPLICIT LIVE PRETENSE**
+
+Update header indicators so they are **screen-specific**, not global.
+
+Examples:
+
+-   Today: "Live Excel data"
+
+-   Insights: "Live Excel data"
+
+-   Waitlist: "Demo rows (aggregate metrics are live)"
+
+* * * * *
+
+### **STEP 4 --- GUARD AGAINST FUTURE CONFUSION**
+
+Add a developer-facing comment:
+
+```
+// NOTE:
+// Kanban requires contact-level rows.
+// Aggregates alone are insufficient.
+// Do NOT mark Kanban as live unless rows come from Excel-backed source.
+```
+
+* * * * *
+
+**R --- RESULT / ACCEPTANCE CRITERIA**
+------------------------------------
+
+This task is complete when:
+
+-   UI never mixes live + mock silently
+
+-   Kanban clearly indicates fallback mode
+
+-   Today + Insights remain live
+
+-   No user is misled about what data is real
+
+-   No crashes or undefined behavior occur
+
+* * * * *
+
+**CONSTRAINTS**
+---------------
+
+-   ❌ Do NOT add new n8n workflows
+
+-   ❌ Do NOT fetch raw Excel rows
+
+-   ❌ Do NOT fake "live" rows
+
+-   ✅ Be honest
+
+-   ✅ Be explicit
+
+-   ✅ Be safe
+
+* * * * *
+
+### **END PROMPT**
