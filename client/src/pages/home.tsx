@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { PageLayout } from "@/components/layout/page-layout";
 import { MetricCard } from "@/components/ui/metric-card";
 import { PriorityCard } from "@/components/ui/priority-card";
@@ -12,8 +12,22 @@ import { FallbackBanner } from "@/components/ui/fallback-banner";
 import { AlertTriangle, Clock, CalendarCheck, AlertCircle } from "lucide-react";
 import { getWaitlistSummary, getWaitlistContacts, type WithSource } from "@/lib/api";
 import { useDataSource } from "@/lib/data-source-context";
+import { 
+  isActiveStatus, 
+  stringStatusToCode, 
+  safeNumber,
+  STATUS_GROUPS,
+} from "@/lib/status-config";
 import type { WaitlistSummary, WaitlistContact } from "@shared/schema";
 
+/**
+ * Home/Today View
+ * 
+ * Priority queues are computed from contacts:
+ * - Over 60 Days: daysOnWaitlist >= 60 AND active
+ * - Ready to Schedule: statusCode in [200]
+ * - Needs Follow-up: statusCode in waiting group (101, 102) AND 14 < days <= 60
+ */
 export default function Home() {
   const queryClient = useQueryClient();
   const { updateSource, updateSyncTime, lastSyncTime, isFallback } = useDataSource();
@@ -42,8 +56,7 @@ export default function Home() {
   const isLoading = summaryLoading || contactsLoading;
   const error = summaryError || contactsError;
 
-  const summary = summaryData;
-  const contacts = contactsData?.contacts;
+  const contacts = contactsData?.contacts || [];
 
   useEffect(() => {
     if (summaryData?._source) {
@@ -58,6 +71,90 @@ export default function Home() {
     setIsRefreshing(false);
   };
 
+  // Get the effective status code for a contact (handles both live and mock data)
+  const getContactStatusCode = (contact: WaitlistContact): number => {
+    return contact.statusCode ?? stringStatusToCode(contact.status);
+  };
+
+  // Compute metrics from contacts
+  const computedMetrics = useMemo(() => {
+    if (!contacts || contacts.length === 0) {
+      return {
+        totalActive: 0,
+        avgWaitDays: 0,
+        over60Days: 0,
+        readyToSchedule: 0,
+      };
+    }
+
+    const activeContacts = contacts.filter(c => {
+      const statusCode = getContactStatusCode(c);
+      return isActiveStatus(statusCode);
+    });
+
+    const totalActive = activeContacts.length;
+    const avgWaitDays = totalActive > 0
+      ? Math.round(activeContacts.reduce((sum, c) => sum + (c.daysOnWaitlist || 0), 0) / totalActive)
+      : 0;
+    const over60Days = activeContacts.filter(c => (c.daysOnWaitlist || 0) >= 60).length;
+    const readyToSchedule = contacts.filter(c => getContactStatusCode(c) === 200).length;
+
+    return { totalActive, avgWaitDays, over60Days, readyToSchedule };
+  }, [contacts]);
+
+  // Use frontend-computed metrics exclusively when we have contacts
+  // Only fall back to summary for display when contacts are unavailable
+  const metrics = useMemo(() => {
+    // If we have contacts, use frontend-computed metrics (source of truth)
+    if (contacts && contacts.length > 0) {
+      return computedMetrics;
+    }
+    // No contacts loaded yet - use summary if available
+    const summary = summaryData;
+    return {
+      totalActive: summary?.totalActive ?? 0,
+      avgWaitDays: summary?.avgWaitDays ?? 0,
+      over60Days: summary?.over60Days ?? 0,
+      readyToSchedule: summary?.readyToSchedule ?? 0,
+    };
+  }, [computedMetrics, summaryData, contacts]);
+
+  // Priority queues based on status codes
+  const priorityQueues = useMemo(() => {
+    if (!contacts || contacts.length === 0) {
+      return { over60Days: [], readyToSchedule: [], needsFollowUp: [] };
+    }
+
+    const over60Days = contacts.filter(c => {
+      const statusCode = getContactStatusCode(c);
+      return (c.daysOnWaitlist || 0) >= 60 && isActiveStatus(statusCode);
+    });
+
+    const readyToSchedule = contacts.filter(c => {
+      const statusCode = getContactStatusCode(c);
+      return STATUS_GROUPS.ready_to_schedule.includes(statusCode as 200);
+    });
+
+    const needsFollowUp = contacts.filter(c => {
+      const statusCode = getContactStatusCode(c);
+      const days = c.daysOnWaitlist || 0;
+      const isWaiting = (STATUS_GROUPS.waiting as readonly number[]).includes(statusCode);
+      return isWaiting && days > 14 && days <= 60;
+    });
+
+    return { over60Days, readyToSchedule, needsFollowUp };
+  }, [contacts]);
+
+  // Find longest waiting for AI insight
+  const longestWaiting = useMemo(() => {
+    if (!contacts || contacts.length === 0) return null;
+    const activeContacts = contacts.filter(c => isActiveStatus(getContactStatusCode(c)));
+    if (activeContacts.length === 0) return null;
+    return activeContacts.reduce((longest, current) => 
+      (current.daysOnWaitlist || 0) > (longest?.daysOnWaitlist || 0) ? current : longest
+    , activeContacts[0]);
+  }, [contacts]);
+
   if (isLoading) {
     return (
       <PageLayout>
@@ -66,7 +163,7 @@ export default function Home() {
     );
   }
 
-  if (error || !summary || !contacts) {
+  if (error || (!summaryData && contacts.length === 0)) {
     return (
       <PageLayout>
         <div className="flex flex-col items-center justify-center py-16 gap-3">
@@ -76,22 +173,6 @@ export default function Home() {
       </PageLayout>
     );
   }
-
-  // Priority queues
-  const over60Days = contacts.filter(
-    (c) => c.daysOnWaitlist > 60 && c.status !== "closed"
-  );
-  const readyToSchedule = contacts.filter(
-    (c) => c.status === "ready_to_schedule"
-  );
-  const needsFollowUp = contacts.filter(
-    (c) => c.status === "waiting" && c.daysOnWaitlist > 14 && c.daysOnWaitlist <= 60
-  );
-
-  // Find longest waiting for AI insight
-  const longestWaiting = contacts.reduce((longest, current) => 
-    current.daysOnWaitlist > (longest?.daysOnWaitlist || 0) ? current : longest
-  , contacts[0]);
 
   return (
     <PageLayout>
@@ -115,23 +196,21 @@ export default function Home() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <MetricCard
             label="Active Waitlist"
-            value={summary.totalActive}
+            value={safeNumber(metrics.totalActive)}
           />
           <MetricCard
             label="Avg Wait Time"
-            value={`${summary.avgWaitDays}d`}
-            trend="up"
-            trendLabel="+5d"
+            value={metrics.avgWaitDays > 0 ? `${metrics.avgWaitDays}d` : "---"}
             variant="warning"
           />
           <MetricCard
             label="Over 60 Days"
-            value={summary.over60Days}
+            value={safeNumber(metrics.over60Days)}
             variant="danger"
           />
           <MetricCard
             label="Ready to Schedule"
-            value={summary.readyToSchedule}
+            value={safeNumber(metrics.readyToSchedule)}
             variant="success"
           />
         </div>
@@ -150,12 +229,12 @@ export default function Home() {
               <CardContent className="pt-0">
                 <ScrollArea className="h-[320px] pr-2">
                   <div className="space-y-2">
-                    {over60Days.length === 0 ? (
+                    {priorityQueues.over60Days.length === 0 ? (
                       <p className="text-sm text-muted-foreground text-center py-8">
                         No urgent contacts
                       </p>
                     ) : (
-                      over60Days.map((contact) => (
+                      priorityQueues.over60Days.map((contact) => (
                         <PriorityCard
                           key={contact.name}
                           contact={contact}
@@ -179,12 +258,12 @@ export default function Home() {
               <CardContent className="pt-0">
                 <ScrollArea className="h-[320px] pr-2">
                   <div className="space-y-2">
-                    {readyToSchedule.length === 0 ? (
+                    {priorityQueues.readyToSchedule.length === 0 ? (
                       <p className="text-sm text-muted-foreground text-center py-8">
                         No contacts ready
                       </p>
                     ) : (
-                      readyToSchedule.map((contact) => (
+                      priorityQueues.readyToSchedule.map((contact) => (
                         <PriorityCard
                           key={contact.name}
                           contact={contact}
@@ -208,12 +287,12 @@ export default function Home() {
               <CardContent className="pt-0">
                 <ScrollArea className="h-[320px] pr-2">
                   <div className="space-y-2">
-                    {needsFollowUp.length === 0 ? (
+                    {priorityQueues.needsFollowUp.length === 0 ? (
                       <p className="text-sm text-muted-foreground text-center py-8">
                         All caught up
                       </p>
                     ) : (
-                      needsFollowUp.map((contact) => (
+                      priorityQueues.needsFollowUp.map((contact) => (
                         <PriorityCard
                           key={contact.name}
                           contact={contact}
@@ -230,12 +309,14 @@ export default function Home() {
           {/* AI Suggestions Panel */}
           <div className="xl:col-span-1 space-y-4">
             <AIInsightPanel
-              insight={`${longestWaiting?.name || "A contact"} has been waiting ${longestWaiting?.daysOnWaitlist || 0} days for ${longestWaiting?.serviceRequested || "services"}. This may indicate a provider availability issue or specific service requirements.`}
+              insight={longestWaiting 
+                ? `${longestWaiting.name} has been waiting ${longestWaiting.daysOnWaitlist || 0} days for ${longestWaiting.serviceRequested || "services"}. This may indicate a provider availability issue or specific service requirements.`
+                : "No contacts currently waiting."}
               suggestedAction="Review provider availability or consider telehealth options."
               actionLabel="View Profile"
             />
             <AIInsightPanel
-              insight={`${over60Days.length} contacts have been waiting over 60 days. Consider reaching out to offer alternative service options.`}
+              insight={`${priorityQueues.over60Days.length} contacts have been waiting over 60 days. Consider reaching out to offer alternative service options.`}
               suggestedAction="Send batch follow-up emails to long-waiting contacts."
               actionLabel="Draft Emails"
             />

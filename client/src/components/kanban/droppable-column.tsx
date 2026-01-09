@@ -4,10 +4,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import type { ContactStatus, WaitlistContact } from "@shared/schema";
+import type { WaitlistContact } from "@shared/schema";
 
 interface DroppableColumnProps {
-  status: ContactStatus;
+  columnId: string;
   title: string;
   contacts: WaitlistContact[];
   onAddNote: (contactName: string) => void;
@@ -15,14 +15,14 @@ interface DroppableColumnProps {
 }
 
 export function DroppableColumn({
-  status,
+  columnId,
   title,
   contacts,
   onAddNote,
   className,
 }: DroppableColumnProps) {
   const { isOver, setNodeRef } = useDroppable({
-    id: status,
+    id: columnId,
   });
 
   return (
@@ -33,12 +33,12 @@ export function DroppableColumn({
         isOver && "ring-2 ring-primary ring-offset-2",
         className
       )}
-      data-testid={`column-${status}`}
+      data-testid={`column-${columnId}`}
     >
       <CardHeader className="pb-3 flex-shrink-0">
         <CardTitle className="flex items-center justify-between">
           <span className="text-sm font-medium">{title}</span>
-          <Badge variant="secondary" className="ml-2" data-testid={`badge-count-${status}`}>
+          <Badge variant="secondary" className="ml-2" data-testid={`badge-count-${columnId}`}>
             {contacts.length}
           </Badge>
         </CardTitle>

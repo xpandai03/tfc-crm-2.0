@@ -102,18 +102,45 @@ Default endpoints (if env vars not set):
 - Notes appear in the contact detail timeline
 - Toast confirms success
 
-### Status Mapping
-Status codes are defined in `client/src/lib/status-config.ts`:
+### Status Configuration
+All status code semantics are centralized in `client/src/lib/status-config.ts`:
+
 ```typescript
-const STATUS_MAP = {
-  intake: 100,
-  waiting: 101,
-  ready_to_schedule: 200,
-  scheduled: 202,
-  on_hold: 300,
-  closed: 400,
+// Status code to label mapping
+STATUS_LABELS = {
+  100: "New",
+  101: "Left Voicemail",
+  102: "Response Received",
+  103: "Declined",
+  104: "Inactive",
+  200: "Ready to Schedule",
+  201: "Left Voicemail",
+  202: "Scheduled",
+  203: "No Response",
+  204: "Declined",
+  300: "PM Review",
+  400: "Insurance Not Accepted",
+};
+
+// Logical groups for pipeline columns
+STATUS_GROUPS = {
+  intake: [100],
+  waiting: [101, 102],
+  ready_to_schedule: [200],
+  pending_scheduling: [201, 203],
+  scheduled: [202],
+  pm_review: [300],
+  declined: [103, 204],
+  inactive: [104, 400],
 };
 ```
+
+Key functions:
+- `isActiveStatus(code)` - Returns true if code is not in declined/inactive
+- `getColumnForStatus(code)` - Returns pipeline column ID for a status code
+- `getStatusLabel(code)` - Returns human-readable label for a status code
+- `stringStatusToCode(status)` - Converts legacy string status to numeric code
+- `safeNumber(val)` / `safeString(val)` - Safe display helpers that return "---" for null/undefined
 
 ## Intentionally Left Out
 

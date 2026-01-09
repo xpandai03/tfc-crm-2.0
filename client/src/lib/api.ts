@@ -1,6 +1,5 @@
 import { apiRequest } from "./queryClient";
-import type { ContactSnapshot, WaitlistContact, WaitlistSummary, ContactStatus } from "@shared/schema";
-import { STATUS_MAP } from "./status-config";
+import type { ContactSnapshot, WaitlistContact, WaitlistSummary } from "@shared/schema";
 import type { DataSource, DataMode } from "./data-source-context";
 
 export type WithSource<T> = T & { _source?: DataSource };
@@ -33,12 +32,11 @@ export async function getConfig(): Promise<{ dataMode: DataMode }> {
 
 export async function updateContactStatus(
   contactName: string, 
-  status: ContactStatus
-): Promise<{ success: boolean; contactName: string; newStatus: string }> {
+  statusCode: number
+): Promise<{ success: boolean; contactName: string; newStatus: number }> {
   const response = await apiRequest("POST", "/api/update-status", { 
     contactName, 
-    status,
-    statusCode: STATUS_MAP[status],
+    statusCode,
   });
   return response.json();
 }

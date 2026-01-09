@@ -291,8 +291,25 @@ export async function registerRoutes(
             throw new Error(`n8n webhook returned ${response.status}`);
           }
 
-          const data = await response.json();
-          return res.json({ ...data, _source: "live" });
+          const liveData = await response.json();
+          
+          // Normalize live data to match expected schema
+          // Live data has: averageWaitDays, longestWaiting.name, longestWaiting.days
+          // Expected: avgWaitDays, longestWaitingName, longestWaitDays
+          const normalizedData = {
+            totalActive: liveData.totalActive ?? 0,
+            avgWaitDays: liveData.averageWaitDays ?? liveData.avgWaitDays ?? 0,
+            longestWaitDays: liveData.longestWaiting?.days ?? liveData.maxWaitDays ?? liveData.longestWaitDays ?? 0,
+            longestWaitingName: liveData.longestWaiting?.name ?? liveData.longestWaitingName ?? "---",
+            over30Days: liveData.over30Days ?? 0,
+            over60Days: liveData.over60Days ?? 0,
+            readyToSchedule: liveData.readyToSchedule ?? 0,
+            needsFollowUp: liveData.needsFollowUp ?? 0,
+            // byStatus may not exist in live data - frontend will compute it
+            byStatus: liveData.byStatus ?? liveData.statusBreakdown ?? {},
+          };
+          
+          return res.json({ ...normalizedData, _source: "live" });
         } catch (liveError) {
           console.warn("Live data fetch failed, falling back to mock:", liveError);
           return res.json({ ...getMockWaitlistSummary(), _source: "fallback" });
@@ -346,20 +363,20 @@ export async function registerRoutes(
   // Update contact status
   app.post("/api/update-status", async (req, res) => {
     try {
-      const { contactName, status, statusCode } = req.body;
+      const { contactName, statusCode } = req.body;
       
       if (!contactName || typeof contactName !== "string") {
         return res.status(400).json({ error: "contactName is required" });
       }
-      if (!status || typeof status !== "string") {
-        return res.status(400).json({ error: "status is required" });
+      if (statusCode === undefined || typeof statusCode !== "number") {
+        return res.status(400).json({ error: "statusCode is required" });
       }
 
       if (DATA_MODE === "live") {
         const response = await fetch(N8N_ENDPOINTS.updateStatus, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contactName, status, statusCode }),
+          body: JSON.stringify({ contactName, statusCode }),
         });
 
         if (!response.ok) {
@@ -369,15 +386,27 @@ export async function registerRoutes(
         const data = await response.json();
         return res.json(data);
       } else {
-        // Update mock data in memory
+        // Update mock data in memory - map statusCode to string status
+        const statusCodeToString: Record<number, string> = {
+          100: "intake",
+          101: "waiting",
+          102: "waiting",
+          200: "ready_to_schedule",
+          201: "waiting",
+          202: "scheduled",
+          203: "waiting",
+          300: "on_hold",
+          400: "closed",
+        };
+        
         const contact = mockContacts.find(
           (c) => c.name.toLowerCase() === contactName.toLowerCase()
         );
         if (!contact) {
           return res.status(404).json({ error: "Contact not found" });
         }
-        contact.status = status;
-        return res.json({ success: true, contactName, newStatus: status });
+        contact.status = statusCodeToString[statusCode] || contact.status;
+        return res.json({ success: true, contactName, newStatus: statusCode });
       }
     } catch (error) {
       console.error("Error updating status:", error);

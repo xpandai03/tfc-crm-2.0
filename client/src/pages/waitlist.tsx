@@ -24,8 +24,13 @@ import { useToast } from "@/hooks/use-toast";
 import { AlertCircle } from "lucide-react";
 import { getWaitlistContacts, updateContactStatus, addNoteToContact } from "@/lib/api";
 import { useDataSource } from "@/lib/data-source-context";
-import { PIPELINE_COLUMNS, STATUS_LABELS } from "@/lib/status-config";
-import type { ContactStatus, WaitlistContact } from "@shared/schema";
+import { 
+  PIPELINE_COLUMNS, 
+  getColumnForStatus, 
+  stringStatusToCode,
+  type PipelineColumnId 
+} from "@/lib/status-config";
+import type { WaitlistContact } from "@shared/schema";
 
 export default function Waitlist() {
   const queryClient = useQueryClient();
@@ -72,9 +77,9 @@ export default function Waitlist() {
   };
 
   const updateStatusMutation = useMutation({
-    mutationFn: ({ contactName, status }: { contactName: string; status: ContactStatus }) =>
-      updateContactStatus(contactName, status),
-    onMutate: async ({ contactName, status }) => {
+    mutationFn: ({ contactName, statusCode }: { contactName: string; statusCode: number }) =>
+      updateContactStatus(contactName, statusCode),
+    onMutate: async ({ contactName, statusCode }) => {
       await queryClient.cancelQueries({ queryKey: ["/api/waitlist-contacts"] });
       const previousData = queryClient.getQueryData<{ contacts: WaitlistContact[]; _source?: string }>(["/api/waitlist-contacts"]);
       queryClient.setQueryData<{ contacts: WaitlistContact[]; _source?: string }>(["/api/waitlist-contacts"], (old) => {
@@ -82,7 +87,7 @@ export default function Waitlist() {
         return {
           ...old,
           contacts: old.contacts.map((c) =>
-            c.name === contactName ? { ...c, status } : c
+            c.name === contactName ? { ...c, statusCode } : c
           ),
         };
       });
@@ -139,17 +144,29 @@ export default function Waitlist() {
     if (!over || !contacts) return;
 
     const contactName = active.id as string;
-    const newStatus = over.id as ContactStatus;
+    const targetColumnId = over.id as PipelineColumnId | "other";
     const contact = contacts.find((c) => c.name === contactName);
 
-    if (!contact || contact.status === newStatus) return;
+    if (!contact) return;
+
+    // Get the current column for this contact
+    const currentStatusCode = contact.statusCode ?? stringStatusToCode(contact.status);
+    const currentColumn = getColumnForStatus(currentStatusCode);
+
+    if (currentColumn === targetColumnId) return;
+
+    // Get the first status code for the target column
+    const targetColumn = PIPELINE_COLUMNS.find(col => col.id === targetColumnId);
+    if (!targetColumn) return;
+
+    const newStatusCode = targetColumn.codes[0];
 
     toast({
       title: "Status updated",
-      description: `${contactName} moved to ${STATUS_LABELS[newStatus]}`,
+      description: `${contactName} moved to ${targetColumn.label}`,
     });
 
-    updateStatusMutation.mutate({ contactName, status: newStatus });
+    updateStatusMutation.mutate({ contactName, statusCode: newStatusCode });
   };
 
   const handleAddNote = (contactName: string) => {
@@ -160,6 +177,29 @@ export default function Waitlist() {
     if (noteModalContact) {
       addNoteMutation.mutate({ contactName: noteModalContact, note });
     }
+  };
+
+  // Get the effective status code for a contact (handles both live and mock data)
+  const getContactStatusCode = (contact: WaitlistContact): number => {
+    return contact.statusCode ?? stringStatusToCode(contact.status);
+  };
+
+  // Group contacts by pipeline column based on status codes
+  const getContactsByColumn = (columnId: PipelineColumnId): WaitlistContact[] => {
+    if (!contacts) return [];
+    return contacts.filter((c) => {
+      const statusCode = getContactStatusCode(c);
+      return getColumnForStatus(statusCode) === columnId;
+    });
+  };
+
+  // Get contacts that don't match any known column (for "Other" column)
+  const getUnknownContacts = (): WaitlistContact[] => {
+    if (!contacts) return [];
+    return contacts.filter((c) => {
+      const statusCode = getContactStatusCode(c);
+      return getColumnForStatus(statusCode) === "other";
+    });
   };
 
   if (isLoading) {
@@ -181,8 +221,7 @@ export default function Waitlist() {
     );
   }
 
-  const getContactsByStatus = (status: ContactStatus) =>
-    contacts.filter((c: WaitlistContact) => c.status === status);
+  const unknownContacts = getUnknownContacts();
 
   return (
     <PageLayout>
@@ -210,16 +249,26 @@ export default function Waitlist() {
         >
           <ScrollArea className="w-full">
             <div className="flex gap-4 pb-4 min-w-max">
-              {PIPELINE_COLUMNS.map((status) => (
+              {PIPELINE_COLUMNS.map((column) => (
                 <DroppableColumn
-                  key={status}
-                  status={status}
-                  title={STATUS_LABELS[status]}
-                  contacts={getContactsByStatus(status)}
+                  key={column.id}
+                  columnId={column.id}
+                  title={column.label}
+                  contacts={getContactsByColumn(column.id)}
                   onAddNote={handleAddNote}
                   className="h-[calc(100vh-220px)] min-h-[400px]"
                 />
               ))}
+              {unknownContacts.length > 0 && (
+                <DroppableColumn
+                  key="other"
+                  columnId="other"
+                  title="Needs Review"
+                  contacts={unknownContacts}
+                  onAddNote={handleAddNote}
+                  className="h-[calc(100vh-220px)] min-h-[400px]"
+                />
+              )}
             </div>
             <ScrollBar orientation="horizontal" />
           </ScrollArea>

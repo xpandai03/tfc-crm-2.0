@@ -1,0 +1,225 @@
+
+The CRM UI is now connected to **live Excel data via n8n**.
+
+The backend and webhooks are working correctly.
+
+**Do NOT modify n8n workflows.**
+
+**Do NOT add new webhooks.**
+
+**Do NOT fetch raw Excel rows in the UI.**
+
+Your task is to **correct how the frontend interprets live data**.
+
+* * * * *
+
+**PROBLEM TO FIX**
+------------------
+
+The UI currently:
+
+-   Assumes string-based statuses
+
+-   Does not understand numeric status codes
+
+-   Assumes fields (e.g. byStatus) that do not exist in live data
+
+-   Crashes on Insights due to missing null checks
+
+* * * * *
+
+**STEP 1 --- DEFINE STATUS SEMANTICS (REQUIRED)**
+-----------------------------------------------
+
+Create a single shared config file (e.g. /lib/status.ts) that defines:
+
+### **Status code → logical stage mapping**
+
+```
+export const STATUS_GROUPS = {
+  intake: [100],
+  waiting: [101, 102],
+  declined: [103],
+  inactive: [104, 400],
+
+  ready_to_schedule: [200],
+  scheduled: [202],
+
+  pending_scheduling: [200, 201, 203],
+  pm_review: [300],
+};
+```
+
+Also define:
+
+```
+export const STATUS_LABELS = {
+  100: "New",
+  101: "Left Voicemail",
+  102: "Response Received",
+  103: "Declined",
+  104: "Inactive",
+  200: "Ready to Schedule",
+  201: "Left Voicemail",
+  202: "Scheduled",
+  203: "No Response",
+  204: "Declined",
+  300: "PM Review",
+  400: "Insurance Not Accepted",
+};
+```
+
+All UI logic must reference this file.
+
+* * * * *
+
+**STEP 2 --- FIX KANBAN COLUMN LOGIC**
+------------------------------------
+
+Update the Waitlist Pipeline so that:
+
+-   Columns are driven by **logical groups**, not raw codes
+
+-   A contact belongs to a column if:
+
+```
+STATUS_GROUPS[column].includes(contact.statusCode)
+```
+
+Ensure:
+
+-   All live contacts appear in **exactly one column**
+
+-   No contact is dropped due to unrecognized codes
+
+-   Unknown codes fall into an "Other / Needs Review" column
+
+* * * * *
+
+**STEP 3 --- FIX INSIGHTS COMPUTATION (CRASH FIX)**
+-------------------------------------------------
+
+Do NOT assume summary.byStatus exists.
+
+Instead:
+
+-   Derive status distributions on the frontend using:
+
+    -   statusCode
+
+    -   STATUS_GROUPS
+
+Add null-safe guards:
+
+```
+if (!summary || !summary.totalActive) return <EmptyState />
+```
+
+Ensure:
+
+-   Avg wait time handles null | undefined
+
+-   Longest wait handles empty lists
+
+-   Object.values is never called on undefined
+
+* * * * *
+
+**STEP 4 --- FIX METRIC DEFINITIONS**
+-----------------------------------
+
+Ensure metrics mean the same thing as the spreadsheet:
+
+-   **Active Waitlist** = all contacts NOT in:
+
+    -   declined (103, 204)
+
+    -   inactive (104, 400)
+
+-   **Over 60 Days** = daysOnWaitlist >= 60 AND active
+
+-   **Ready to Schedule** = statusCode in [200]
+
+-   **Avg Wait Time** = average of daysOnWaitlist across active waitlist only
+
+Document these assumptions in comments.
+
+* * * * *
+
+**STEP 5 --- DATA SAFETY & FALLBACK**
+-----------------------------------
+
+-   If a metric cannot be computed:
+
+    -   Show "---"
+
+    -   Do NOT show "undefined"
+
+    -   Do NOT crash
+
+* * * * *
+
+**CONSTRAINTS (DO NOT VIOLATE)**
+--------------------------------
+
+-   ❌ Do NOT change n8n payloads
+
+-   ❌ Do NOT hardcode logic inline
+
+-   ❌ Do NOT duplicate status logic across files
+
+-   ❌ Do NOT fetch raw Excel rows
+
+-   ✅ Centralize semantics
+
+-   ✅ Defensive UI coding
+
+-   ✅ Live data safe handling
+
+* * * * *
+
+**DELIVERABLE**
+---------------
+
+When complete:
+
+-   Kanban shows all live contacts correctly
+
+-   Insights page does not crash
+
+-   Metrics align with spreadsheet logic
+
+-   Status code meaning is explicit and readable
+
+Briefly explain:
+
+-   Where status semantics live
+
+-   How Kanban grouping works
+
+-   How Insights avoid crashes
+
+* * * * *
+
+### **END PROMPT**
+
+* * * * *
+
+**5️⃣ Big picture reassurance (important)**
+-------------------------------------------
+
+What just happened is **normal and expected** when a system crosses from:
+
+> "Pretty demo" → "Real operational data"
+
+You did **everything right**:
+
+-   You didn't hardcode fake logic
+
+-   You didn't hide inconsistencies
+
+-   You surfaced the truth early
+
+This correction is what turns the app into a **real CRM**, not a toy.
+
+* * * * *
