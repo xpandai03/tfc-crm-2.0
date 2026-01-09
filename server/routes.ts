@@ -8,10 +8,25 @@ const USE_LIVE_DATA = false;
 const N8N_ENDPOINTS = {
   contactSnapshot: "https://n8n-familyconnection.agentglu.agency/webhook/get-contact-snapshot",
   waitlistSummary: "https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-summary",
+  updateStatus: "https://n8n-familyconnection.agentglu.agency/webhook/update-status",
+  addNote: "https://n8n-familyconnection.agentglu.agency/webhook/add-note",
 } as const;
 
 // Mock data for development
-const mockContacts = [
+type MockContact = {
+  name: string;
+  email?: string;
+  phone?: string;
+  status: string;
+  serviceRequested: string;
+  daysOnWaitlist: number;
+  dateAdded: string;
+  lastContact?: string;
+  assignedTo?: string;
+  notes: { date: string; content: string }[];
+};
+
+const mockContacts: MockContact[] = [
   {
     name: "Emilio Castro",
     email: "emilio.castro@email.com",
@@ -298,6 +313,101 @@ export async function registerRoutes(
   // Get config (for frontend to know if live mode is enabled)
   app.get("/api/config", (_req, res) => {
     res.json({ useLiveData: USE_LIVE_DATA });
+  });
+
+  // Update contact status
+  app.post("/api/update-status", async (req, res) => {
+    try {
+      const { contactName, status, statusCode } = req.body;
+      
+      if (!contactName || typeof contactName !== "string") {
+        return res.status(400).json({ error: "contactName is required" });
+      }
+      if (!status || typeof status !== "string") {
+        return res.status(400).json({ error: "status is required" });
+      }
+
+      if (USE_LIVE_DATA) {
+        const response = await fetch(N8N_ENDPOINTS.updateStatus, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contactName, status, statusCode }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`n8n webhook returned ${response.status}`);
+        }
+
+        const data = await response.json();
+        return res.json(data);
+      } else {
+        // Update mock data in memory
+        const contact = mockContacts.find(
+          (c) => c.name.toLowerCase() === contactName.toLowerCase()
+        );
+        if (!contact) {
+          return res.status(404).json({ error: "Contact not found" });
+        }
+        contact.status = status;
+        return res.json({ success: true, contactName, newStatus: status });
+      }
+    } catch (error) {
+      console.error("Error updating status:", error);
+      return res.status(500).json({ error: "Failed to update status" });
+    }
+  });
+
+  // Add note to contact
+  app.post("/api/add-note", async (req, res) => {
+    try {
+      const { contactName, note } = req.body;
+      
+      if (!contactName || typeof contactName !== "string") {
+        return res.status(400).json({ error: "contactName is required" });
+      }
+      if (!note || typeof note !== "string") {
+        return res.status(400).json({ error: "note is required" });
+      }
+
+      if (USE_LIVE_DATA) {
+        const response = await fetch(N8N_ENDPOINTS.addNote, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contactName, note }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`n8n webhook returned ${response.status}`);
+        }
+
+        const data = await response.json();
+        return res.json(data);
+      } else {
+        // Add note to mock data in memory
+        const contact = mockContacts.find(
+          (c) => c.name.toLowerCase() === contactName.toLowerCase()
+        );
+        if (!contact) {
+          return res.status(404).json({ error: "Contact not found" });
+        }
+        
+        const newNote = {
+          date: new Date().toISOString().split('T')[0],
+          content: note,
+        };
+        
+        if (!contact.notes) {
+          contact.notes = [];
+        }
+        contact.notes.unshift(newNote);
+        contact.lastContact = newNote.date;
+        
+        return res.json({ success: true, contactName, note: newNote });
+      }
+    } catch (error) {
+      console.error("Error adding note:", error);
+      return res.status(500).json({ error: "Failed to add note" });
+    }
   });
 
   return httpServer;

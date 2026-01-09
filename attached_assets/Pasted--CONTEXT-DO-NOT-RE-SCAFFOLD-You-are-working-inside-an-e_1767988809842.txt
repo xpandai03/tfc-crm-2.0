@@ -1,0 +1,250 @@
+**CONTEXT (DO NOT RE-SCAFFOLD)**
+--------------------------------
+
+You are working inside an **existing Next.js CRM demo app** for *The Family Connection*.
+
+The app already includes:
+
+-   Home / Today view
+
+-   Waitlist / Pipeline view (column-based)
+
+-   Contact detail view with full notes history
+
+-   Mock data mode + live data toggle
+
+-   API routes that proxy to n8n write tools:
+
+    -   updateStatusToContact
+
+    -   addNoteToContact
+
+Do **not** rebuild the app or change the overall architecture.
+
+Your task is to add **two specific UX interactions** that make the system faster than a spreadsheet.
+
+* * * * *
+
+**FEATURE 1 --- DRAG CARD BETWEEN COLUMNS → AUTO-UPDATE STATUS**
+--------------------------------------------------------------
+
+### **Goal**
+
+Allow admins to drag a contact card from one column to another on the **Waitlist Pipeline** page, and have the status update automatically.
+
+### **Required behavior**
+
+1.  **Drag & Drop**
+
+    -   Cards should be draggable between columns
+
+    -   Columns represent status buckets (e.g. Intake, Waiting, Ready to Schedule, Scheduled, On Hold)
+
+2.  **Status Mapping**
+
+    -   Each column must map to exactly **one status code**
+
+    -   Define this mapping in a single frontend config object (do NOT hardcode in multiple places)
+
+    Example (illustrative only):
+
+```
+const STATUS_MAP = {
+  intake: 100,
+  waiting: 101,
+  ready: 200,
+  scheduled: 202,
+  on_hold: 300,
+};
+```
+
+1.
+
+2.  **Optimistic UI (critical)**
+
+    -   When a card is dropped:
+
+        -   The card moves immediately
+
+        -   Column counts update immediately
+
+        -   Show a small toast: "Status updated"
+
+3.  **Background write**
+
+    -   After the UI updates:
+
+        -   Call the existing API route to update status
+
+        -   Pass contact identifier + new status code
+
+    -   Do NOT block the UI on this request
+
+4.  **Reconciliation**
+
+    -   After a successful response:
+
+        -   Re-fetch the affected contact or refresh the waitlist summary
+
+    -   If the write fails:
+
+        -   Show a subtle error message
+
+        -   Revert the card position if necessary
+
+5.  **Demo-safe**
+
+    -   This must work with mock data first
+
+    -   Live mode should reuse the same logic
+
+* * * * *
+
+**FEATURE 2 --- QUICK-ADD NOTE FROM CARD (➕ BUTTON)**
+---------------------------------------------------
+
+### **Goal**
+
+Allow admins to add a note **without opening the full contact detail page**.
+
+### **Required behavior**
+
+1.  **UI affordance**
+
+    -   Add a small **➕ icon** on each card (top-right corner)
+
+    -   Icon should be unobtrusive but discoverable
+
+2.  **Quick note modal**
+
+    -   Clicking ➕ opens a lightweight modal or slide-over
+
+    -   Modal contains:
+
+        -   One multiline text input
+
+        -   "Add note" button
+
+        -   "Cancel" button
+
+3.  **Optimistic UI**
+
+    -   On submit:
+
+        -   Close the modal immediately
+
+        -   Show toast: "Note added"
+
+        -   Update the card's "last note" / "last updated" indicator
+
+4.  **Background write**
+
+    -   Call the existing add-note API route
+
+    -   Pass:
+
+        -   contact identifier
+
+        -   note text
+
+    -   n8n handles:
+
+        -   timestamp
+
+        -   editor name
+
+        -   append-only behavior
+
+5.  **Consistency**
+
+    -   When the user later opens the **Contact Detail** view:
+
+        -   The new note must appear in the full notes timeline
+
+        -   Notes must show date, time, and editor
+
+6.  **Failure handling**
+
+    -   If the write fails:
+
+        -   Show a non-blocking error
+
+        -   Do not silently lose the note
+
+* * * * *
+
+**ARCHITECTURAL CONSTRAINTS (DO NOT BREAK)**
+--------------------------------------------
+
+-   ❌ Do NOT bypass API routes
+
+-   ❌ Do NOT talk directly to Excel
+
+-   ❌ Do NOT duplicate business logic
+
+-   ❌ Do NOT introduce new global state libraries
+
+-   ❌ Do NOT add authentication or permissions
+
+-   ✅ UI = optimistic
+
+-   ✅ Writes = async
+
+-   ✅ Excel = source of truth
+
+-   ✅ Reconciliation after writes
+
+* * * * *
+
+**TECHNICAL GUIDANCE (OPTIONAL BUT OK)**
+----------------------------------------
+
+-   You may use a lightweight drag-and-drop library (e.g. dnd-kit or react-beautiful-dnd)
+
+-   Keep implementation simple and readable
+
+-   Prioritize correctness and UX over clever abstractions
+
+* * * * *
+
+**DELIVERABLES**
+----------------
+
+When finished, ensure:
+
+1.  Cards can be dragged between columns and status updates visually
+
+2.  Notes can be added directly from the card
+
+3.  Full contact view shows the complete notes trail
+
+4.  Mock mode works
+
+5.  Live mode reuses the same logic
+
+6.  Code changes are minimal and well-scoped
+
+Briefly explain:
+
+-   Where status mapping lives
+
+-   How optimistic updates are handled
+
+-   How reconciliation works
+
+* * * * *
+
+**IMPORTANT**
+-------------
+
+This is a **demo-critical feature**.
+
+Do not overbuild.
+
+Do not add unrelated enhancements.
+
+* * * * *
+
+### **END PROMPT**
+
+* * * * *
