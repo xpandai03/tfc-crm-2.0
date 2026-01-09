@@ -1,0 +1,305 @@
+* * * * *
+
+**CONTEXT (DO NOT REBUILD)**
+----------------------------
+
+You are working inside an **existing Next.js CRM demo app** for **The Family Connection (TFC)**.
+
+The app already includes:
+
+-   Home / Today view
+
+-   Waitlist / Pipeline view
+
+-   Contact Detail view
+
+-   Insights view
+
+-   Drag-to-status interaction
+
+-   Quick-add note modal
+
+-   Optimistic UI updates
+
+-   Mock vs Live data toggle
+
+Your task is to **connect the UI to real Excel data** using the provided **n8n webhooks**.
+
+Do **not** rebuild the app, redesign the UI, or change the overall architecture.
+
+* * * * *
+
+**SYSTEM OF RECORD (NON-NEGOTIABLE)**
+-------------------------------------
+
+-   **Excel Online is the source of truth**
+
+-   **All reads and writes go through n8n**
+
+-   **The frontend never talks directly to Excel**
+
+-   **The frontend never embeds webhook URLs**
+
+* * * * *
+
+**LIVE N8N WEBHOOK ENDPOINTS (FINAL)**
+--------------------------------------
+
+Use these **exact URLs**:
+
+### **Read --- Contact snapshot**
+
+```
+POST https://n8n-familyconnection.agentglu.agency/webhook/get-contact-snapshot
+```
+
+Payload:
+
+```
+{
+  "contactName": "Emilio Castro"
+}
+```
+
+* * * * *
+
+### **Read --- Waitlist summary**
+
+```
+POST https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-summary
+```
+
+Payload:
+
+```
+{}
+```
+
+* * * * *
+
+### **Write --- Update contact status**
+
+```
+POST https://n8n-familyconnection.agentglu.agency/webhook/update-contact-status
+```
+
+Payload:
+
+```
+{
+  "contactName": "Emilio Castro",
+  "statusCode": 200
+}
+```
+
+* * * * *
+
+### **Write --- Add agent note**
+
+```
+POST https://n8n-familyconnection.agentglu.agency/webhook/update-agent-notes
+```
+
+Payload:
+
+```
+{
+  "contactName": "Emilio Castro",
+  "note": "Left voicemail on Jan 9"
+}
+```
+
+* * * * *
+
+**STEP 1 --- ENVIRONMENT VARIABLES (SERVER-ONLY)**
+------------------------------------------------
+
+Store these URLs as **environment variables** (Replit Secrets):
+
+```
+N8N_GET_CONTACT_SNAPSHOT_URL
+N8N_GET_WAITLIST_SUMMARY_URL
+N8N_UPDATE_CONTACT_STATUS_URL
+N8N_UPDATE_AGENT_NOTES_URL
+```
+
+Do **not** expose them to the frontend.
+
+* * * * *
+
+**STEP 2 --- SERVER API ROUTES (PROXY ONLY)**
+-------------------------------------------
+
+Implement or update these API routes:
+
+### **/api/get-contact-snapshot**
+
+-   If DATA_MODE === "mock" → return mock JSON
+
+-   If DATA_MODE === "live":
+
+    -   POST to N8N_GET_CONTACT_SNAPSHOT_URL
+
+    -   Forward { contactName }
+
+    -   Return JSON response directly
+
+* * * * *
+
+### **/api/get-waitlist-summary**
+
+-   If DATA_MODE === "mock" → return mock JSON
+
+-   If DATA_MODE === "live":
+
+    -   POST to N8N_GET_WAITLIST_SUMMARY_URL
+
+    -   Return JSON response directly
+
+* * * * *
+
+### **/api/update-contact-status**
+
+-   Only active when DATA_MODE === "live"
+
+-   POST to N8N_UPDATE_CONTACT_STATUS_URL
+
+-   Forward { contactName, statusCode }
+
+-   Return success/failure
+
+* * * * *
+
+### **/api/update-agent-notes**
+
+-   Only active when DATA_MODE === "live"
+
+-   POST to N8N_UPDATE_AGENT_NOTES_URL
+
+-   Forward { contactName, note }
+
+-   Return success/failure
+
+* * * * *
+
+**STEP 3 --- FRONTEND WIRING (DO NOT CHANGE UX)**
+-----------------------------------------------
+
+### **Live Reads**
+
+-   Home / Today → /api/get-waitlist-summary
+
+-   Waitlist → /api/get-waitlist-summary
+
+-   Insights → /api/get-waitlist-summary
+
+-   Contact Detail → /api/get-contact-snapshot
+
+* * * * *
+
+### **Live Writes (Optimistic UI)**
+
+-   Drag card → immediately update UI
+
+    -   Fire /api/update-contact-status in background
+
+    -   On success → re-fetch waitlist summary
+
+    -   On failure → revert card + show toast
+
+-   Quick-add note →
+
+    -   Immediately show note in UI
+
+    -   Fire /api/update-agent-notes in background
+
+    -   On success → re-fetch contact snapshot
+
+    -   On failure → show non-blocking error
+
+* * * * *
+
+**STEP 4 --- RECONCILIATION RULES**
+---------------------------------
+
+Re-fetch authoritative data:
+
+-   After every successful write
+
+-   On manual refresh
+
+-   On page navigation
+
+Do **not** poll in the background.
+
+* * * * *
+
+**STEP 5 --- SYNC VISIBILITY (TRUST SIGNAL)**
+-------------------------------------------
+
+Show:
+
+-   "Live Excel data" indicator when in live mode
+
+-   "Last synced X seconds ago"
+
+-   "Live data unavailable --- showing demo data" fallback banner if needed
+
+* * * * *
+
+**NON-NEGOTIABLE CONSTRAINTS**
+------------------------------
+
+-   ❌ No direct Excel API calls
+
+-   ❌ No webhook URLs in frontend
+
+-   ❌ No blocking UI on writes
+
+-   ❌ No authentication added
+
+-   ❌ No refactoring unrelated code
+
+* * * * *
+
+**DELIVERABLE CHECKLIST**
+-------------------------
+
+Confirm when complete:
+
+1.  UI shows **real Excel data**
+
+2.  Dragging a card updates Excel
+
+3.  Adding a note appends in Excel
+
+4.  Refresh reflects Excel state
+
+5.  Mock mode still works
+
+6.  Failures are visible but non-blocking
+
+Explain briefly:
+
+-   Where env vars are used
+
+-   How optimistic updates work
+
+-   How reconciliation keeps UI in sync
+
+* * * * *
+
+**FINAL INSTRUCTION**
+---------------------
+
+This is the moment the demo becomes **real**.
+
+Keep the scope tight.
+
+Prioritize correctness and trust over cleverness.
+
+* * * * *
+
+### **END PROMPT**
+
+* * * * *

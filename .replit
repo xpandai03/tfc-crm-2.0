@@ -37,3 +37,11 @@ author = "agent"
 task = "shell.exec"
 args = "npm run dev"
 waitForPort = 5000
+
+[userenv]
+
+[userenv.shared]
+N8N_GET_CONTACT_SNAPSHOT_URL = "https://n8n-familyconnection.agentglu.agency/webhook/get-contact-snapshot"
+N8N_GET_WAITLIST_SUMMARY_URL = "https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-summary"
+N8N_UPDATE_CONTACT_STATUS_URL = "https://n8n-familyconnection.agentglu.agency/webhook/update-contact-status"
+N8N_UPDATE_AGENT_NOTES_URL = "https://n8n-familyconnection.agentglu.agency/webhook/update-agent-notes"

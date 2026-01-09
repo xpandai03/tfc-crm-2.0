@@ -6,12 +6,12 @@ import { createServer, type Server } from "http";
 type DataMode = "mock" | "live";
 const DATA_MODE: DataMode = "mock";
 
-// n8n webhook URLs
+// n8n webhook URLs from environment variables (server-only, never exposed to frontend)
 const N8N_ENDPOINTS = {
-  contactSnapshot: "https://n8n-familyconnection.agentglu.agency/webhook/get-contact-snapshot",
-  waitlistSummary: "https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-summary",
-  updateStatus: "https://n8n-familyconnection.agentglu.agency/webhook/update-status",
-  addNote: "https://n8n-familyconnection.agentglu.agency/webhook/add-note",
+  contactSnapshot: process.env.N8N_GET_CONTACT_SNAPSHOT_URL || "https://n8n-familyconnection.agentglu.agency/webhook/get-contact-snapshot",
+  waitlistSummary: process.env.N8N_GET_WAITLIST_SUMMARY_URL || "https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-summary",
+  updateStatus: process.env.N8N_UPDATE_CONTACT_STATUS_URL || "https://n8n-familyconnection.agentglu.agency/webhook/update-contact-status",
+  addNote: process.env.N8N_UPDATE_AGENT_NOTES_URL || "https://n8n-familyconnection.agentglu.agency/webhook/update-agent-notes",
 } as const;
 
 // Mock data for development
