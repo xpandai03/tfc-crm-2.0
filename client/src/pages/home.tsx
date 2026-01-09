@@ -1,0 +1,213 @@
+import { useQuery } from "@tanstack/react-query";
+import { PageLayout } from "@/components/layout/page-layout";
+import { MetricCard } from "@/components/ui/metric-card";
+import { PriorityCard } from "@/components/ui/priority-card";
+import { AIInsightPanel } from "@/components/ui/ai-insight-panel";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { LoadingState } from "@/components/ui/loading-spinner";
+import { AlertTriangle, Clock, CalendarCheck, AlertCircle } from "lucide-react";
+import { getWaitlistSummary, getWaitlistContacts } from "@/lib/api";
+import type { WaitlistSummary, WaitlistContact } from "@shared/schema";
+
+export default function Home() {
+  const { 
+    data: summary, 
+    isLoading: summaryLoading, 
+    error: summaryError 
+  } = useQuery<WaitlistSummary>({
+    queryKey: ["/api/waitlist-summary"],
+    queryFn: getWaitlistSummary,
+  });
+
+  const { 
+    data: contacts, 
+    isLoading: contactsLoading, 
+    error: contactsError 
+  } = useQuery<WaitlistContact[]>({
+    queryKey: ["/api/waitlist-contacts"],
+    queryFn: getWaitlistContacts,
+  });
+
+  const isLoading = summaryLoading || contactsLoading;
+  const error = summaryError || contactsError;
+
+  if (isLoading) {
+    return (
+      <PageLayout>
+        <LoadingState message="Loading dashboard..." />
+      </PageLayout>
+    );
+  }
+
+  if (error || !summary || !contacts) {
+    return (
+      <PageLayout>
+        <div className="flex flex-col items-center justify-center py-16 gap-3">
+          <AlertCircle className="h-8 w-8 text-destructive" />
+          <p className="text-sm text-muted-foreground">Failed to load dashboard data</p>
+        </div>
+      </PageLayout>
+    );
+  }
+
+  // Priority queues
+  const over60Days = contacts.filter(
+    (c) => c.daysOnWaitlist > 60 && c.status !== "closed"
+  );
+  const readyToSchedule = contacts.filter(
+    (c) => c.status === "ready_to_schedule"
+  );
+  const needsFollowUp = contacts.filter(
+    (c) => c.status === "waiting" && c.daysOnWaitlist > 14 && c.daysOnWaitlist <= 60
+  );
+
+  // Find longest waiting for AI insight
+  const longestWaiting = contacts.reduce((longest, current) => 
+    current.daysOnWaitlist > (longest?.daysOnWaitlist || 0) ? current : longest
+  , contacts[0]);
+
+  return (
+    <PageLayout>
+      <div className="space-y-8">
+        <div>
+          <h1 className="text-2xl font-semibold text-foreground" data-testid="text-page-title">Today</h1>
+          <p className="text-sm text-muted-foreground mt-1" data-testid="text-page-subtitle">
+            What needs your attention right now
+          </p>
+        </div>
+
+        {/* Metrics Row */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <MetricCard
+            label="Active Waitlist"
+            value={summary.totalActive}
+          />
+          <MetricCard
+            label="Avg Wait Time"
+            value={`${summary.avgWaitDays}d`}
+            trend="up"
+            trendLabel="+5d"
+            variant="warning"
+          />
+          <MetricCard
+            label="Over 60 Days"
+            value={summary.over60Days}
+            variant="danger"
+          />
+          <MetricCard
+            label="Ready to Schedule"
+            value={summary.readyToSchedule}
+            variant="success"
+          />
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+          {/* Priority Queues */}
+          <div className="xl:col-span-3 grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/* Over 60 Days */}
+            <Card className="overflow-visible">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base font-medium">
+                  <AlertTriangle className="h-4 w-4 text-red-500" />
+                  Over 60 Days
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <ScrollArea className="h-[320px] pr-2">
+                  <div className="space-y-2">
+                    {over60Days.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-8">
+                        No urgent contacts
+                      </p>
+                    ) : (
+                      over60Days.map((contact) => (
+                        <PriorityCard
+                          key={contact.name}
+                          contact={contact}
+                          priority="high"
+                        />
+                      ))
+                    )}
+                  </div>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+
+            {/* Ready to Schedule */}
+            <Card className="overflow-visible">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base font-medium">
+                  <CalendarCheck className="h-4 w-4 text-amber-500" />
+                  Ready to Schedule
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <ScrollArea className="h-[320px] pr-2">
+                  <div className="space-y-2">
+                    {readyToSchedule.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-8">
+                        No contacts ready
+                      </p>
+                    ) : (
+                      readyToSchedule.map((contact) => (
+                        <PriorityCard
+                          key={contact.name}
+                          contact={contact}
+                          priority="medium"
+                        />
+                      ))
+                    )}
+                  </div>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+
+            {/* Needs Follow-up */}
+            <Card className="overflow-visible">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base font-medium">
+                  <Clock className="h-4 w-4 text-blue-500" />
+                  Needs Follow-up
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <ScrollArea className="h-[320px] pr-2">
+                  <div className="space-y-2">
+                    {needsFollowUp.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-8">
+                        All caught up
+                      </p>
+                    ) : (
+                      needsFollowUp.map((contact) => (
+                        <PriorityCard
+                          key={contact.name}
+                          contact={contact}
+                          priority="standard"
+                        />
+                      ))
+                    )}
+                  </div>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* AI Suggestions Panel */}
+          <div className="xl:col-span-1 space-y-4">
+            <AIInsightPanel
+              insight={`${longestWaiting?.name || "A contact"} has been waiting ${longestWaiting?.daysOnWaitlist || 0} days for ${longestWaiting?.serviceRequested || "services"}. This may indicate a provider availability issue or specific service requirements.`}
+              suggestedAction="Review provider availability or consider telehealth options."
+              actionLabel="View Profile"
+            />
+            <AIInsightPanel
+              insight={`${over60Days.length} contacts have been waiting over 60 days. Consider reaching out to offer alternative service options.`}
+              suggestedAction="Send batch follow-up emails to long-waiting contacts."
+              actionLabel="Draft Emails"
+            />
+          </div>
+        </div>
+      </div>
+    </PageLayout>
+  );
+}
