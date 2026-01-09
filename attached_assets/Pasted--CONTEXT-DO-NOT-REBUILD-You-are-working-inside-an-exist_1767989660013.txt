@@ -1,0 +1,292 @@
+**CONTEXT (DO NOT REBUILD)**
+----------------------------
+
+You are working inside an **existing Next.js CRM demo app** for **The Family Connection (TFC)**.
+
+The app already includes:
+
+-   Home / Today view
+
+-   Waitlist / Pipeline view
+
+-   Contact Detail view
+
+-   Insights view
+
+-   Mock data mode using local JSON
+
+-   API routes that proxy to n8n (already scaffolded)
+
+You must **not** re-scaffold the app or redesign the UI.
+
+* * * * *
+
+**PHASE GOAL (VERY IMPORTANT)**
+-------------------------------
+
+**Enable controlled "Live Read Mode"** so the UI can display **real Excel-backed data** via n8n **without breaking the demo**.
+
+This phase:
+
+-   Turns on **live reads only**
+
+-   Keeps **writes disabled**
+
+-   Adds **manual refresh + sync visibility**
+
+-   Preserves mock fallback
+
+* * * * *
+
+**NON-NEGOTIABLE CONSTRAINTS**
+------------------------------
+
+-   ❌ Do NOT wire any write actions
+
+-   ❌ Do NOT remove mock data
+
+-   ❌ Do NOT bypass API routes
+
+-   ❌ Do NOT connect directly to Excel APIs
+
+-   ❌ Do NOT add authentication
+
+This is **read-only, controlled live mode**.
+
+* * * * *
+
+**STEP 1 --- GLOBAL DATA MODE TOGGLE**
+------------------------------------
+
+Add a global config flag:
+
+```
+export const DATA_MODE = "mock" | "live";
+```
+
+Default it to:
+
+```
+export const DATA_MODE = "mock";
+```
+
+Place this in a single shared file (e.g. /lib/config.ts).
+
+All data fetching must respect this flag.
+
+* * * * *
+
+**STEP 2 --- WIRE LIVE READ API ROUTES**
+--------------------------------------
+
+Update existing API routes (or create them if stubbed):
+
+### **/api/get-contact-snapshot**
+
+-   If DATA_MODE === "mock":
+
+    -   Return mock contact snapshot JSON
+
+-   If DATA_MODE === "live":
+
+    -   POST to:
+
+```
+https://n8n-familyconnection.agentglu.agency/webhook/get-contact-snapshot
+```
+
+-   -
+
+    -   Forward { contactName }
+
+    -   Return JSON response directly
+
+* * * * *
+
+### **/api/get-waitlist-summary**
+
+-   If DATA_MODE === "mock":
+
+    -   Return mock waitlist summary JSON
+
+-   If DATA_MODE === "live":
+
+    -   POST to:
+
+```
+https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-summary
+```
+
+-   -
+
+    -   Return JSON response directly
+
+Do **not** reshape the data.
+
+* * * * *
+
+**STEP 3 --- SCREEN-TO-TOOL MAPPING (DO NOT DEVIATE)**
+----------------------------------------------------
+
+Use these mappings exactly:
+
+|
+
+**Screen**
+
+ |
+
+**Data Source**
+
+ |
+| --- | --- |
+|
+
+Home / Today
+
+ |
+
+get-waitlist-summary
+
+ |
+|
+
+Waitlist / Pipeline
+
+ |
+
+get-waitlist-summary
+
+ |
+|
+
+Insights
+
+ |
+
+get-waitlist-summary
+
+ |
+|
+
+Contact Detail
+
+ |
+
+get-contact-snapshot
+
+ |
+
+Do **not** introduce additional fetches.
+
+* * * * *
+
+**STEP 4 --- ADD MANUAL REFRESH CONTROL**
+---------------------------------------
+
+On these screens:
+
+-   Home
+
+-   Waitlist
+
+-   Insights
+
+Add a **"Refresh" button**.
+
+### **Behavior**
+
+-   Clicking refresh re-fetches live data
+
+-   Updates UI state
+
+-   Updates a timestamp label:
+
+    > "Last synced: X seconds ago"
+
+This label can be simple and approximate.
+
+* * * * *
+
+**STEP 5 --- LIVE DATA STATUS INDICATOR**
+---------------------------------------
+
+Add a subtle indicator somewhere in the UI (header or footer):
+
+-   "Mock data" when DATA_MODE === "mock"
+
+-   "Live Excel data" when DATA_MODE === "live"
+
+This is **critical for demo trust**.
+
+* * * * *
+
+**STEP 6 --- FAILURE HANDLING (DEMO SAFETY NET)**
+-----------------------------------------------
+
+If live data fetch fails:
+
+-   Show a banner:
+
+    > "Live data temporarily unavailable --- showing demo data"
+
+-   Fall back to mock data automatically
+
+-   Do NOT crash the UI
+
+* * * * *
+
+**WHAT NOT TO BUILD IN THIS PHASE**
+-----------------------------------
+
+-   ❌ Status updates
+
+-   ❌ Notes
+
+-   ❌ Drag & drop
+
+-   ❌ AI reasoning
+
+-   ❌ Background polling
+
+Those come later.
+
+* * * * *
+
+**DELIVERABLE CHECKLIST**
+-------------------------
+
+When done, confirm:
+
+1.  App runs in mock mode by default
+
+2.  Switching DATA_MODE = "live" shows real Excel-backed data
+
+3.  Manual refresh works
+
+4.  Sync indicator updates
+
+5.  Mock fallback works on error
+
+6.  UI logic is identical in both modes
+
+Explain briefly:
+
+-   Where the toggle lives
+
+-   How to switch modes
+
+-   What happens on failure
+
+* * * * *
+
+**FINAL INSTRUCTION**
+---------------------
+
+Keep changes **minimal and readable**.
+
+This phase is about **trust and safety**, not features.
+
+* * * * *
+
+### **END PROMPT**

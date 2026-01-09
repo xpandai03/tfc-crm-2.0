@@ -2,7 +2,9 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 
 // Configuration for mock vs live data mode
-const USE_LIVE_DATA = false;
+// Change to "live" to use real n8n webhooks instead of mock data
+type DataMode = "mock" | "live";
+const DATA_MODE: DataMode = "mock";
 
 // n8n webhook URLs
 const N8N_ENDPOINTS = {
@@ -240,27 +242,34 @@ export async function registerRoutes(
         return res.status(400).json({ error: "contactName is required" });
       }
 
-      if (USE_LIVE_DATA) {
-        // Forward to n8n webhook
-        const response = await fetch(N8N_ENDPOINTS.contactSnapshot, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contactName }),
-        });
+      if (DATA_MODE === "live") {
+        try {
+          const response = await fetch(N8N_ENDPOINTS.contactSnapshot, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ contactName }),
+          });
 
-        if (!response.ok) {
-          throw new Error(`n8n webhook returned ${response.status}`);
+          if (!response.ok) {
+            throw new Error(`n8n webhook returned ${response.status}`);
+          }
+
+          const data = await response.json();
+          return res.json({ ...data, _source: "live" });
+        } catch (liveError) {
+          console.warn("Live data fetch failed, falling back to mock:", liveError);
+          const contact = getMockContact(contactName);
+          if (!contact) {
+            return res.status(404).json({ error: "Contact not found" });
+          }
+          return res.json({ ...contact, _source: "fallback" });
         }
-
-        const data = await response.json();
-        return res.json(data);
       } else {
-        // Return mock data
         const contact = getMockContact(contactName);
         if (!contact) {
           return res.status(404).json({ error: "Contact not found" });
         }
-        return res.json(contact);
+        return res.json({ ...contact, _source: "mock" });
       }
     } catch (error) {
       console.error("Error fetching contact snapshot:", error);
@@ -271,22 +280,25 @@ export async function registerRoutes(
   // Get waitlist summary
   app.post("/api/get-waitlist-summary", async (_req, res) => {
     try {
-      if (USE_LIVE_DATA) {
-        // Forward to n8n webhook
-        const response = await fetch(N8N_ENDPOINTS.waitlistSummary, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        });
+      if (DATA_MODE === "live") {
+        try {
+          const response = await fetch(N8N_ENDPOINTS.waitlistSummary, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+          });
 
-        if (!response.ok) {
-          throw new Error(`n8n webhook returned ${response.status}`);
+          if (!response.ok) {
+            throw new Error(`n8n webhook returned ${response.status}`);
+          }
+
+          const data = await response.json();
+          return res.json({ ...data, _source: "live" });
+        } catch (liveError) {
+          console.warn("Live data fetch failed, falling back to mock:", liveError);
+          return res.json({ ...getMockWaitlistSummary(), _source: "fallback" });
         }
-
-        const data = await response.json();
-        return res.json(data);
       } else {
-        // Return mock data
-        return res.json(getMockWaitlistSummary());
+        return res.json({ ...getMockWaitlistSummary(), _source: "mock" });
       }
     } catch (error) {
       console.error("Error fetching waitlist summary:", error);
@@ -297,12 +309,28 @@ export async function registerRoutes(
   // Get all waitlist contacts (for pipeline view)
   app.get("/api/waitlist-contacts", async (_req, res) => {
     try {
-      if (USE_LIVE_DATA) {
-        // In live mode, we'd need to fetch from n8n
-        // For now, return mock data as the n8n endpoint may not support full list
-        return res.json(getMockWaitlistContacts());
+      if (DATA_MODE === "live") {
+        try {
+          const response = await fetch(N8N_ENDPOINTS.waitlistSummary, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+          });
+
+          if (!response.ok) {
+            throw new Error(`n8n webhook returned ${response.status}`);
+          }
+
+          const data = await response.json();
+          if (data.contacts && Array.isArray(data.contacts)) {
+            return res.json({ contacts: data.contacts, _source: "live" });
+          }
+          return res.json({ contacts: getMockWaitlistContacts(), _source: "fallback" });
+        } catch (liveError) {
+          console.warn("Live data fetch failed, falling back to mock:", liveError);
+          return res.json({ contacts: getMockWaitlistContacts(), _source: "fallback" });
+        }
       } else {
-        return res.json(getMockWaitlistContacts());
+        return res.json({ contacts: getMockWaitlistContacts(), _source: "mock" });
       }
     } catch (error) {
       console.error("Error fetching waitlist contacts:", error);
@@ -312,7 +340,7 @@ export async function registerRoutes(
 
   // Get config (for frontend to know if live mode is enabled)
   app.get("/api/config", (_req, res) => {
-    res.json({ useLiveData: USE_LIVE_DATA });
+    res.json({ dataMode: DATA_MODE });
   });
 
   // Update contact status
@@ -327,7 +355,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: "status is required" });
       }
 
-      if (USE_LIVE_DATA) {
+      if (DATA_MODE === "live") {
         const response = await fetch(N8N_ENDPOINTS.updateStatus, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -369,7 +397,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: "note is required" });
       }
 
-      if (USE_LIVE_DATA) {
+      if (DATA_MODE === "live") {
         const response = await fetch(N8N_ENDPOINTS.addNote, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
