@@ -1,13 +1,14 @@
 import { useParams, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
 import { PageLayout } from "@/components/layout/page-layout";
 import { AIInsightPanel } from "@/components/ui/ai-insight-panel";
 import { getStatusLabel } from "@/components/ui/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { LoadingState } from "@/components/ui/loading-spinner";
+import { FallbackBanner } from "@/components/ui/fallback-banner";
 import {
   Select,
   SelectContent,
@@ -27,23 +28,33 @@ import {
   FileText,
   AlertCircle,
 } from "lucide-react";
-import { getContactSnapshot } from "@/lib/api";
+import { getContactSnapshot, type WithSource } from "@/lib/api";
+import { useDataSource } from "@/lib/data-source-context";
 import { contactStatuses, type ContactStatus, type ContactSnapshot } from "@shared/schema";
-import { useState } from "react";
 
 export default function ContactDetail() {
   const params = useParams();
   const contactName = decodeURIComponent(params.name || "");
+  const { updateSource, updateSyncTime, isFallback } = useDataSource();
   
   const { 
-    data: contact, 
+    data: contactData, 
     isLoading, 
     error 
-  } = useQuery<ContactSnapshot>({
+  } = useQuery<WithSource<ContactSnapshot>>({
     queryKey: ["/api/contact", contactName],
     queryFn: () => getContactSnapshot(contactName),
     enabled: !!contactName,
   });
+
+  const contact = contactData;
+
+  useEffect(() => {
+    if (contactData?._source) {
+      updateSource(contactData._source as "mock" | "live" | "fallback");
+      updateSyncTime();
+    }
+  }, [contactData, updateSource, updateSyncTime]);
 
   const [status, setStatus] = useState<ContactStatus | undefined>(undefined);
   const [newNote, setNewNote] = useState("");
@@ -95,6 +106,7 @@ export default function ContactDetail() {
 
   return (
     <PageLayout>
+      <FallbackBanner show={isFallback} />
       <div className="space-y-6">
         {/* Breadcrumb */}
         <div className="flex items-center gap-2 text-sm" data-testid="nav-breadcrumb">

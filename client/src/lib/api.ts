@@ -1,18 +1,21 @@
 import { apiRequest } from "./queryClient";
 import type { ContactSnapshot, WaitlistContact, WaitlistSummary, ContactStatus } from "@shared/schema";
 import { STATUS_MAP } from "./status-config";
+import type { DataSource, DataMode } from "./data-source-context";
 
-export async function getContactSnapshot(contactName: string): Promise<ContactSnapshot> {
+export type WithSource<T> = T & { _source?: DataSource };
+
+export async function getContactSnapshot(contactName: string): Promise<WithSource<ContactSnapshot>> {
   const response = await apiRequest("POST", "/api/get-contact-snapshot", { contactName });
   return response.json();
 }
 
-export async function getWaitlistSummary(): Promise<WaitlistSummary> {
+export async function getWaitlistSummary(): Promise<WithSource<WaitlistSummary>> {
   const response = await apiRequest("POST", "/api/get-waitlist-summary");
   return response.json();
 }
 
-export async function getWaitlistContacts(): Promise<WaitlistContact[]> {
+export async function getWaitlistContacts(): Promise<{ contacts: WaitlistContact[]; _source?: DataSource }> {
   const response = await fetch("/api/waitlist-contacts");
   if (!response.ok) {
     throw new Error("Failed to fetch waitlist contacts");
@@ -20,7 +23,7 @@ export async function getWaitlistContacts(): Promise<WaitlistContact[]> {
   return response.json();
 }
 
-export async function getConfig(): Promise<{ useLiveData: boolean }> {
+export async function getConfig(): Promise<{ dataMode: DataMode }> {
   const response = await fetch("/api/config");
   if (!response.ok) {
     throw new Error("Failed to fetch config");

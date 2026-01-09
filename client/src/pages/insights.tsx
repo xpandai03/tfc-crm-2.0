@@ -1,31 +1,38 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
 import { PageLayout } from "@/components/layout/page-layout";
 import { MetricCard } from "@/components/ui/metric-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { LoadingState } from "@/components/ui/loading-spinner";
-import { Download, RefreshCw, AlertCircle } from "lucide-react";
-import { getWaitlistSummary, getWaitlistContacts } from "@/lib/api";
+import { SyncStatus } from "@/components/ui/sync-status";
+import { FallbackBanner } from "@/components/ui/fallback-banner";
+import { Download, AlertCircle } from "lucide-react";
+import { getWaitlistSummary, getWaitlistContacts, type WithSource } from "@/lib/api";
+import { useDataSource } from "@/lib/data-source-context";
 import type { WaitlistSummary, WaitlistContact } from "@shared/schema";
 
 export default function Insights() {
+  const { updateSource, updateSyncTime, lastSyncTime, isFallback } = useDataSource();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   const { 
-    data: summary, 
+    data: summaryData, 
     isLoading: summaryLoading, 
     error: summaryError,
     refetch: refetchSummary,
-  } = useQuery<WaitlistSummary>({
+  } = useQuery<WithSource<WaitlistSummary>>({
     queryKey: ["/api/waitlist-summary"],
     queryFn: getWaitlistSummary,
   });
 
   const { 
-    data: contacts, 
+    data: contactsData, 
     isLoading: contactsLoading, 
     error: contactsError,
     refetch: refetchContacts,
-  } = useQuery<WaitlistContact[]>({
+  } = useQuery<{ contacts: WaitlistContact[]; _source?: string }>({
     queryKey: ["/api/waitlist-contacts"],
     queryFn: getWaitlistContacts,
   });
@@ -33,9 +40,20 @@ export default function Insights() {
   const isLoading = summaryLoading || contactsLoading;
   const error = summaryError || contactsError;
 
-  const handleRefresh = () => {
-    refetchSummary();
-    refetchContacts();
+  const summary = summaryData;
+  const contacts = contactsData?.contacts;
+
+  useEffect(() => {
+    if (summaryData?._source) {
+      updateSource(summaryData._source as "mock" | "live" | "fallback");
+      updateSyncTime();
+    }
+  }, [summaryData, updateSource, updateSyncTime]);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await Promise.all([refetchSummary(), refetchContacts()]);
+    setIsRefreshing(false);
   };
 
   if (isLoading) {
@@ -81,6 +99,7 @@ export default function Insights() {
 
   return (
     <PageLayout>
+      <FallbackBanner show={isFallback} />
       <div className="space-y-8">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
@@ -90,10 +109,11 @@ export default function Insights() {
             </p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={handleRefresh} data-testid="button-refresh">
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Refresh
-            </Button>
+            <SyncStatus 
+              lastSyncTime={lastSyncTime} 
+              onRefresh={handleRefresh}
+              isRefreshing={isRefreshing}
+            />
             <Button variant="outline" size="sm" data-testid="button-export">
               <Download className="h-4 w-4 mr-2" />
               Export

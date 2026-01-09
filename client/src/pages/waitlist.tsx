@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
@@ -18,17 +18,22 @@ import { DraggableCard } from "@/components/kanban/draggable-card";
 import { QuickNoteModal } from "@/components/ui/quick-note-modal";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { LoadingState } from "@/components/ui/loading-spinner";
+import { SyncStatus } from "@/components/ui/sync-status";
+import { FallbackBanner } from "@/components/ui/fallback-banner";
 import { useToast } from "@/hooks/use-toast";
 import { AlertCircle } from "lucide-react";
 import { getWaitlistContacts, updateContactStatus, addNoteToContact } from "@/lib/api";
+import { useDataSource } from "@/lib/data-source-context";
 import { PIPELINE_COLUMNS, STATUS_LABELS } from "@/lib/status-config";
 import type { ContactStatus, WaitlistContact } from "@shared/schema";
 
 export default function Waitlist() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { updateSource, updateSyncTime, lastSyncTime, isFallback } = useDataSource();
   const [activeCard, setActiveCard] = useState<WaitlistContact | null>(null);
   const [noteModalContact, setNoteModalContact] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -42,35 +47,54 @@ export default function Waitlist() {
   );
 
   const { 
-    data: contacts, 
+    data: contactsData, 
     isLoading, 
-    error 
-  } = useQuery<WaitlistContact[]>({
+    error,
+    refetch: refetchContacts,
+  } = useQuery<{ contacts: WaitlistContact[]; _source?: string }>({
     queryKey: ["/api/waitlist-contacts"],
     queryFn: getWaitlistContacts,
   });
+
+  const contacts = contactsData?.contacts;
+
+  useEffect(() => {
+    if (contactsData?._source) {
+      updateSource(contactsData._source as "mock" | "live" | "fallback");
+      updateSyncTime();
+    }
+  }, [contactsData, updateSource, updateSyncTime]);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await refetchContacts();
+    setIsRefreshing(false);
+  };
 
   const updateStatusMutation = useMutation({
     mutationFn: ({ contactName, status }: { contactName: string; status: ContactStatus }) =>
       updateContactStatus(contactName, status),
     onMutate: async ({ contactName, status }) => {
       await queryClient.cancelQueries({ queryKey: ["/api/waitlist-contacts"] });
-      const previousContacts = queryClient.getQueryData<WaitlistContact[]>(["/api/waitlist-contacts"]);
-      queryClient.setQueryData<WaitlistContact[]>(["/api/waitlist-contacts"], (old) => {
+      const previousData = queryClient.getQueryData<{ contacts: WaitlistContact[]; _source?: string }>(["/api/waitlist-contacts"]);
+      queryClient.setQueryData<{ contacts: WaitlistContact[]; _source?: string }>(["/api/waitlist-contacts"], (old) => {
         if (!old) return old;
-        return old.map((c) =>
-          c.name === contactName ? { ...c, status } : c
-        );
+        return {
+          ...old,
+          contacts: old.contacts.map((c) =>
+            c.name === contactName ? { ...c, status } : c
+          ),
+        };
       });
-      return { previousContacts };
+      return { previousData };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/waitlist-summary"] });
     },
     onError: (_error, variables, context) => {
-      if (context?.previousContacts) {
-        queryClient.setQueryData(["/api/waitlist-contacts"], context.previousContacts);
+      if (context?.previousData) {
+        queryClient.setQueryData(["/api/waitlist-contacts"], context.previousData);
       }
       queryClient.invalidateQueries({ queryKey: ["/api/waitlist-summary"] });
       toast({
@@ -146,7 +170,7 @@ export default function Waitlist() {
     );
   }
 
-  if (error || !contacts) {
+  if (error || !contacts || !Array.isArray(contacts)) {
     return (
       <PageLayout>
         <div className="flex flex-col items-center justify-center py-16 gap-3">
@@ -158,16 +182,24 @@ export default function Waitlist() {
   }
 
   const getContactsByStatus = (status: ContactStatus) =>
-    contacts.filter((c) => c.status === status);
+    contacts.filter((c: WaitlistContact) => c.status === status);
 
   return (
     <PageLayout>
+      <FallbackBanner show={isFallback} />
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground" data-testid="text-page-title">Waitlist Pipeline</h1>
-          <p className="text-sm text-muted-foreground mt-1" data-testid="text-page-subtitle">
-            Drag cards between columns to update status
-          </p>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="text-2xl font-semibold text-foreground" data-testid="text-page-title">Waitlist Pipeline</h1>
+            <p className="text-sm text-muted-foreground mt-1" data-testid="text-page-subtitle">
+              Drag cards between columns to update status
+            </p>
+          </div>
+          <SyncStatus 
+            lastSyncTime={lastSyncTime} 
+            onRefresh={handleRefresh}
+            isRefreshing={isRefreshing}
+          />
         </div>
 
         <DndContext

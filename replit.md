@@ -19,12 +19,20 @@ The app runs on port 5000.
 
 ## Switching Mock → Live Mode
 
-In `server/routes.ts`, toggle the constant:
+In both `server/routes.ts` and `client/src/lib/config.ts`, toggle the constant:
 ```typescript
-const USE_LIVE_DATA = false; // Set to true for live n8n webhooks
+const DATA_MODE: DataMode = "mock"; // Change to "live" for n8n webhooks
 ```
 
-When `USE_LIVE_DATA` is `true`, the API routes will forward requests to the n8n webhooks. When `false` (default), mock data is used.
+When `DATA_MODE` is `"live"`, the API routes will:
+1. Forward requests to the n8n webhooks
+2. Fall back to mock data if live fetch fails
+3. Return `_source` field ("mock", "live", or "fallback") with each response
+
+The UI automatically displays:
+- Data source indicator in header (Mock data / Live Excel data / Fallback Mode)
+- "Last synced" timestamp with Refresh button on each page
+- Warning banner when using fallback data
 
 ## Project Structure
 

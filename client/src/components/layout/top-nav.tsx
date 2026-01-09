@@ -1,6 +1,7 @@
 import { Link, useLocation } from "wouter";
-import { Home, Users, User, BarChart3 } from "lucide-react";
+import { Home, Users, BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useDataSource } from "@/lib/data-source-context";
 
 const navItems = [
   { href: "/", label: "Today", icon: Home },
@@ -10,6 +11,17 @@ const navItems = [
 
 export function TopNav() {
   const [location] = useLocation();
+  const { dataMode, isFallback } = useDataSource();
+
+  const getModeLabel = () => {
+    if (isFallback) return "Fallback Mode";
+    return dataMode === "live" ? "Live Excel data" : "Mock data";
+  };
+
+  const getModeColor = () => {
+    if (isFallback) return "bg-amber-500";
+    return dataMode === "live" ? "bg-blue-500" : "bg-green-500";
+  };
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -49,9 +61,9 @@ export function TopNav() {
           })}
         </nav>
 
-        <div className="flex items-center gap-2 text-xs text-muted-foreground border-l pl-4 ml-2" data-testid="status-demo-mode">
-          <span className="hidden md:inline">Demo Mode</span>
-          <div className="h-2 w-2 rounded-full bg-green-500" />
+        <div className="flex items-center gap-2 text-xs text-muted-foreground border-l pl-4 ml-2" data-testid="status-data-mode">
+          <span className="hidden md:inline">{getModeLabel()}</span>
+          <div className={cn("h-2 w-2 rounded-full", getModeColor())} />
         </div>
       </div>
     </header>

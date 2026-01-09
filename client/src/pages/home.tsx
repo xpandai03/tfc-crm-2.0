@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
 import { PageLayout } from "@/components/layout/page-layout";
 import { MetricCard } from "@/components/ui/metric-card";
 import { PriorityCard } from "@/components/ui/priority-card";
@@ -6,31 +7,56 @@ import { AIInsightPanel } from "@/components/ui/ai-insight-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { LoadingState } from "@/components/ui/loading-spinner";
+import { SyncStatus } from "@/components/ui/sync-status";
+import { FallbackBanner } from "@/components/ui/fallback-banner";
 import { AlertTriangle, Clock, CalendarCheck, AlertCircle } from "lucide-react";
-import { getWaitlistSummary, getWaitlistContacts } from "@/lib/api";
+import { getWaitlistSummary, getWaitlistContacts, type WithSource } from "@/lib/api";
+import { useDataSource } from "@/lib/data-source-context";
 import type { WaitlistSummary, WaitlistContact } from "@shared/schema";
 
 export default function Home() {
+  const queryClient = useQueryClient();
+  const { updateSource, updateSyncTime, lastSyncTime, isFallback } = useDataSource();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   const { 
-    data: summary, 
+    data: summaryData, 
     isLoading: summaryLoading, 
-    error: summaryError 
-  } = useQuery<WaitlistSummary>({
+    error: summaryError,
+    refetch: refetchSummary,
+  } = useQuery<WithSource<WaitlistSummary>>({
     queryKey: ["/api/waitlist-summary"],
     queryFn: getWaitlistSummary,
   });
 
   const { 
-    data: contacts, 
+    data: contactsData, 
     isLoading: contactsLoading, 
-    error: contactsError 
-  } = useQuery<WaitlistContact[]>({
+    error: contactsError,
+    refetch: refetchContacts,
+  } = useQuery<{ contacts: WaitlistContact[]; _source?: string }>({
     queryKey: ["/api/waitlist-contacts"],
     queryFn: getWaitlistContacts,
   });
 
   const isLoading = summaryLoading || contactsLoading;
   const error = summaryError || contactsError;
+
+  const summary = summaryData;
+  const contacts = contactsData?.contacts;
+
+  useEffect(() => {
+    if (summaryData?._source) {
+      updateSource(summaryData._source as "mock" | "live" | "fallback");
+      updateSyncTime();
+    }
+  }, [summaryData, updateSource, updateSyncTime]);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await Promise.all([refetchSummary(), refetchContacts()]);
+    setIsRefreshing(false);
+  };
 
   if (isLoading) {
     return (
@@ -69,12 +95,20 @@ export default function Home() {
 
   return (
     <PageLayout>
+      <FallbackBanner show={isFallback} />
       <div className="space-y-8">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground" data-testid="text-page-title">Today</h1>
-          <p className="text-sm text-muted-foreground mt-1" data-testid="text-page-subtitle">
-            What needs your attention right now
-          </p>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="text-2xl font-semibold text-foreground" data-testid="text-page-title">Today</h1>
+            <p className="text-sm text-muted-foreground mt-1" data-testid="text-page-subtitle">
+              What needs your attention right now
+            </p>
+          </div>
+          <SyncStatus 
+            lastSyncTime={lastSyncTime} 
+            onRefresh={handleRefresh}
+            isRefreshing={isRefreshing}
+          />
         </div>
 
         {/* Metrics Row */}
