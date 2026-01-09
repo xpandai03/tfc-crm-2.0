@@ -1,0 +1,268 @@
+**REPLIT AGENT PROMPT --- CLEAR FRAMEWORK (FIX LIVE DATA INTERPRETATION)**
+========================================================================
+
+**C --- CONTEXT**
+---------------
+
+The CRM UI is now connected to **live Excel data via n8n**.
+
+-   The backend and webhooks are working correctly
+
+-   Aggregated counts (e.g. Active Waitlist, Over 60 Days) are real
+
+-   The issue is **frontend interpretation**, not data access
+
+**Do NOT modify n8n workflows.**
+
+**Do NOT add new webhooks.**
+
+**Do NOT fetch raw Excel rows in the UI.**
+
+Your task is to **correct how the frontend interprets live spreadsheet data** so the UI matches how TFC actually operates.
+
+* * * * *
+
+**L --- LOGIC PROBLEM**
+---------------------
+
+The UI currently breaks because it:
+
+-   Assumes string-based statuses instead of numeric codes
+
+-   Does not understand that *multiple status codes map to one workflow stage*
+
+-   Assumes fields (e.g. byStatus) that do NOT exist in live payloads
+
+-   Crashes when live data returns null or missing aggregates
+
+-   Treats mock schema as truth instead of spreadsheet semantics
+
+This causes:
+
+-   Incorrect Kanban grouping
+
+-   Incorrect Insights metrics
+
+-   undefined values (e.g. Avg Wait Time)
+
+-   Runtime crashes
+
+* * * * *
+
+**E --- EXPECTED BEHAVIOR**
+-------------------------
+
+After this fix:
+
+-   All live contacts appear in exactly **one Kanban column**
+
+-   Kanban columns reflect **workflow stages**, not raw codes
+
+-   Insights never crash
+
+-   Metrics match spreadsheet logic
+
+-   Unknown or new status codes are handled safely
+
+-   UI never shows undefined to users
+
+* * * * *
+
+**A --- ACTIONS REQUIRED**
+------------------------
+
+### **STEP 1 --- CENTRALIZE STATUS SEMANTICS (MANDATORY)**
+
+Create **one shared file**:
+
+/lib/status.ts
+
+```
+export const STATUS_GROUPS = {
+  intake: [100],
+  waiting: [101, 102],
+  declined: [103],
+  inactive: [104, 400],
+
+  ready_to_schedule: [200],
+  scheduled: [202],
+
+  pending_scheduling: [200, 201, 203],
+  pm_review: [300],
+};
+```
+
+```
+export const STATUS_LABELS = {
+  100: "New -- No Outreach",
+  101: "Left Voicemail",
+  102: "Response Received",
+  103: "Declined Services",
+  104: "Inactive -- No Response",
+
+  200: "Ready to Schedule",
+  201: "Left Voicemail",
+  202: "Scheduled",
+  203: "No Response",
+  204: "Declined",
+
+  300: "Submitted for Review",
+  400: "Insurance Not Accepted",
+};
+```
+
+❗ **All UI logic must reference this file. No inline status logic allowed.**
+
+* * * * *
+
+### **STEP 2 --- FIX KANBAN GROUPING (LIVE DATA)**
+
+Update the Waitlist Pipeline so that:
+
+-   Columns represent **logical workflow stages**
+
+-   A contact belongs to a column if:
+
+```
+STATUS_GROUPS[columnKey].includes(contact.statusCode)
+```
+
+Rules:
+
+-   Every contact appears in exactly **one column**
+
+-   No contact is dropped due to unrecognized codes
+
+-   Unknown status codes go to:
+
+    > "Other / Needs Review"
+
+* * * * *
+
+### **STEP 3 --- FIX INSIGHTS COMPUTATION (CRASH ELIMINATION)**
+
+Do **NOT** assume fields like summary.byStatus exist.
+
+Instead:
+
+-   Derive all Insight metrics **client-side** using:
+
+    -   statusCode
+
+    -   daysOnWaitlist
+
+    -   STATUS_GROUPS
+
+Add null-safe guards everywhere:
+
+```
+if (!summary || !Array.isArray(summary.contacts)) {
+  return <EmptyState />;
+}
+```
+
+Never call:
+
+```
+Object.values(undefined)
+```
+
+* * * * *
+
+### **STEP 4 --- CORRECT METRIC DEFINITIONS (MATCH SPREADSHEET)**
+
+Use these exact definitions:
+
+-   **Active Waitlist**
+
+    Contacts NOT in:
+
+    -   Declined → 103, 204
+
+    -   Inactive → 104, 400
+
+-   **Over 60 Days**
+
+    daysOnWaitlist >= 60 AND Active
+
+-   **Ready to Schedule**
+
+    statusCode === 200
+
+-   **Average Wait Time**
+
+    Average daysOnWaitlist across **Active Waitlist only**
+
+If a metric cannot be computed:
+
+-   Display "---"
+
+-   Never display undefined
+
+-   Never crash
+
+Document these assumptions in code comments.
+
+* * * * *
+
+### **STEP 5 --- DEFENSIVE UI FALLBACKS**
+
+-   If live data is partial or malformed:
+
+    -   Show placeholders
+
+    -   Preserve layout
+
+    -   Do not break rendering
+
+-   Live data failure ≠ UI failure
+
+* * * * *
+
+**R --- RESULT / ACCEPTANCE CRITERIA**
+------------------------------------
+
+This task is complete when:
+
+-   Kanban accurately reflects spreadsheet status logic
+
+-   Insights page never crashes
+
+-   Metrics match Excel reality
+
+-   Status meaning is explicit and readable
+
+-   UI behaves identically in mock and live modes
+
+Include a short explanation of:
+
+-   Where status semantics live
+
+-   How Kanban grouping works
+
+-   How Insights avoid crashes
+
+* * * * *
+
+**CONSTRAINTS (STRICT)**
+------------------------
+
+-   ❌ Do NOT modify n8n payloads
+
+-   ❌ Do NOT fetch raw Excel rows
+
+-   ❌ Do NOT duplicate status logic
+
+-   ❌ Do NOT hardcode assumptions
+
+-   ✅ Centralize semantics
+
+-   ✅ Defensive UI coding
+
+-   ✅ Live data safety first
+
+* * * * *
+
+### **END PROMPT**
+
+* * * * *

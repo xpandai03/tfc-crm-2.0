@@ -9,18 +9,19 @@
  */
 
 // Status code to human-readable label mapping
+// Labels match the exact semantics from the TFC spreadsheet
 export const STATUS_LABELS: Record<number, string> = {
-  100: "New",
+  100: "New -- No Outreach",
   101: "Left Voicemail",
   102: "Response Received",
-  103: "Declined",
-  104: "Inactive",
+  103: "Declined Services",
+  104: "Inactive -- No Response",
   200: "Ready to Schedule",
   201: "Left Voicemail",
   202: "Scheduled",
   203: "No Response",
   204: "Declined",
-  300: "PM Review",
+  300: "Submitted for Review",
   400: "Insurance Not Accepted",
 };
 

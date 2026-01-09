@@ -106,19 +106,19 @@ Default endpoints (if env vars not set):
 All status code semantics are centralized in `client/src/lib/status-config.ts`:
 
 ```typescript
-// Status code to label mapping
+// Status code to label mapping (matches TFC spreadsheet)
 STATUS_LABELS = {
-  100: "New",
+  100: "New -- No Outreach",
   101: "Left Voicemail",
   102: "Response Received",
-  103: "Declined",
-  104: "Inactive",
+  103: "Declined Services",
+  104: "Inactive -- No Response",
   200: "Ready to Schedule",
   201: "Left Voicemail",
   202: "Scheduled",
   203: "No Response",
   204: "Declined",
-  300: "PM Review",
+  300: "Submitted for Review",
   400: "Insurance Not Accepted",
 };
 
@@ -141,6 +141,27 @@ Key functions:
 - `getStatusLabel(code)` - Returns human-readable label for a status code
 - `stringStatusToCode(status)` - Converts legacy string status to numeric code
 - `safeNumber(val)` / `safeString(val)` - Safe display helpers that return "---" for null/undefined
+
+### How Kanban Grouping Works
+- Each pipeline column maps to a set of status codes via `STATUS_GROUPS`
+- A contact appears in a column if: `STATUS_GROUPS[columnKey].includes(contact.statusCode)`
+- Every contact appears in exactly one column
+- Unknown status codes go to a "Needs Review" column
+- Declined and inactive contacts are filtered out of the active pipeline
+
+### How Insights Avoids Crashes
+- All metrics are computed client-side from the contacts array
+- Frontend-computed metrics are the source of truth when contacts are loaded
+- Summary data is only used as fallback during initial load (before contacts are available)
+- Null-safe guards on all data access: `if (!contacts || !Array.isArray(contacts))`
+- `safeNumber()` and `safeString()` helpers display "---" instead of undefined
+- Never call `Object.values(undefined)` - always check first
+
+### Metric Definitions (Match Spreadsheet)
+- **Active Waitlist**: Contacts NOT in declined (103, 204) or inactive (104, 400)
+- **Over 60 Days**: `daysOnWaitlist >= 60` AND Active
+- **Ready to Schedule**: `statusCode === 200`
+- **Average Wait Time**: Average `daysOnWaitlist` across Active Waitlist only
 
 ## Intentionally Left Out
 
