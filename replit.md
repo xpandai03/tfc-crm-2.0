@@ -168,11 +168,33 @@ The UI tracks data sources per-screen to ensure transparency:
 
 ```typescript
 type DataSource = "live" | "fallback" | "mock";
+type DataMode = "mock" | "live";
 ```
 
+- **dataMode**: User-controlled mode (mock or live)
 - **summarySource**: Tracks `/api/get-waitlist-summary` response source
 - **contactsSource**: Tracks `/api/waitlist-contacts` response source
-- **isFullyLive**: True only when both summary AND contacts are live
+- **isFullyLive**: True only when dataMode is "live" AND both summary AND contacts are live
+
+### User-Controlled Data Mode Toggle
+
+The header displays the current data mode with explicit toggle controls:
+
+- **Mock Mode**: Shows "Mock data" indicator with "Enable Live Excel" button
+- **Live Mode**: Shows "Live Excel data" indicator with "Use Demo" button
+- **Enabling**: Shows loading spinner while testing connection
+
+When user clicks "Enable Live Excel":
+1. Tests connection to `/api/get-waitlist-summary`
+2. If response has `_source: "live"`, switches to live mode
+3. Refetches all data and enables Kanban interactions
+4. If connection fails, shows error toast and stays in mock mode
+
+**Key Principles:**
+- No silent mode switching - user must explicitly enable/disable
+- Refresh button does NOT change modes - only the toggle does
+- Demo mode is safe and controllable
+- Fallback is recoverable without page reload
 
 Screen-specific behavior:
 - **Today/Insights**: Show "Aggregate metrics are live — contact data is demo" when summary is live but contacts are fallback

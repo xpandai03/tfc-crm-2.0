@@ -32,12 +32,13 @@ import type { WaitlistSummary, WaitlistContact } from "@shared/schema";
  * - Avg Wait Time: average of daysOnWaitlist across active waitlist only
  */
 export default function Insights() {
-  const { updateSummarySource, updateContactsSource, updateSyncTime, lastSyncTime, summarySource, contactsSource, isContactsLive } = useDataSource();
+  const { updateSummarySource, updateContactsSource, updateSyncTime, lastSyncTime, dataMode, summarySource, contactsSource, isContactsLive, isFullyLive } = useDataSource();
   const [isRefreshing, setIsRefreshing] = useState(false);
   
   // Check data sources for honest indicators
-  const isSummaryLive = summarySource === "live";
-  const isFullyLive = isSummaryLive && isContactsLive;
+  // Only show as live when user has explicitly enabled live mode AND data is actually live
+  const isSummaryLive = dataMode === "live" && summarySource === "live";
+  const isDataFullyLive = dataMode === "live" && isFullyLive;
 
   const { 
     data: summaryData, 
@@ -250,13 +251,15 @@ export default function Insights() {
   return (
     <PageLayout>
       <FallbackBanner 
-        show={!isFullyLive} 
+        show={!isDataFullyLive} 
         message={
-          isSummaryLive && !isContactsLive 
-            ? "Aggregate metrics are live — contact-level data is demo"
-            : summarySource === "fallback" 
-              ? "Live data temporarily unavailable — showing cached data"
-              : "Viewing demo data"
+          dataMode === "mock"
+            ? "Viewing demo data"
+            : isSummaryLive && !isContactsLive 
+              ? "Aggregate metrics are live — contact-level data is demo"
+              : summarySource === "fallback" 
+                ? "Live data temporarily unavailable — showing cached data"
+                : "Viewing demo data"
         }
         variant="info"
       />

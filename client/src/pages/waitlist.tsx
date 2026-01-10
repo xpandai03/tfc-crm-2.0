@@ -41,13 +41,14 @@ import type { WaitlistContact } from "@shared/schema";
 export default function Waitlist() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { updateContactsSource, updateSyncTime, lastSyncTime, isContactsLive, summarySource } = useDataSource();
+  const { updateContactsSource, updateSyncTime, lastSyncTime, dataMode, isContactsLive, summarySource } = useDataSource();
   const [activeCard, setActiveCard] = useState<WaitlistContact | null>(null);
   const [noteModalContact, setNoteModalContact] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   
-  // Determine if we're in demo mode (contacts not live)
-  const isDemoMode = !isContactsLive;
+  // Determine if we're in demo mode - use explicit dataMode for control
+  // isDemoMode = true when user has not explicitly enabled live mode OR contacts aren't live
+  const isDemoMode = dataMode === "mock" || !isContactsLive;
 
   const sensors = useSensors(
     useSensor(PointerSensor, {

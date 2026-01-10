@@ -1,0 +1,195 @@
+**C --- CONTEXT**
+---------------
+
+The CRM UI correctly distinguishes between **live** and **fallback** data.
+
+-   Live aggregate data works
+
+-   Fallback Kanban works
+
+-   UI is honest about data sources
+
+However, the user currently has **no way to enable live contact-level data** after fallback is triggered.
+
+* * * * *
+
+**L --- LOGIC GAP**
+-----------------
+
+The app:
+
+-   Enters fallback mode automatically
+
+-   Disables Kanban interactions
+
+-   Shows demo rows
+
+-   Provides **no user-controlled way to retry live data**
+
+This traps the UI in demo mode indefinitely.
+
+* * * * *
+
+**E --- EXPECTED BEHAVIOR**
+-------------------------
+
+The user must be able to:
+
+-   Explicitly attempt to enable live Excel data
+
+-   See whether live data is available
+
+-   Switch the app into live mode **without redeploying**
+
+* * * * *
+
+**A --- ACTIONS REQUIRED**
+------------------------
+
+### **STEP 1 --- GLOBAL DATA MODE STATE**
+
+Introduce a runtime state:
+
+```
+type DataMode = "mock" | "live";
+```
+
+This must:
+
+-   Live in a global context or top-level provider
+
+-   Default to "mock"
+
+-   Be switchable at runtime
+
+* * * * *
+
+### **STEP 2 --- HEADER TOGGLE UI**
+
+In the top-right header (where data source is shown):
+
+-   When in mock mode, show:
+
+```
+Mock data - Enable Live Excel
+```
+
+-   "Enable Live Excel" must be clickable
+
+* * * * *
+
+### **STEP 3 --- ENABLE LIVE FLOW**
+
+When user clicks **Enable Live Excel**:
+
+1.  Attempt a live fetch from:
+
+```
+/api/get-waitlist-summary
+```
+
+1.
+
+2.  If the response contains:
+
+```
+{ "_source": "live" }
+```
+
+1.  then:
+
+    -   Set dataMode = "live"
+
+    -   Re-fetch all screens
+
+    -   Enable Kanban interactions
+
+    -   Update header to:
+
+```
+Live Excel data
+```
+
+1.
+
+2.  If the fetch fails or returns fallback:
+
+    -   Keep dataMode = "mock"
+
+    -   Show banner:
+
+```
+Live Excel unavailable --- still showing demo data
+```
+
+* * * * *
+
+### **STEP 4 --- DATA MODE ENFORCEMENT**
+
+Update all screens to follow this rule:
+
+-   **If** **dataMode === "live"**
+
+    -   Use live API routes
+
+    -   Enable drag & quick-add note
+
+-   **If** **dataMode === "mock"**
+
+    -   Use mock data
+
+    -   Disable interactions
+
+    -   Show demo banner
+
+Do **not** auto-switch modes silently.
+
+* * * * *
+
+### **STEP 5 --- REFRESH BEHAVIOR**
+
+-   Refresh button should:
+
+    -   Re-fetch data using current dataMode
+
+    -   NOT change modes automatically
+
+Only the explicit toggle changes modes.
+
+* * * * *
+
+**R --- RESULT / ACCEPTANCE CRITERIA**
+------------------------------------
+
+This task is complete when:
+
+-   User can explicitly enable live data
+
+-   Kanban switches from demo → live when available
+
+-   Fallback is recoverable without reload
+
+-   UI never lies about data source
+
+-   Demo is safe and controllable
+
+* * * * *
+
+**CONSTRAINTS**
+---------------
+
+-   ❌ No backend changes
+
+-   ❌ No new n8n workflows
+
+-   ❌ No auth
+
+-   ❌ No silent mode switching
+
+-   ✅ Explicit user intent required
+
+* * * * *
+
+### **END PROMPT**
+
+* * * * *
