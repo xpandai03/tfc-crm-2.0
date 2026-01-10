@@ -31,7 +31,7 @@ interface DataSourceContextType {
   updateContactsSource: (source: DataSource) => void;
   updateSyncTime: () => void;
   enableLiveMode: (queryClient: QueryClient) => Promise<EnableLiveResult>;
-  disableLiveMode: () => void;
+  disableLiveMode: (queryClient: QueryClient) => void;
 }
 
 const DataSourceContext = createContext<DataSourceContextType | undefined>(undefined);
@@ -87,15 +87,21 @@ export function DataSourceProvider({ children }: { children: React.ReactNode }) 
       
       // Only succeed if BOTH are live - this ensures Kanban actually works
       if (summaryIsLive && contactsAreLive) {
-        // CRITICAL: Hydrate cache FIRST, before updating state
-        // This ensures Kanban has live rows when it unlocks
+        // CRITICAL: Hydrate ALL caches FIRST, before updating state
+        // This ensures all screens have live data when mode switches
+        
+        // 1. Hydrate waitlist summary and contacts
         queryClient.setQueryData(["/api/waitlist-summary"], summaryData);
         queryClient.setQueryData(["/api/waitlist-contacts"], contactsData);
         
-        // Invalidate contact detail queries to refresh them
-        await queryClient.invalidateQueries({ queryKey: ["/api/contact"] });
+        // 2. Invalidate ALL related queries to force refetch with live data
+        // This ensures Home, Insights, and Contact Detail pages all refresh
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["/api/contact"] }),
+          queryClient.invalidateQueries({ queryKey: ["/api/config"] }),
+        ]);
         
-        // NOW update state - Kanban will unlock with live data already in cache
+        // NOW update state - all screens will have live data in cache
         setDataMode("live");
         setSummarySource("live");
         setContactsSource("live");
@@ -105,11 +111,8 @@ export function DataSourceProvider({ children }: { children: React.ReactNode }) 
         return { success: true };
       } else if (summaryIsLive) {
         // Partial success - summary is live but contacts are not
-        // Keep mock mode but update sources for accurate display
-        setSummarySource("live");
-        if (contactsData?._source) {
-          setContactsSource(contactsData._source);
-        }
+        // Keep mock mode, but inform user of partial live state
+        // Do NOT update sources - keep them accurate to current cache
         setIsEnablingLive(false);
         return { success: false, partial: true };
       } else {
@@ -124,11 +127,18 @@ export function DataSourceProvider({ children }: { children: React.ReactNode }) 
     }
   }, []);
 
-  const disableLiveMode = useCallback(() => {
+  const disableLiveMode = useCallback((queryClient: QueryClient) => {
+    // Update state first
     setDataMode("mock");
     setSummarySource("mock");
     setContactsSource("mock");
     setLastSource("mock");
+    
+    // Invalidate only data-related queries (not config/auth)
+    // This forces refetch from mock endpoints on next render
+    queryClient.invalidateQueries({ queryKey: ["/api/waitlist-summary"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/contact"] });
   }, []);
 
   const isContactsLive = contactsSource === "live";

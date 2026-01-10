@@ -43,8 +43,8 @@ export function TopNav() {
   };
 
   const handleDisableLive = () => {
-    disableLiveMode();
-    queryClient.invalidateQueries();
+    // Pass queryClient to disableLiveMode so it can clear caches
+    disableLiveMode(queryClient);
     toast({
       title: "Switched to demo mode",
       description: "Now showing mock data",
