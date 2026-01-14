@@ -41,14 +41,10 @@ import type { WaitlistContact } from "@shared/schema";
 export default function Waitlist() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { updateContactsSource, updateSyncTime, lastSyncTime, dataMode, isContactsLive, summarySource } = useDataSource();
+  const { updateContactsSource, updateSyncTime, lastSyncTime } = useDataSource();
   const [activeCard, setActiveCard] = useState<WaitlistContact | null>(null);
   const [noteModalContact, setNoteModalContact] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  
-  // Determine if we're in demo mode - use explicit dataMode for control
-  // isDemoMode = true when user has not explicitly enabled live mode OR contacts aren't live
-  const isDemoMode = dataMode === "mock" || !isContactsLive;
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -72,6 +68,14 @@ export default function Waitlist() {
   });
 
   const contacts = contactsData?.contacts;
+  
+  // Waitlist page is authoritative over its own data source
+  // Use board response _source directly - ignore context state
+  const isLiveBoard = contactsData?._source === "live";
+  const isDemoMode = !isLiveBoard;
+  
+  // Debug log to verify data source
+  console.log("Waitlist board source:", contactsData?._source);
 
   useEffect(() => {
     if (contactsData?._source) {
@@ -254,10 +258,7 @@ export default function Waitlist() {
 
   // Generate demo mode banner message
   const getDemoBannerMessage = () => {
-    if (summarySource === "live") {
-      return "Contact-level live data not enabled — showing demo rows. Aggregate metrics are live.";
-    }
-    return "Showing demo data. Connect to live Excel to enable real-time updates.";
+    return "Showing demo data. Click 'Enable Live Excel' in header to connect.";
   };
 
   return (

@@ -1,0 +1,129 @@
+### **REPLIT AGENT PROMPT — FIX LIVE MODE GATE FOR WAITLIST**
+
+**Context**
+
+The backend is now correct.
+
+The n8n webhook
+
+/webhook/get-waitlist-board
+
+returns valid live data with:
+
+```
+{ "_source": "live", "contacts": [...] }
+```
+
+However, the UI still shows:
+
+> “Partial live data available — staying in demo mode”
+
+This is a **frontend logic bug**, not a data issue.
+
+* * *
+
+### **❌ What is wrong**
+
+The Waitlist page still blocks live mode due to **outdated gating logic**, likely checking:
+
+-   summary source
+-   legacy fallback flags
+-   mismatched context providers
+-   multiple conditions instead of the board source
+* * *
+
+### **✅ What to change (REQUIRED)**
+
+#### **1\. Make the Waitlist page authoritative over its own data**
+
+On the Waitlist page **only**:
+
+-   Determine live mode using **board data**, not summary data.
+
+```
+const isLiveBoard = boardData?._source === "live";
+```
+
+#### **2\. Replace all “partial live” / “demo mode” checks with:**
+
+```
+if (!isLiveBoard) {
+  showDemoBanner();
+  disableInteractions();
+} else {
+  enableKanban();
+}
+```
+
+#### **3\. Remove or ignore:**
+
+-   summary \_source
+-   global fallback flags
+-   legacy isLiveDataEnabled booleans
+-   any “aggregate + contacts” combined logic
+
+The **Waitlist page does not care about aggregates**.
+
+* * *
+
+### **4\. Ensure the Waitlist page fetches ONLY:**
+
+```
+GET /api/get-waitlist-board
+```
+
+Not:
+
+-   /api/waitlist-contacts
+-   mock providers
+-   demo fixtures
+* * *
+
+### **5\. Enable interactions when live**
+
+When isLiveBoard === true:
+
+-   Enable drag & drop
+-   Enable quick-add note
+-   Hide “demo rows” banner
+-   Hide “partial live” warning
+* * *
+
+### **6\. Debug aid (temporary)**
+
+Add a console log:
+
+```
+console.log("Waitlist board source:", boardData?._source);
+```
+
+Confirm it prints "live" when Excel is enabled.
+
+* * *
+
+### **❗ Constraints**
+
+-   ❌ Do NOT modify n8n
+-   ❌ Do NOT change webhook responses
+-   ❌ Do NOT add new endpoints
+-   ❌ Do NOT add feature flags
+
+This is **purely a frontend gating fix**.
+
+* * *
+
+### **✅ Success criteria**
+
+After fix:
+
+-   Clicking **Enable Live Excel**:
+    -   Shows real Excel rows in Kanban
+    -   Removes demo banner
+    -   Allows drag-to-status
+-   Refresh reflects Excel changes
+-   No “partial live data” warning appears
+* * *
+
+### **END PROMPT**
+
+* * *
