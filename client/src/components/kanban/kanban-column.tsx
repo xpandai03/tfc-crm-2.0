@@ -49,8 +49,8 @@ export function KanbanColumn({
               No contacts
             </p>
           ) : (
-            contacts.map((contact) => (
-              <KanbanCard key={contact.name} contact={contact} />
+            contacts.map((contact, index) => (
+              <KanbanCard key={contact.contactId || `${contact.name}-${index}`} contact={contact} />
             ))
           )}
         </div>

@@ -257,9 +257,9 @@ export default function Home() {
                         No urgent contacts
                       </p>
                     ) : (
-                      priorityQueues.over60Days.map((contact) => (
+                      priorityQueues.over60Days.map((contact, index) => (
                         <PriorityCard
-                          key={contact.name}
+                          key={contact.contactId || `${contact.name}-${index}`}
                           contact={contact}
                           priority="high"
                         />
@@ -286,9 +286,9 @@ export default function Home() {
                         No contacts ready
                       </p>
                     ) : (
-                      priorityQueues.readyToSchedule.map((contact) => (
+                      priorityQueues.readyToSchedule.map((contact, index) => (
                         <PriorityCard
-                          key={contact.name}
+                          key={contact.contactId || `${contact.name}-${index}`}
                           contact={contact}
                           priority="medium"
                         />
@@ -315,9 +315,9 @@ export default function Home() {
                         All caught up
                       </p>
                     ) : (
-                      priorityQueues.needsFollowUp.map((contact) => (
+                      priorityQueues.needsFollowUp.map((contact, index) => (
                         <PriorityCard
-                          key={contact.name}
+                          key={contact.contactId || `${contact.name}-${index}`}
                           contact={contact}
                           priority="standard"
                         />

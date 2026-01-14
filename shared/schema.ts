@@ -49,12 +49,13 @@ export type WaitlistSummary = z.infer<typeof waitlistSummarySchema>;
 // Waitlist contact (for pipeline view)
 // Supports both string status (legacy/mock) and numeric statusCode (live Excel)
 export const waitlistContactSchema = z.object({
+  contactId: z.number().optional(),
   name: z.string(),
   status: z.enum(contactStatuses).optional(),
   statusCode: z.number().optional(),
   serviceRequested: z.string(),
   daysOnWaitlist: z.number(),
-  dateAdded: z.string(),
+  dateAdded: z.string().nullable(),
 });
 
 export type WaitlistContact = z.infer<typeof waitlistContactSchema>;

@@ -51,9 +51,9 @@ export function DroppableColumn({
                 No contacts
               </div>
             ) : (
-              contacts.map((contact) => (
+              contacts.map((contact, index) => (
                 <DraggableCard
-                  key={contact.name}
+                  key={contact.contactId || `${contact.name}-${index}`}
                   contact={contact}
                   onAddNote={onAddNote}
                 />
