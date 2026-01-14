@@ -364,13 +364,14 @@ export async function registerRoutes(
         try {
           console.log("Fetching live board from:", N8N_ENDPOINTS.waitlistBoard);
           
-          // Match the working summary endpoint pattern - no body
+          // Send empty JSON body - required for n8n to respond
           const response = await fetch(N8N_ENDPOINTS.waitlistBoard, {
             method: "POST",
             headers: { 
               "Content-Type": "application/json",
               "Accept": "application/json",
             },
+            body: JSON.stringify({}),
           });
 
           console.log("n8n board response status:", response.status);
