@@ -22,6 +22,11 @@ export async function getWaitlistContacts(): Promise<{ contacts: WaitlistContact
   return response.json();
 }
 
+export async function getWaitlistBoard(): Promise<{ contacts: WaitlistContact[]; _source?: DataSource }> {
+  const response = await apiRequest("POST", "/api/get-waitlist-board");
+  return response.json();
+}
+
 export async function getConfig(): Promise<{ dataMode: DataMode }> {
   const response = await fetch("/api/config");
   if (!response.ok) {

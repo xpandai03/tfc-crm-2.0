@@ -64,14 +64,17 @@ export function DataSourceProvider({ children }: { children: React.ReactNode }) 
   const enableLiveMode = useCallback(async (queryClient: QueryClient): Promise<EnableLiveResult> => {
     setIsEnablingLive(true);
     try {
-      // Test the live connection by fetching both summary and contacts
-      const [summaryResponse, contactsResponse] = await Promise.all([
+      // Test the live connection by fetching both summary and board (contact rows)
+      const [summaryResponse, boardResponse] = await Promise.all([
         fetch("/api/get-waitlist-summary", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({}),
         }),
-        fetch("/api/waitlist-contacts"),
+        fetch("/api/get-waitlist-board", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }),
       ]);
       
       if (!summaryResponse.ok) {
@@ -80,19 +83,19 @@ export function DataSourceProvider({ children }: { children: React.ReactNode }) 
       }
       
       const summaryData = await summaryResponse.json();
-      const contactsData = contactsResponse.ok ? await contactsResponse.json() : null;
+      const boardData = boardResponse.ok ? await boardResponse.json() : null;
       
       const summaryIsLive = summaryData._source === "live";
-      const contactsAreLive = contactsData?._source === "live";
+      const boardIsLive = boardData?._source === "live";
       
       // Only succeed if BOTH are live - this ensures Kanban actually works
-      if (summaryIsLive && contactsAreLive) {
+      if (summaryIsLive && boardIsLive) {
         // CRITICAL: Hydrate ALL caches FIRST, before updating state
         // This ensures all screens have live data when mode switches
         
-        // 1. Hydrate waitlist summary and contacts
+        // 1. Hydrate waitlist summary and board
         queryClient.setQueryData(["/api/waitlist-summary"], summaryData);
-        queryClient.setQueryData(["/api/waitlist-contacts"], contactsData);
+        queryClient.setQueryData(["/api/get-waitlist-board"], boardData);
         
         // 2. Invalidate ALL related queries to force refetch with live data
         // This ensures Home, Insights, and Contact Detail pages all refresh
@@ -110,7 +113,7 @@ export function DataSourceProvider({ children }: { children: React.ReactNode }) 
         setIsEnablingLive(false);
         return { success: true };
       } else if (summaryIsLive) {
-        // Partial success - summary is live but contacts are not
+        // Partial success - summary is live but board is not
         // Keep mock mode, but inform user of partial live state
         // Do NOT update sources - keep them accurate to current cache
         setIsEnablingLive(false);
@@ -137,7 +140,7 @@ export function DataSourceProvider({ children }: { children: React.ReactNode }) 
     // Invalidate only data-related queries (not config/auth)
     // This forces refetch from mock endpoints on next render
     queryClient.invalidateQueries({ queryKey: ["/api/waitlist-summary"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/get-waitlist-board"] });
     queryClient.invalidateQueries({ queryKey: ["/api/contact"] });
   }, []);
 

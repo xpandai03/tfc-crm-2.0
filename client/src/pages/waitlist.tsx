@@ -22,7 +22,7 @@ import { SyncStatus } from "@/components/ui/sync-status";
 import { FallbackBanner } from "@/components/ui/fallback-banner";
 import { useToast } from "@/hooks/use-toast";
 import { AlertCircle } from "lucide-react";
-import { getWaitlistContacts, updateContactStatus, addNoteToContact } from "@/lib/api";
+import { getWaitlistBoard, updateContactStatus, addNoteToContact } from "@/lib/api";
 import { useDataSource } from "@/lib/data-source-context";
 import { 
   PIPELINE_COLUMNS, 
@@ -67,8 +67,8 @@ export default function Waitlist() {
     error,
     refetch: refetchContacts,
   } = useQuery<{ contacts: WaitlistContact[]; _source?: string }>({
-    queryKey: ["/api/waitlist-contacts"],
-    queryFn: getWaitlistContacts,
+    queryKey: ["/api/get-waitlist-board"],
+    queryFn: getWaitlistBoard,
   });
 
   const contacts = contactsData?.contacts;
@@ -90,9 +90,9 @@ export default function Waitlist() {
     mutationFn: ({ contactName, statusCode }: { contactName: string; statusCode: number }) =>
       updateContactStatus(contactName, statusCode),
     onMutate: async ({ contactName, statusCode }) => {
-      await queryClient.cancelQueries({ queryKey: ["/api/waitlist-contacts"] });
-      const previousData = queryClient.getQueryData<{ contacts: WaitlistContact[]; _source?: string }>(["/api/waitlist-contacts"]);
-      queryClient.setQueryData<{ contacts: WaitlistContact[]; _source?: string }>(["/api/waitlist-contacts"], (old) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/get-waitlist-board"] });
+      const previousData = queryClient.getQueryData<{ contacts: WaitlistContact[]; _source?: string }>(["/api/get-waitlist-board"]);
+      queryClient.setQueryData<{ contacts: WaitlistContact[]; _source?: string }>(["/api/get-waitlist-board"], (old) => {
         if (!old) return old;
         return {
           ...old,
@@ -104,12 +104,12 @@ export default function Waitlist() {
       return { previousData };
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/get-waitlist-board"] });
       queryClient.invalidateQueries({ queryKey: ["/api/waitlist-summary"] });
     },
     onError: (_error, variables, context) => {
       if (context?.previousData) {
-        queryClient.setQueryData(["/api/waitlist-contacts"], context.previousData);
+        queryClient.setQueryData(["/api/get-waitlist-board"], context.previousData);
       }
       queryClient.invalidateQueries({ queryKey: ["/api/waitlist-summary"] });
       toast({
@@ -124,7 +124,7 @@ export default function Waitlist() {
     mutationFn: ({ contactName, note }: { contactName: string; note: string }) =>
       addNoteToContact(contactName, note),
     onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/get-waitlist-board"] });
       queryClient.invalidateQueries({ queryKey: ["/api/contact", variables.contactName] });
       setNoteModalContact(null);
       toast({
@@ -132,7 +132,7 @@ export default function Waitlist() {
         description: `Note added to ${variables.contactName}`,
       });
     },
-    onError: (error, variables) => {
+    onError: (_error, variables) => {
       toast({
         title: "Failed to add note",
         description: `Could not add note to ${variables.contactName}. Please try again.`,
