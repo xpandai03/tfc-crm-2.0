@@ -66,7 +66,8 @@ The UI automatically displays:
 
 - `POST /api/get-contact-snapshot` - Get contact details by name
 - `POST /api/get-waitlist-summary` - Get waitlist metrics
-- `GET /api/waitlist-contacts` - Get all waitlist contacts
+- `POST /api/get-waitlist-board` - Get contact rows for Kanban (live Excel data)
+- `GET /api/waitlist-contacts` - Get all waitlist contacts (legacy)
 - `GET /api/config` - Get app configuration
 
 ## n8n Webhook URLs (Production)
@@ -76,6 +77,7 @@ Webhook URLs are stored as environment variables (server-only, never exposed to 
 ```
 N8N_GET_CONTACT_SNAPSHOT_URL    - Read contact details
 N8N_GET_WAITLIST_SUMMARY_URL    - Read waitlist summary
+N8N_GET_WAITLIST_BOARD_URL      - Read contact rows for Kanban
 N8N_UPDATE_CONTACT_STATUS_URL   - Update contact status in Excel
 N8N_UPDATE_AGENT_NOTES_URL      - Add notes to Excel
 ```
@@ -83,6 +85,7 @@ N8N_UPDATE_AGENT_NOTES_URL      - Add notes to Excel
 Default endpoints (if env vars not set):
 - Contact snapshot: `https://n8n-familyconnection.agentglu.agency/webhook/get-contact-snapshot`
 - Waitlist summary: `https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-summary`
+- Waitlist board: `https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-board`
 - Update status: `https://n8n-familyconnection.agentglu.agency/webhook/update-contact-status`
 - Add note: `https://n8n-familyconnection.agentglu.agency/webhook/update-agent-notes`
 
