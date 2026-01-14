@@ -361,16 +361,28 @@ export async function registerRoutes(
     try {
       if (DATA_MODE === "live") {
         try {
+          console.log("Fetching live board from:", N8N_ENDPOINTS.waitlistBoard);
           const response = await fetch(N8N_ENDPOINTS.waitlistBoard, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
           });
 
+          console.log("n8n board response status:", response.status);
+          
           if (!response.ok) {
             throw new Error(`n8n webhook returned ${response.status}`);
           }
 
-          const data = await response.json();
+          const text = await response.text();
+          console.log("n8n board response length:", text.length);
+          
+          if (!text || text.trim() === "") {
+            throw new Error("Empty response from n8n");
+          }
+          
+          const data = JSON.parse(text);
+          console.log("n8n board _source:", data._source);
           // Return the response directly, preserving _source field
           return res.json(data);
         } catch (liveError) {

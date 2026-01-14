@@ -1,0 +1,210 @@
+
+# **REPLIT AGENT PROMPT — FORCE WAITLIST PAGE TO CONSUME LIVE BOARD DATA**
+
+## **CRITICAL CONTEXT (READ CAREFULLY)**
+
+The backend is **100% correct**.
+
+The n8n webhook:
+
+```
+POST https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-board
+```
+
+returns valid live data:
+
+```
+{
+  "_source": "live",
+  "contacts": [ ... ]
+}
+```
+
+This has been verified via curl.
+
+**DO NOT MODIFY n8n.**
+
+**DO NOT MODIFY WEBHOOKS.**
+
+The remaining issue is **frontend data flow**, not logic or permissions.
+
+* * *
+
+## **ROOT CAUSE (CONFIRMED)**
+
+The **Waitlist page is NOT rendering from the live board API response**.
+
+Instead, it is still rendering from:
+
+-   demo/mock contact arrays
+-   fallback state
+-   or a shared context that never updates with board data
+
+Changing gating logic alone did not work because **the data never enters React state**.
+
+* * *
+
+## **YOUR TASK (NON-NEGOTIABLE)**
+
+You must make the **Waitlist page authoritative over its own data**, just like Today and Insights.
+
+### **The Waitlist page must:**
+
+1.  **Fetch** **/api/get-waitlist-board** **directly**
+2.  **Render Kanban columns ONLY from the response**
+3.  **Completely remove demo/mock data as a render source**
+4.  **Use** **\_source === "live"** **from board data to enable interactions**
+
+No shared context. No demo arrays. No indirect state.
+
+* * *
+
+## **STEP 1 — REMOVE DEMO DATA AS A RENDER SOURCE**
+
+In the Waitlist page:
+
+-   ❌ Remove any usage of:
+    -   demoContacts
+    -   mockContacts
+    -   fallbackContacts
+    -   hardcoded arrays
+    -   useWaitlistContext() (if it provides contacts)
+
+The page must **not** import or reference demo contact data for rendering.
+
+Demo data may exist elsewhere, but **not here**.
+
+* * *
+
+## **STEP 2 — FETCH LIVE BOARD DATA DIRECTLY**
+
+On the Waitlist page, add a direct fetch using SWR / React Query / fetch (matching project style):
+
+```
+const { data, error, isLoading } = useSWR(
+  '/api/get-waitlist-board',
+  fetcher
+);
+```
+
+Then derive state **only** from this:
+
+```
+const contacts = data?.contacts ?? [];
+const boardSource = data?._source;
+const isLiveBoard = boardSource === 'live';
+```
+
+* * *
+
+## **STEP 3 — RENDER FROM CONTACTS (NO EXCEPTIONS)**
+
+All Kanban columns must be rendered by filtering contacts:
+
+```
+contacts.filter(c =>
+  STATUS_GROUPS.waiting.includes(c.statusCode)
+)
+```
+
+There must be **no alternate render path**.
+
+If contacts.length === 0:
+
+-   Show an empty state
+-   Do NOT fall back to demo rows
+* * *
+
+## **STEP 4 — LIVE MODE BEHAVIOR**
+
+Use **only this condition**:
+
+```
+if (isLiveBoard) {
+  enableDragAndDrop();
+  hideDemoBanner();
+} else {
+  disableInteractions();
+  showDemoBanner();
+}
+```
+
+❌ Do NOT check:
+
+-   summary source
+-   context flags
+-   aggregate data
+-   “partial live” heuristics
+
+The Waitlist page does **not** care about aggregates.
+
+* * *
+
+## **STEP 5 — DELETE “PARTIAL LIVE DATA” LOGIC**
+
+Remove:
+
+-   “Partial live data available” banner
+-   any logic that mixes aggregate + contact gating
+-   any condition that blocks Kanban when board data is live
+
+This page is either:
+
+-   fully live (board data live)
+-   or demo (board data not live)
+
+Nothing in between.
+
+* * *
+
+## **STEP 6 — DEBUG CONFIRMATION (TEMPORARY)**
+
+Add this log:
+
+```
+console.log('Waitlist board source:', boardSource);
+console.log('Waitlist contacts count:', contacts.length);
+```
+
+Confirm in browser console:
+
+```
+Waitlist board source: live
+Waitlist contacts count: > 0
+```
+
+* * *
+
+## **SUCCESS CRITERIA (REQUIRED)**
+
+After this change:
+
+1.  Clicking **Enable Live Excel**:
+    -   Fetches /api/get-waitlist-board
+    -   Renders real Excel rows
+    -   Removes demo banner
+2.  Kanban shows real names from Excel
+3.  Drag & drop is enabled
+4.  Refresh reflects Excel updates
+5.  No fallback or demo rows appear
+* * *
+
+## **CONSTRAINTS (DO NOT VIOLATE)**
+
+-   ❌ Do NOT modify n8n workflows
+-   ❌ Do NOT add new endpoints
+-   ❌ Do NOT hardcode rows
+-   ❌ Do NOT reintroduce demo rendering
+-   ✅ Make the Waitlist page data-driven and authoritative
+* * *
+
+## **FINAL DELIVERABLE**
+
+When complete, briefly explain:
+
+-   Where the Waitlist page now gets its data
+-   Why demo rows can no longer appear
+-   Why live mode now works reliably
+* * *
+
+### **END PROMPT**
