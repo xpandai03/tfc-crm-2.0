@@ -5,6 +5,7 @@ import { useDataSource } from "@/lib/data-source-context";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
+import { UserMenu } from "./user-menu";
 
 const navItems = [
   { href: "/", label: "Today", icon: Home },
@@ -160,6 +161,10 @@ export function TopNav() {
 
         <div className="flex items-center gap-2 border-l pl-4 ml-2" data-testid="status-data-mode">
           {getModeIndicator()}
+        </div>
+
+        <div className="flex items-center border-l pl-4 ml-2">
+          <UserMenu />
         </div>
       </div>
     </header>
