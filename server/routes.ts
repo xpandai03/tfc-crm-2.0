@@ -358,14 +358,19 @@ export async function registerRoutes(
 
   // Get waitlist board (contact rows for Kanban - uses dedicated live endpoint)
   app.post("/api/get-waitlist-board", async (_req, res) => {
+    console.log("[BOARD API HIT]", new Date().toISOString());
     try {
       if (DATA_MODE === "live") {
         try {
           console.log("Fetching live board from:", N8N_ENDPOINTS.waitlistBoard);
+          
+          // Match the working summary endpoint pattern - no body
           const response = await fetch(N8N_ENDPOINTS.waitlistBoard, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({}),
+            headers: { 
+              "Content-Type": "application/json",
+              "Accept": "application/json",
+            },
           });
 
           console.log("n8n board response status:", response.status);
@@ -376,6 +381,7 @@ export async function registerRoutes(
 
           const text = await response.text();
           console.log("n8n board response length:", text.length);
+          console.log("n8n board response preview:", text.substring(0, 200));
           
           if (!text || text.trim() === "") {
             throw new Error("Empty response from n8n");
@@ -383,6 +389,8 @@ export async function registerRoutes(
           
           const data = JSON.parse(text);
           console.log("n8n board _source:", data._source);
+          console.log("n8n board contacts count:", data.contacts?.length);
+          
           // Return the response directly, preserving _source field
           return res.json(data);
         } catch (liveError) {

@@ -1,0 +1,187 @@
+
+# **REPLIT AGENT PROMPT — PROVE & FORCE WAITLIST BOARD DATA FLOW**
+
+## **READ THIS FIRST (CRITICAL)**
+
+We are stuck in a loop because the **Waitlist page is still rendering from an old data source**, even though:
+
+-   n8n webhook get-waitlist-board is confirmed working via curl
+-   The server route /api/get-waitlist-board exists
+-   The payload returns \_source: "live" and 200+ contacts
+
+This is **NOT a backend issue**.
+
+This is **NOT a gating logic issue**.
+
+This is a **data ownership + render source issue**.
+
+* * *
+
+## **YOUR OBJECTIVE**
+
+You must **prove** and then **enforce** that the Waitlist page renders **ONLY** from:
+
+```
+/api/get-waitlist-board
+```
+
+No demo data.
+
+No fallback contacts.
+
+No shared context.
+
+* * *
+
+## **STEP 1 — ADD HARD LOGGING (NON-NEGOTIABLE)**
+
+### **1A. Server route instrumentation**
+
+In /api/get-waitlist-board (server route), add this at the top of the handler:
+
+```
+console.log('[BOARD API HIT]', new Date().toISOString());
+```
+
+This is temporary but required.
+
+* * *
+
+### **1B. Waitlist page instrumentation**
+
+In the Waitlist page component (waitlist.tsx or equivalent), add this **immediately after the data fetch hook**:
+
+```
+console.log('WAITLIST PAGE RENDER', {
+  boardSource: data?._source,
+  contactsCount: data?.contacts?.length,
+  hasData: !!data,
+});
+```
+
+This must log on every render.
+
+* * *
+
+## **STEP 2 — DELETE OLD DATA PATHS (THIS IS THE REAL FIX)**
+
+In the Waitlist page **ONLY**:
+
+❌ Remove **all** usage of:
+
+-   /api/waitlist-contacts
+-   demoContacts
+-   mockContacts
+-   fallbackContacts
+-   useWaitlistContext() (if it provides contacts)
+-   any hardcoded arrays used to render cards
+
+If the page can render _anything_ without /api/get-waitlist-board, that is a bug.
+
+* * *
+
+## **STEP 3 — MAKE WAITLIST PAGE AUTHORITATIVE**
+
+The Waitlist page must fetch its own data directly:
+
+```
+const { data, error, isLoading } = useSWR(
+  '/api/get-waitlist-board',
+  fetcher
+);
+```
+
+Derive state **only** from this:
+
+```
+const contacts = data?.contacts ?? [];
+const isLiveBoard = data?._source === 'live';
+```
+
+No other flags.
+
+No summary checks.
+
+No context booleans.
+
+* * *
+
+## **STEP 4 — RENDER RULES (STRICT)**
+
+### **Kanban rendering**
+
+-   Columns are populated by filtering contacts
+-   Status grouping uses STATUS\_GROUPS
+-   If contacts.length === 0, show empty state (not demo rows)
+
+### **Interaction rules**
+
+```
+if (isLiveBoard) {
+  enableDragAndDrop();
+  hideDemoBanner();
+} else {
+  disableInteractions();
+  showDemoBanner();
+}
+```
+
+There must be **no “partial live” mode** on this page.
+
+* * *
+
+## **STEP 5 — VERIFY WITH LOGS (DO NOT SKIP)**
+
+After implementing:
+
+1.  Navigate to /waitlist
+2.  Click **Enable Live Excel**
+3.  Click **Refresh**
+
+You must see in logs:
+
+```
+[BOARD API HIT] <timestamp>
+WAITLIST PAGE RENDER { boardSource: "live", contactsCount: > 0 }
+```
+
+If you do not see **both**, the fix is incomplete.
+
+* * *
+
+## **STEP 6 — REMOVE PARTIAL LIVE BANNER**
+
+Delete:
+
+-   “Partial live data available” banner
+-   any logic mixing aggregate + contact gating
+
+The Waitlist page is either:
+
+-   fully live (board data live)
+-   or demo (board data not live)
+
+Nothing in between.
+
+* * *
+
+## **CONSTRAINTS (DO NOT VIOLATE)**
+
+-   ❌ Do NOT modify n8n workflows
+-   ❌ Do NOT add new endpoints
+-   ❌ Do NOT reshape webhook payloads
+-   ❌ Do NOT reintroduce demo rendering
+-   ✅ Prove the data path with logs
+-   ✅ Make the Waitlist page data-authoritative
+* * *
+
+## **FINAL DELIVERABLE**
+
+When complete, briefly explain:
+
+1.  Where the Waitlist page now gets its data
+2.  Why demo rows can no longer render
+3.  What the logs show when live mode is enabled
+* * *
+
+### **END PROMPT**

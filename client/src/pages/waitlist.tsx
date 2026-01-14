@@ -74,8 +74,14 @@ export default function Waitlist() {
   const isLiveBoard = contactsData?._source === "live";
   const isDemoMode = !isLiveBoard;
   
-  // Debug log to verify data source
-  console.log("Waitlist board source:", contactsData?._source);
+  // Debug log to verify data source (REQUIRED - DO NOT REMOVE)
+  console.log("WAITLIST PAGE RENDER", {
+    boardSource: contactsData?._source,
+    contactsCount: contactsData?.contacts?.length,
+    hasData: !!contactsData,
+    isLiveBoard,
+    isDemoMode,
+  });
 
   useEffect(() => {
     if (contactsData?._source) {
