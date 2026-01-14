@@ -1,0 +1,251 @@
+## **✅ Verdict: You are good to go**
+
+### **What the terminal confirms (important)**
+
+1.  **The webhook is live and stable**
+
+```
+POST /webhook/get-waitlist-board → 200
+"_source": "live"
+```
+
+1.  That means:
+    -   n8n workflow is activated
+    -   Excel is being read successfully
+    -   The Code node is executing without errors
+2.  **You are getting real, contact-level rows**
+
+    Each object has:
+
+    -   contactId (numeric)
+    -   name
+    -   statusCode (numeric, matches your taxonomy)
+    -   daysOnWaitlist
+    -   serviceRequested
+    -   dateAdded (now normalized to ISO or null)
+
+    This is **exactly** what a Kanban UI needs. No guessing, no aggregation hacks.
+
+3.  **The earlier problems are resolved**
+    -   No missing fields
+    -   No crashes
+    -   No mixed live/fallback ambiguity
+    -   Status codes are consistent with your CLEAR semantics
+    -   The payload is safe to render directly
+
+So yes: **this webhook is now acceptable and correct to feed into the app.**
+
+At this point, the backend is _no longer the blocker_.
+
+* * *
+
+## **What’s left to do**
+
+Only one thing:
+
+> **Teach the Replit app to call this new webhook and use it as the source of truth for the Waitlist Kanban when Live Mode is enabled.**
+
+Nothing else.
+
+* * *
+
+## **✅ Replit Agent Prompt — Wire**
+
+## **get-waitlist-board**
+
+##  **into the App**
+
+This is the **final integration prompt**. It assumes:
+
+-   Live/mock toggle already exists
+-   Live summary + contact snapshot already exist
+-   Kanban currently uses fallback/mock rows
+
+Paste this **exactly** into the Replit Agent.
+
+* * *
+
+# **🎯**
+
+# **REPLIT AGENT PROMPT — CONNECT LIVE WAITLIST BOARD DATA**
+
+## **CONTEXT (DO NOT REBUILD)**
+
+You are working inside an existing **Next.js CRM app** for **The Family Connection (TFC)**.
+
+The app already has:
+
+-   Live/mock data toggle
+-   Live aggregate reads via /api/get-waitlist-summary
+-   Contact detail reads via /api/get-contact-snapshot
+-   Optimistic UI logic for Kanban and notes
+-   Honest fallback behavior when live data is unavailable
+
+A new **live contact-row webhook** is now available and working.
+
+* * *
+
+## **NEW LIVE DATA SOURCE (CONFIRMED WORKING)**
+
+### **n8n Webhook**
+
+```
+POST https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-board
+```
+
+### **Response shape (stable)**
+
+```
+{
+  "_source": "live",
+  "contacts": [
+    {
+      "contactId": 1024,
+      "name": "Emilio Castro",
+      "statusCode": 102,
+      "daysOnWaitlist": 53,
+      "serviceRequested": "My Child",
+      "dateAdded": "2025-11-21"
+    }
+  ]
+}
+```
+
+This endpoint returns **real Excel-backed contact rows**.
+
+* * *
+
+## **GOAL**
+
+Use this endpoint to populate the **Waitlist / Pipeline (Kanban) view** when Live Mode is enabled.
+
+Once wired, the Kanban must be fully live.
+
+* * *
+
+## **STEP 1 — ADD SERVER API ROUTE**
+
+Create or update this API route:
+
+```
+/api/get-waitlist-board
+```
+
+Behavior:
+
+-   If DATA\_MODE === "mock":
+    -   Return existing mock/fallback contact rows
+-   If DATA\_MODE === "live":
+    -   POST to:
+
+```
+process.env.N8N_GET_WAITLIST_BOARD_URL
+```
+
+-   -
+    -   Return JSON response directly
+    -   Preserve \_source field
+
+Do NOT reshape the payload.
+
+* * *
+
+## **STEP 2 — ENV VAR (SERVER ONLY)**
+
+Ensure this exists in environment config:
+
+```
+N8N_GET_WAITLIST_BOARD_URL=https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-board
+```
+
+Frontend must never see this URL.
+
+* * *
+
+## **STEP 3 — UPDATE WAITLIST PAGE DATA SOURCE**
+
+On the **Waitlist / Pipeline** page:
+
+Replace any usage of:
+
+-   mock contact arrays
+-   /api/waitlist-contacts
+
+With:
+
+```
+/api/get-waitlist-board
+```
+
+Rules:
+
+-   If response \_source === "live":
+    -   Enable Kanban
+    -   Enable drag-to-status
+    -   Enable quick-add note
+-   If \_source !== "live":
+    -   Fall back to demo mode
+    -   Show demo banner
+    -   Disable interactions
+* * *
+
+## **STEP 4 — REMOVE PARTIAL-LIVE BLOCK**
+
+Previously, the app blocked Kanban because contact rows were not live.
+
+Now:
+
+-   This block must be removed
+-   Live mode should succeed if:
+
+```
+summary._source === "live" AND board._source === "live"
+```
+
+* * *
+
+## **STEP 5 — STATUS SEMANTICS (DO NOT CHANGE)**
+
+Continue to use the centralized status config:
+
+-   STATUS\_GROUPS
+-   STATUS\_LABELS
+
+Kanban column membership must be driven by:
+
+```
+STATUS_GROUPS[columnKey].includes(contact.statusCode)
+```
+
+* * *
+
+## **STEP 6 — FINAL VALIDATION**
+
+Confirm:
+
+1.  Clicking **Enable Live Excel** switches Kanban to real data
+2.  Cards reflect real Excel rows
+3.  Dragging a card updates Excel status
+4.  Refresh shows consistent state
+5.  No fallback banner when board is live
+* * *
+
+## **CONSTRAINTS (STRICT)**
+
+-   ❌ Do NOT modify n8n workflows
+-   ❌ Do NOT fetch Excel directly
+-   ❌ Do NOT hardcode contact rows
+-   ❌ Do NOT mix live + fallback silently
+-   ✅ Trust \_source: "live"
+* * *
+
+## **DELIVERABLE**
+
+When finished, briefly explain:
+
+-   Where the Kanban now gets its data
+-   How live mode is detected
+-   Why fallback is no longer used for Waitlist
+* * *
+
+### **END PROMPT**

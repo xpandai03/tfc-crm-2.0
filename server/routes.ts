@@ -10,6 +10,7 @@ const DATA_MODE: DataMode = "live";
 const N8N_ENDPOINTS = {
   contactSnapshot: process.env.N8N_GET_CONTACT_SNAPSHOT_URL || "https://n8n-familyconnection.agentglu.agency/webhook/get-contact-snapshot",
   waitlistSummary: process.env.N8N_GET_WAITLIST_SUMMARY_URL || "https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-summary",
+  waitlistBoard: process.env.N8N_GET_WAITLIST_BOARD_URL || "https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-board",
   updateStatus: process.env.N8N_UPDATE_CONTACT_STATUS_URL || "https://n8n-familyconnection.agentglu.agency/webhook/update-contact-status",
   addNote: process.env.N8N_UPDATE_AGENT_NOTES_URL || "https://n8n-familyconnection.agentglu.agency/webhook/update-agent-notes",
 } as const;
@@ -352,6 +353,36 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching waitlist contacts:", error);
       return res.status(500).json({ error: "Failed to fetch waitlist contacts" });
+    }
+  });
+
+  // Get waitlist board (contact rows for Kanban - uses dedicated live endpoint)
+  app.post("/api/get-waitlist-board", async (_req, res) => {
+    try {
+      if (DATA_MODE === "live") {
+        try {
+          const response = await fetch(N8N_ENDPOINTS.waitlistBoard, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+          });
+
+          if (!response.ok) {
+            throw new Error(`n8n webhook returned ${response.status}`);
+          }
+
+          const data = await response.json();
+          // Return the response directly, preserving _source field
+          return res.json(data);
+        } catch (liveError) {
+          console.warn("Live board fetch failed, falling back to mock:", liveError);
+          return res.json({ contacts: getMockWaitlistContacts(), _source: "fallback" });
+        }
+      } else {
+        return res.json({ contacts: getMockWaitlistContacts(), _source: "mock" });
+      }
+    } catch (error) {
+      console.error("Error fetching waitlist board:", error);
+      return res.status(500).json({ error: "Failed to fetch waitlist board" });
     }
   });
 
