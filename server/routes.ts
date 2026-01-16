@@ -6,13 +6,95 @@ import { createServer, type Server } from "http";
 type DataMode = "mock" | "live";
 const DATA_MODE: DataMode = "live";
 
+// ============================================================================
+// Server-Side Board Data Cache
+// ============================================================================
+// Purpose: Reduce duplicate n8n calls when navigating from list to detail views
+// The get-contact-snapshot endpoint needs board data to look up contactId → name
+// This cache allows reusing board data fetched by list pages within a short window
+//
+// TTL: 60 seconds (board data is relatively stable)
+// ============================================================================
+interface BoardCacheEntry {
+  data: { contacts: Array<{ contactId: number; name: string; [key: string]: unknown }> };
+  timestamp: number;
+}
+
+let boardCache: BoardCacheEntry | null = null;
+const BOARD_CACHE_TTL_MS = 60 * 1000; // 60 seconds
+
+function getBoardFromCache(): BoardCacheEntry["data"] | null {
+  if (!boardCache) return null;
+  const age = Date.now() - boardCache.timestamp;
+  if (age > BOARD_CACHE_TTL_MS) {
+    console.log("[board-cache] Cache expired, clearing");
+    boardCache = null;
+    return null;
+  }
+  console.log(`[board-cache] Cache hit (age: ${Math.round(age / 1000)}s)`);
+  return boardCache.data;
+}
+
+function setBoardCache(data: BoardCacheEntry["data"]): void {
+  boardCache = { data, timestamp: Date.now() };
+  console.log("[board-cache] Cache updated");
+}
+
+// ============================================================================
+// Date Normalization Helper (Phase 6.4)
+// ============================================================================
+// Excel stores dates as serial numbers (days since Dec 30, 1899)
+// This helper detects and converts Excel serials to ISO date strings
+// ============================================================================
+function normalizeExcelDate(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  // If it's already a valid date string, return it
+  if (typeof value === "string") {
+    // Check if it's a recognizable date format (ISO, MM/DD/YYYY, etc.)
+    const dateRegex = /^\d{4}-\d{2}-\d{2}|^\d{1,2}\/\d{1,2}\/\d{2,4}/;
+    if (dateRegex.test(value)) {
+      return value;
+    }
+    // Try parsing as number (Excel serial passed as string)
+    const num = parseFloat(value);
+    // Range 15000-80000 covers years 1941-2119 (for birth dates from 1940s onward)
+    if (!isNaN(num) && num > 15000 && num < 80000) {
+      return excelSerialToIso(num);
+    }
+    return value; // Return as-is if not recognizable
+  }
+
+  // If it's a number, check if it's an Excel serial
+  if (typeof value === "number") {
+    // Range 15000-80000 covers years 1941-2119 (for birth dates from 1940s onward)
+    // Excel serial 28045 = ~1976, 36526 = 2000, 45000 = ~2023
+    if (value > 15000 && value < 80000) {
+      return excelSerialToIso(value);
+    }
+    return String(value); // Return as string if not Excel serial
+  }
+
+  return null;
+}
+
+function excelSerialToIso(serial: number): string {
+  // Excel epoch is Dec 30, 1899
+  const excelEpoch = new Date(1899, 11, 30);
+  const date = new Date(excelEpoch.getTime() + serial * 24 * 60 * 60 * 1000);
+  // Return as YYYY-MM-DD
+  return date.toISOString().split("T")[0];
+}
+
 // n8n webhook URLs from environment variables (server-only, never exposed to frontend)
 const N8N_ENDPOINTS = {
   contactSnapshot: process.env.N8N_GET_CONTACT_SNAPSHOT_URL || "https://n8n-familyconnection.agentglu.agency/webhook/get-contact-snapshot",
   waitlistSummary: process.env.N8N_GET_WAITLIST_SUMMARY_URL || "https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-summary",
   waitlistBoard: process.env.N8N_GET_WAITLIST_BOARD_URL || "https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-board",
   updateStatus: process.env.N8N_UPDATE_CONTACT_STATUS_URL || "https://n8n-familyconnection.agentglu.agency/webhook/update-contact-status",
-  addNote: process.env.N8N_UPDATE_AGENT_NOTES_URL || "https://n8n-familyconnection.agentglu.agency/webhook/update-agent-notes",
+  addNote: process.env.N8N_ADD_CONTACT_NOTE_URL || "https://n8n-familyconnection.agentglu.agency/webhook/add-contact-note",
 } as const;
 
 // Mock data for development
@@ -26,7 +108,26 @@ type MockContact = {
   dateAdded: string;
   lastContact?: string;
   assignedTo?: string;
-  notes: { date: string; content: string }[];
+  notes: { date: string; content: string; author?: string }[];
+  // Additional intake fields (Phase 6)
+  modality?: string;
+  insurancePayer?: string;
+  referralSource?: string;
+  priorServices?: string;
+  // Demographics (Phase 6.2)
+  patientDob?: string;
+  gender?: string;
+  // Address (Phase 6.2)
+  streetAddress?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+  // Contact preferences (Phase 6.2)
+  preferredContact?: string;
+  // Intake context
+  requestingFor?: string;
+  reasonForSeeking?: string;
+  formCompletedBy?: string;
 };
 
 const mockContacts: MockContact[] = [
@@ -41,9 +142,25 @@ const mockContacts: MockContact[] = [
     lastContact: "2025-12-15",
     assignedTo: "Sarah Johnson",
     notes: [
-      { date: "2025-12-15", content: "Called to check in. Still interested in services." },
-      { date: "2025-11-20", content: "Initial intake completed. Waiting for provider availability." },
+      { date: "2025-12-15", content: "Called to check in. Still interested in services.", author: "SJ" },
+      { date: "2025-11-20", content: "Initial intake completed. Waiting for provider availability.", author: "MC" },
     ],
+    // Mock intake fields for testing
+    modality: "In-Person",
+    insurancePayer: "Blue Cross Blue Shield",
+    referralSource: "School Counselor",
+    priorServices: "None reported",
+    // Phase 6.2 fields
+    patientDob: "2015-03-15",
+    gender: "Male",
+    streetAddress: "123 Oak Street",
+    city: "Austin",
+    state: "TX",
+    zipCode: "78701",
+    preferredContact: "Phone",
+    requestingFor: "Child (son)",
+    reasonForSeeking: "Behavioral issues at school, difficulty with transitions",
+    formCompletedBy: "Parent (Maria Castro)",
   },
   {
     name: "Maria Santos",
@@ -56,8 +173,11 @@ const mockContacts: MockContact[] = [
     lastContact: "2026-01-05",
     assignedTo: "Mike Chen",
     notes: [
-      { date: "2026-01-05", content: "Provider available next week. Ready to schedule." },
+      { date: "2026-01-05", content: "Provider available next week. Ready to schedule.", author: "MC" },
     ],
+    modality: "Telehealth",
+    insurancePayer: "Medicaid",
+    referralSource: "Pediatrician referral",
   },
   {
     name: "James Wilson",
@@ -219,10 +339,26 @@ function getMockWaitlistSummary() {
   };
 }
 
+// Convert string status to numeric code (for mock data compatibility)
+function stringStatusToCode(status: string): number {
+  const mapping: Record<string, number> = {
+    intake: 100,
+    waiting: 101,
+    ready_to_schedule: 200,
+    scheduled: 202,
+    on_hold: 300,
+    closed: 400,
+  };
+  return mapping[status] || 100;
+}
+
 function getMockWaitlistContacts() {
-  return mockContacts.map((c) => ({
+  // CRITICAL: Must include contactId and statusCode for Today page cards to work
+  return mockContacts.map((c, index) => ({
+    contactId: index + 1, // 1-indexed to match live data convention
     name: c.name,
     status: c.status,
+    statusCode: stringStatusToCode(c.status), // Convert string status to numeric
     serviceRequested: c.serviceRequested,
     daysOnWaitlist: c.daysOnWaitlist,
     dateAdded: c.dateAdded,
@@ -234,49 +370,587 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   
-  // Get contact snapshot
+  // Get contact snapshot by contactId (ONLY)
+  // Strategy:
+  //   1. Look up contact in board cache/data by contactId
+  //   2. Call n8n get-contact-snapshot with contactId for detailed data
+  // IMPORTANT: contactName is NOT supported - n8n workflow expects contactId only
   app.post("/api/get-contact-snapshot", async (req, res) => {
     try {
-      const { contactName } = req.body;
-      
-      if (!contactName || typeof contactName !== "string") {
-        return res.status(400).json({ error: "contactName is required" });
+      const { contactId } = req.body;
+
+      if (contactId === undefined || typeof contactId !== "number") {
+        return res.status(400).json({ error: "contactId (number) is required" });
       }
+
+      console.log(`[contact-snapshot] Fetching contact by ID: ${contactId}`);
 
       if (DATA_MODE === "live") {
         try {
-          const response = await fetch(N8N_ENDPOINTS.contactSnapshot, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ contactName }),
-          });
+          // Step 1: Look up contact by ID (use cache if available to avoid duplicate n8n calls)
+          let contacts: Array<{ contactId: number; name: string; [key: string]: unknown }>;
+          const cachedBoard = getBoardFromCache();
 
-          if (!response.ok) {
-            throw new Error(`n8n webhook returned ${response.status}`);
+          if (cachedBoard) {
+            // Use cached board data (reduces n8n calls when navigating from list to detail)
+            console.log(`[contact-snapshot] Using cached board data for contact ${contactId}`);
+            contacts = cachedBoard.contacts;
+          } else {
+            // Cache miss - fetch fresh board data from n8n
+            console.log(`[contact-snapshot] Cache miss, fetching board from n8n for contact ${contactId}`);
+            const boardResponse = await fetch(N8N_ENDPOINTS.waitlistBoard, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({}),
+            });
+
+            if (!boardResponse.ok) {
+              throw new Error(`Board fetch failed: ${boardResponse.status}`);
+            }
+
+            const boardData = await boardResponse.json();
+            contacts = boardData.contacts || [];
+
+            // Populate cache for future lookups
+            setBoardCache({ contacts });
           }
 
-          const data = await response.json();
-          return res.json({ ...data, _source: "live" });
-        } catch (liveError) {
-          console.warn("Live data fetch failed, falling back to mock:", liveError);
-          const contact = getMockContact(contactName);
+          // Find contact by ID
+          const contact = contacts.find((c) => c.contactId === contactId);
+
           if (!contact) {
-            return res.status(404).json({ error: "Contact not found" });
+            console.warn(`[DATA_INTEGRITY] Contact ${contactId} not found in board data (Excel row missing?)`);
+            return res.status(404).json({ error: "Contact not found", contactId });
           }
-          return res.json({ ...contact, _source: "fallback" });
+
+          // Defensive: Validate required fields exist
+          if (contact.statusCode === undefined) {
+            console.warn(`[DATA_INTEGRITY] Contact ${contactId} (${contact.name}) missing statusCode`);
+          }
+          if (!contact.name) {
+            console.warn(`[DATA_INTEGRITY] Contact ${contactId} missing name field`);
+          }
+
+          console.log(`[contact-snapshot] Found contact in board: ${contact.name} (ID: ${contactId})`);
+
+          // Step 2: Call n8n contact-snapshot with contactId for detailed data (notes, intake fields)
+          // IMPORTANT: n8n workflow expects contactId ONLY - do not send contactName
+          let detailedData = {};
+          try {
+            const snapshotResponse = await fetch(N8N_ENDPOINTS.contactSnapshot, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ contactId }),
+            });
+
+            if (snapshotResponse.ok) {
+              const rawData = await snapshotResponse.json();
+              // Extract contact details from n8n response
+              detailedData = rawData.contact || rawData || {};
+              console.log(`[contact-snapshot] Got detailed data for contactId ${contactId}`);
+            } else {
+              console.warn(`[contact-snapshot] n8n snapshot returned ${snapshotResponse.status} for contactId ${contactId}`);
+            }
+          } catch (snapshotError) {
+            console.warn(`[contact-snapshot] Failed to get detailed data for contactId ${contactId}:`, snapshotError);
+          }
+
+          // Step 3: Merge board data with detailed data (board data takes precedence for core fields)
+          // Extract detailed fields from n8n response
+          const detailed = detailedData as Record<string, unknown>;
+
+          // Compute umbrella from status code
+          const statusCode = contact.statusCode as number | undefined;
+          const umbrella = statusCode !== undefined
+            ? (statusCode >= 100 && statusCode < 200 ? "WL"
+               : statusCode >= 200 && statusCode < 300 ? "PS"
+               : statusCode >= 300 && statusCode < 400 ? "PMR"
+               : statusCode >= 400 && statusCode < 500 ? "INS"
+               : "unknown")
+            : "unknown";
+
+          const mergedData = {
+            // Core identity fields
+            contactId: contact.contactId,
+            name: contact.name,
+
+            // Contact info from n8n detailed response
+            email: (detailed.email as string) || null,
+            phone: (detailed.phone as string) || null,
+
+            // Intake info from n8n detailed response
+            requestingFor: (detailed.requestingFor as string) || null,
+            reasonForSeeking: (detailed.reasonForSeeking as string) || null,
+            formCompletedBy: (detailed.formCompletedBy as string) || null,
+
+            // Additional intake fields (Phase 6)
+            modality: (detailed.modality as string) || null,
+            referralSource: (detailed.referralSource as string) || null,
+            priorServices: (detailed.priorServices as string) || null,
+            priorProvider: (detailed.priorProvider as string) || null,
+
+            // Insurance fields (Phase 6.3)
+            insurancePayer: (detailed.insurancePayer as string) || (detailed.insurance as string) || null,
+            insurancePlan: (detailed.insurancePlan as string) || (detailed.planName as string) || null,
+            insuranceId: (detailed.insuranceId as string) || (detailed.memberId as string) || (detailed.policyNumber as string) || null,
+            insuranceStatus: (detailed.insuranceStatus as string) || (detailed.verificationStatus as string) || null,
+
+            // Referral fields (Phase 6.3)
+            referralAuth: (detailed.referralAuth as string) || (detailed.authNumber as string) || null,
+            referralStatus: (detailed.referralStatus as string) || null,
+
+            // Demographics (Phase 6.2) - DOB normalized from Excel serial (Phase 6.4)
+            patientDob: normalizeExcelDate(detailed.patientDob || detailed.dob || detailed.dateOfBirth),
+            gender: (detailed.gender as string) || (detailed.sex as string) || null,
+            age: typeof detailed.age === "number" ? detailed.age : null,
+
+            // Address (Phase 6.2)
+            streetAddress: (detailed.streetAddress as string) || (detailed.address as string) || (detailed.street as string) || null,
+            city: (detailed.city as string) || null,
+            state: (detailed.state as string) || null,
+            zipCode: (detailed.zipCode as string) || (detailed.zip as string) || (detailed.postalCode as string) || null,
+            county: (detailed.county as string) || null,
+
+            // Contact preferences (Phase 6.2)
+            preferredContact: (detailed.preferredContact as string) || (detailed.preferredContactMethod as string) || (detailed.contactPreference as string) || null,
+
+            // Admin / Flags (Phase 6.3)
+            custody: (detailed.custody as string) || (detailed.custodyStatus as string) || null,
+            flags: (detailed.flags as string) || (detailed.alert as string) || null,
+            priority: (detailed.priority as string) || (detailed.urgency as string) || null,
+
+            // Links (Phase 6.3 - CRITICAL)
+            rfsLink: (detailed.rfsLink as string) || (detailed.rfs as string) || (detailed.sharepointLink as string) || (detailed.formLink as string) || null,
+            documentLink: (detailed.documentLink as string) || (detailed.documents as string) || (detailed.fileLink as string) || null,
+
+            // Status fields (board data is authoritative)
+            statusCode: contact.statusCode,
+            umbrella,
+            status: contact.status || "intake",
+
+            // Waitlist tracking fields (dates normalized from Excel serial - Phase 6.4)
+            serviceRequested: contact.serviceRequested || (detailed.requestingFor as string) || "Unknown",
+            daysOnWaitlist: contact.daysOnWaitlist ?? 0,
+            dateAdded: normalizeExcelDate(contact.dateAdded),
+            lastContact: normalizeExcelDate(detailed.lastContact),
+
+            // Assignment and notes
+            assignedTo: (detailed.assignedTo as string) || null,
+            notes: parseNotesFromLastNote(detailed.lastNote as string | undefined),
+          };
+
+          // Defensive: Log if intake fields are all missing (possible n8n field mapping issue)
+          const hasAnyIntakeField = mergedData.requestingFor || mergedData.reasonForSeeking ||
+            mergedData.formCompletedBy || mergedData.modality || mergedData.insurancePayer ||
+            mergedData.referralSource || mergedData.priorServices;
+          if (!hasAnyIntakeField) {
+            console.warn(`[DATA_INTEGRITY] Contact ${contactId} (${contact.name}) has no intake fields - check n8n field mapping`);
+          }
+
+          console.log(`[contact-snapshot] Returning merged data for ${contact.name}`);
+          return res.json({ ...mergedData, _source: "live" });
+        } catch (liveError) {
+          console.error("Live data fetch failed:", liveError);
+          return res.status(404).json({ error: "Contact not found", contactId });
         }
       } else {
-        const contact = getMockContact(contactName);
-        if (!contact) {
-          return res.status(404).json({ error: "Contact not found" });
+        // Mock mode - search by index (contactId maps to array index + 1)
+        const mockContact = mockContacts[contactId - 1];
+        if (!mockContact) {
+          return res.status(404).json({ error: "Contact not found", contactId });
         }
-        return res.json({ ...contact, _source: "mock" });
+        // Compute statusCode and umbrella from status string
+        const statusCode = stringStatusToCode(mockContact.status);
+        const umbrella = statusCode >= 100 && statusCode < 200 ? "WL"
+          : statusCode >= 200 && statusCode < 300 ? "PS"
+          : statusCode >= 300 && statusCode < 400 ? "PMR"
+          : statusCode >= 400 && statusCode < 500 ? "INS"
+          : "unknown";
+        return res.json({
+          ...mockContact,
+          contactId,
+          statusCode,
+          umbrella,
+          _source: "mock",
+        });
       }
     } catch (error) {
       console.error("Error fetching contact snapshot:", error);
       return res.status(500).json({ error: "Failed to fetch contact snapshot" });
     }
   });
+
+  // =============================================================================
+  // ROBUST NOTE PARSER v4 - Comprehensive date extraction for legacy Excel audit trails
+  // =============================================================================
+  //
+  // Key insight: Real data uses mixed patterns:
+  // - INITIALS + DATE + TIME at START of line → content follows
+  // - INITIALS + DATE + TIME in MIDDLE of text → content precedes (END marker)
+  // - Standalone DATE → content follows (START marker)
+  // =============================================================================
+
+  interface ParsedNote {
+    date: string;
+    content: string;
+    author?: string;
+  }
+
+  /**
+   * Check if string is a time indicator (AM/PM) - not valid initials
+   */
+  function isTimeIndicator(str: string): boolean {
+    return /^(AM|PM)$/i.test(str);
+  }
+
+  /**
+   * Check if string looks like valid author initials
+   */
+  function isValidInitials(str: string): boolean {
+    if (!str || str.length < 2 || str.length > 3) return false;
+    if (isTimeIndicator(str)) return false;
+    if (!/^[A-Z]{2,3}$/.test(str)) return false;
+    return true;
+  }
+
+  /**
+   * Normalize date string to ISO format with smart year inference
+   */
+  function normalizeDate(dateStr: string, contextYear: number = 2025): string {
+    if (!dateStr) return "";
+
+    // Clean the date string (remove trailing colon, etc.)
+    dateStr = dateStr.replace(/[:\s]+$/, "").trim();
+
+    // Already ISO format
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+
+    // Parse MM/DD/YYYY or MM-DD-YYYY (4-digit year)
+    let match = dateStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+    if (match) {
+      const [, month, day, year] = match;
+      return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
+
+    // Parse MM/DD/YY or MM-DD-YY (2-digit year)
+    match = dateStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/);
+    if (match) {
+      const [, month, day, shortYear] = match;
+      const year = 2000 + parseInt(shortYear);
+      return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
+
+    // Parse M/D (month/day only) - infer year from context
+    match = dateStr.match(/^(\d{1,2})[\/\-](\d{1,2})$/);
+    if (match) {
+      const [, month, day] = match;
+      return `${contextYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
+
+    return dateStr;
+  }
+
+  /**
+   * Extract trailing initials from end of text segment
+   * Handles: DP, JN\, -EB-, CM\, . AC, etc.
+   */
+  function extractTrailingInitials(text: string): { initials: string; cleanText: string } | null {
+    const trimmed = text.trim();
+
+    // Pattern 1: -INITIALS- format (e.g., -EB-)
+    let match = trimmed.match(/\s*-([A-Z]{2,3})-\s*$/);
+    if (match && isValidInitials(match[1])) {
+      return {
+        initials: match[1],
+        cleanText: trimmed.slice(0, -match[0].length).trim()
+      };
+    }
+
+    // Pattern 2: INITIALS\ or INITIALS, or INITIALS. or just INITIALS at end
+    match = trimmed.match(/[.,\s]+([A-Z]{2,3})[\\,.\s]*$/);
+    if (match && isValidInitials(match[1])) {
+      return {
+        initials: match[1],
+        cleanText: trimmed.slice(0, -match[0].length).trim()
+      };
+    }
+
+    // Pattern 3: Just INITIALS at end (space + initials)
+    match = trimmed.match(/\s([A-Z]{2,3})$/);
+    if (match && isValidInitials(match[1])) {
+      return {
+        initials: match[1],
+        cleanText: trimmed.slice(0, -match[0].length).trim()
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Main parser function v4 - comprehensive date extraction
+   */
+  function parseNotesRobust(lastNote: string | undefined): ParsedNote[] {
+    if (!lastNote || typeof lastNote !== "string" || lastNote.trim() === "") {
+      return [];
+    }
+
+    const results: ParsedNote[] = [];
+    const contextYear = 2025; // Default context year for short dates
+
+    // Handle CRM notes first (they're well-structured)
+    const crmHeaderPattern = /\[([A-Z]{2,3})\s*\|\s*(\d{1,2}\/\d{1,2}\/\d{4}),\s*(\d{1,2}:\d{2}\s*[AP]M)\]/g;
+    let crmMatch;
+    let lastCrmContentEnd = 0;
+
+    while ((crmMatch = crmHeaderPattern.exec(lastNote)) !== null) {
+      const headerEnd = crmMatch.index + crmMatch[0].length;
+      const nextCrmMatch = lastNote.slice(headerEnd).search(/\[([A-Z]{2,3})\s*\|/);
+      const nextDoubleNewline = lastNote.slice(headerEnd).indexOf("\n\n");
+
+      let contentEnd: number;
+      if (nextCrmMatch >= 0 && nextDoubleNewline >= 0) {
+        contentEnd = headerEnd + Math.min(nextCrmMatch, nextDoubleNewline);
+      } else if (nextDoubleNewline >= 0) {
+        contentEnd = headerEnd + nextDoubleNewline;
+      } else if (nextCrmMatch >= 0) {
+        contentEnd = headerEnd + nextCrmMatch;
+      } else {
+        const legacyDateMatch = lastNote.slice(headerEnd).search(/[A-Z]{2,3}\s+\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4}/);
+        contentEnd = legacyDateMatch >= 0 ? headerEnd + legacyDateMatch : lastNote.length;
+      }
+
+      const content = lastNote.slice(headerEnd, contentEnd).trim();
+      if (content) {
+        results.push({
+          date: normalizeDate(crmMatch[2]),
+          content,
+          author: crmMatch[1],
+        });
+      }
+      lastCrmContentEnd = Math.max(lastCrmContentEnd, contentEnd);
+    }
+
+    // Get legacy text
+    let legacyText: string;
+    if (lastCrmContentEnd > 0) {
+      const doubleNewline = lastNote.indexOf("\n\n", lastCrmContentEnd - 10);
+      legacyText = doubleNewline >= 0 ? lastNote.slice(doubleNewline).trim() : lastNote.slice(lastCrmContentEnd).trim();
+    } else {
+      legacyText = lastNote;
+    }
+
+    if (!legacyText) {
+      results.sort((a, b) => b.date.localeCompare(a.date));
+      return results;
+    }
+
+    // Find ALL date patterns in legacy text
+    interface DateMarker {
+      index: number;
+      endIndex: number;
+      date: string;
+      normalizedDate: string;
+      author?: string;
+      hasTime: boolean;
+      isEndMarker: boolean;
+    }
+
+    const markers: DateMarker[] = [];
+    let match;
+
+    // Pattern A: INITIALS + DATE + TIME
+    const endMarkerPattern = /([A-Z]{2,3})\s+(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})\s+(\d{1,2}:\d{2}\s*[AP]M)/g;
+    while ((match = endMarkerPattern.exec(legacyText)) !== null) {
+      if (!isTimeIndicator(match[1])) {
+        const beforeText = legacyText.slice(Math.max(0, match.index - 20), match.index);
+        const atLineStart = /(?:^|[\n\\])\s*$/.test(beforeText) || match.index === 0;
+        markers.push({
+          index: match.index,
+          endIndex: match.index + match[0].length,
+          date: match[2],
+          normalizedDate: normalizeDate(match[2]),
+          author: match[1],
+          hasTime: true,
+          isEndMarker: !atLineStart,
+        });
+      }
+    }
+
+    // Pattern B: INITIALS + DATE (no time)
+    const initialsDatePattern = /([A-Z]{2,3})\s+(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})(?!\s+\d{1,2}:\d{2})/g;
+    while ((match = initialsDatePattern.exec(legacyText)) !== null) {
+      if (!isTimeIndicator(match[1])) {
+        const overlaps = markers.some(m =>
+          (match!.index >= m.index && match!.index < m.endIndex) ||
+          (m.index >= match!.index && m.index < match!.index + match![0].length)
+        );
+        if (!overlaps) {
+          const beforeText = legacyText.slice(Math.max(0, match.index - 20), match.index);
+          const atLineStart = /(?:^|[\n\\])\s*$/.test(beforeText) || match.index === 0;
+          markers.push({
+            index: match.index,
+            endIndex: match.index + match[0].length,
+            date: match[2],
+            normalizedDate: normalizeDate(match[2]),
+            author: match[1],
+            hasTime: false,
+            isEndMarker: !atLineStart,
+          });
+        }
+      }
+    }
+
+    // Pattern C: Date at START of line/segment
+    const startDatePattern = /(?:^|[\n\\]\s*)(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}):?\s/gm;
+    while ((match = startDatePattern.exec(legacyText)) !== null) {
+      const overlaps = markers.some(m =>
+        (match!.index >= m.index && match!.index < m.endIndex) ||
+        (m.index >= match!.index && m.index < match!.index + match![0].length)
+      );
+      if (!overlaps) {
+        markers.push({
+          index: match.index,
+          endIndex: match.index + match[0].length,
+          date: match[1],
+          normalizedDate: normalizeDate(match[1]),
+          author: undefined,
+          hasTime: false,
+          isEndMarker: false,
+        });
+      }
+    }
+
+    // Pattern D: Standalone date MM/DD/YY
+    const standaloneDatePattern = /(?<![\/\-\d])(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2})(?![\/\-\d])/g;
+    while ((match = standaloneDatePattern.exec(legacyText)) !== null) {
+      const overlaps = markers.some(m =>
+        (match!.index >= m.index && match!.index < m.endIndex) ||
+        (m.index >= match!.index && m.index < match!.index + match![0].length)
+      );
+      if (!overlaps) {
+        markers.push({
+          index: match.index,
+          endIndex: match.index + match[0].length,
+          date: match[1],
+          normalizedDate: normalizeDate(match[1]),
+          author: undefined,
+          hasTime: false,
+          isEndMarker: false,
+        });
+      }
+    }
+
+    // Pattern E: Short date M/D after separator
+    const shortDatePattern = /(?:[\n\\]\s*)(\d{1,2}\/\d{1,2})(?![\/\-\d])/g;
+    while ((match = shortDatePattern.exec(legacyText)) !== null) {
+      const overlaps = markers.some(m =>
+        (match!.index >= m.index && match!.index < m.endIndex) ||
+        (m.index >= match!.index && m.index < match!.index + match![0].length)
+      );
+      if (!overlaps) {
+        markers.push({
+          index: match.index,
+          endIndex: match.index + match[0].length,
+          date: match[1],
+          normalizedDate: normalizeDate(match[1], contextYear),
+          author: undefined,
+          hasTime: false,
+          isEndMarker: false,
+        });
+      }
+    }
+
+    // Pattern F: Inline short date M/D (after space, followed by letter)
+    const inlineShortDatePattern = /\s(\d{1,2}\/\d{1,2})(?=\s+[A-Za-z])/g;
+    while ((match = inlineShortDatePattern.exec(legacyText)) !== null) {
+      const overlaps = markers.some(m =>
+        (match!.index >= m.index && match!.index < m.endIndex) ||
+        (m.index >= match!.index && m.index < match!.index + match![0].length)
+      );
+      if (!overlaps) {
+        const parts = match[1].split("/");
+        const month = parseInt(parts[0]);
+        const day = parseInt(parts[1]);
+        if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+          markers.push({
+            index: match.index + 1,
+            endIndex: match.index + match[0].length,
+            date: match[1],
+            normalizedDate: normalizeDate(match[1], contextYear),
+            author: undefined,
+            hasTime: false,
+            isEndMarker: false,
+          });
+        }
+      }
+    }
+
+    // Sort markers by position
+    markers.sort((a, b) => a.index - b.index);
+
+    // Process markers to create entries
+    for (let i = 0; i < markers.length; i++) {
+      const marker = markers[i];
+      const prevMarker = markers[i - 1];
+      const nextMarker = markers[i + 1];
+
+      let content: string;
+      let author = marker.author;
+
+      if (marker.isEndMarker) {
+        const contentStart = prevMarker ? prevMarker.endIndex : 0;
+        content = legacyText.slice(contentStart, marker.index).trim();
+      } else {
+        const contentEnd = nextMarker ? nextMarker.index : legacyText.length;
+        content = legacyText.slice(marker.endIndex, contentEnd).trim();
+
+        if (!author) {
+          const trailing = extractTrailingInitials(content);
+          if (trailing) {
+            author = trailing.initials;
+            content = trailing.cleanText;
+          }
+        }
+      }
+
+      content = content
+        .replace(/^[\\\s,.:]+/, "")
+        .replace(/[\\\s,.:]+$/, "")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      if (content && content.length > 3) {
+        results.push({
+          date: marker.normalizedDate,
+          content,
+          author,
+        });
+      }
+    }
+
+    // Log parsing statistics
+    const totalEntries = results.length;
+    const unknownDateCount = results.filter(r => !r.date).length;
+    if (totalEntries > 0) {
+      console.log(`[parseNotes] Parsed ${totalEntries} entries, UnknownDate=${unknownDateCount}`);
+    }
+
+    // Sort: dated entries by date desc, unknown-date entries last
+    results.sort((a, b) => {
+      if (a.date && b.date) return b.date.localeCompare(a.date);
+      if (a.date && !b.date) return -1;
+      if (!a.date && b.date) return 1;
+      return 0;
+    });
+
+    return results;
+  }
+
+  // Main entry point - uses robust parser
+  function parseNotesFromLastNote(lastNote: string | undefined): ParsedNote[] {
+    return parseNotesRobust(lastNote);
+  }
 
   // Get waitlist summary
   app.post("/api/get-waitlist-summary", async (_req, res) => {
@@ -324,14 +998,17 @@ export async function registerRoutes(
     }
   });
 
-  // Get all waitlist contacts (for pipeline view)
+  // Get all waitlist contacts (for Today page priority queues)
+  // Uses the board endpoint to ensure contactId is always present
   app.get("/api/waitlist-contacts", async (_req, res) => {
     try {
       if (DATA_MODE === "live") {
         try {
-          const response = await fetch(N8N_ENDPOINTS.waitlistSummary, {
+          // Use board endpoint - it returns contacts with contactId
+          const response = await fetch(N8N_ENDPOINTS.waitlistBoard, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}), // Required for n8n to respond
           });
 
           if (!response.ok) {
@@ -340,8 +1017,22 @@ export async function registerRoutes(
 
           const data = await response.json();
           if (data.contacts && Array.isArray(data.contacts)) {
-            return res.json({ contacts: data.contacts, _source: "live" });
+            // Validate that contacts have contactId
+            const validContacts = data.contacts.filter((c: any) => {
+              if (c.contactId === undefined || c.contactId === null) {
+                console.warn("[waitlist-contacts] Contact missing contactId:", c.name);
+                return false;
+              }
+              return true;
+            });
+
+            // Populate server-side cache for contact-snapshot lookups
+            // This reduces duplicate n8n calls when navigating from Today to Contact Detail
+            setBoardCache({ contacts: validContacts });
+
+            return res.json({ contacts: validContacts, _source: "live" });
           }
+          console.warn("[waitlist-contacts] No contacts in response, falling back to mock");
           return res.json({ contacts: getMockWaitlistContacts(), _source: "fallback" });
         } catch (liveError) {
           console.warn("Live data fetch failed, falling back to mock:", liveError);
@@ -391,7 +1082,23 @@ export async function registerRoutes(
           const data = JSON.parse(text);
           console.log("n8n board _source:", data._source);
           console.log("n8n board contacts count:", data.contacts?.length);
-          
+
+          // Defensive: Check for contacts missing required fields
+          if (data.contacts && Array.isArray(data.contacts)) {
+            const missingContactId = data.contacts.filter((c: any) => c.contactId === undefined || c.contactId === null);
+            const missingStatusCode = data.contacts.filter((c: any) => c.statusCode === undefined);
+            if (missingContactId.length > 0) {
+              console.warn(`[DATA_INTEGRITY] ${missingContactId.length} contacts missing contactId:`, missingContactId.map((c: any) => c.name));
+            }
+            if (missingStatusCode.length > 0) {
+              console.warn(`[DATA_INTEGRITY] ${missingStatusCode.length} contacts missing statusCode:`, missingStatusCode.map((c: any) => c.name || c.contactId));
+            }
+
+            // Populate server-side cache for contact-snapshot lookups
+            // This reduces duplicate n8n calls when navigating from list to detail view
+            setBoardCache({ contacts: data.contacts });
+          }
+
           // Return the response directly, preserving _source field
           return res.json(data);
         } catch (liveError) {
@@ -412,33 +1119,99 @@ export async function registerRoutes(
     res.json({ dataMode: DATA_MODE });
   });
 
-  // Update contact status
+  // Valid status codes for the umbrella model
+  // WL (100-104), PS (200-204), PMR (300), INS (400)
+  const VALID_STATUS_CODES = [100, 101, 102, 103, 104, 200, 201, 202, 203, 204, 300, 400];
+
+  // Umbrella types for status grouping
+  type UmbrellaId = "WL" | "PS" | "PMR" | "INS" | "unknown";
+
+  // Get umbrella ID from status code
+  function getUmbrellaForStatusCode(statusCode: number | undefined): UmbrellaId {
+    if (statusCode === undefined) return "unknown";
+    if (statusCode >= 100 && statusCode < 200) return "WL";
+    if (statusCode >= 200 && statusCode < 300) return "PS";
+    if (statusCode >= 300 && statusCode < 400) return "PMR";
+    if (statusCode >= 400 && statusCode < 500) return "INS";
+    return "unknown";
+  }
+
+  // Update contact status by contactId
   app.post("/api/update-status", async (req, res) => {
     try {
-      const { contactName, statusCode } = req.body;
-      
-      if (!contactName || typeof contactName !== "string") {
-        return res.status(400).json({ error: "contactName is required" });
+      const { contactId, statusCode } = req.body;
+
+      if (contactId === undefined || typeof contactId !== "number") {
+        return res.status(400).json({ error: "contactId (number) is required" });
       }
       if (statusCode === undefined || typeof statusCode !== "number") {
-        return res.status(400).json({ error: "statusCode is required" });
+        return res.status(400).json({ error: "statusCode (number) is required" });
       }
 
-      if (DATA_MODE === "live") {
-        const response = await fetch(N8N_ENDPOINTS.updateStatus, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contactName, statusCode }),
+      // Validate status code against known values
+      if (!VALID_STATUS_CODES.includes(statusCode)) {
+        console.warn(`[update-status] Invalid status code ${statusCode} for contactId ${contactId}`);
+        return res.status(400).json({
+          error: "Invalid status code",
+          message: `Status code ${statusCode} is not valid`,
+          validCodes: VALID_STATUS_CODES,
         });
+      }
 
-        if (!response.ok) {
-          throw new Error(`n8n webhook returned ${response.status}`);
+      console.log(`[update-status] Request received:`, {
+        contactId,
+        statusCode,
+        timestamp: new Date().toISOString(),
+      });
+
+      if (DATA_MODE === "live") {
+        try {
+          const payload = { contactId, statusCode };
+
+          console.log(`[update-status] Calling n8n with payload:`, payload);
+
+          const response = await fetch(N8N_ENDPOINTS.updateStatus, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+
+          const responseText = await response.text();
+          console.log(`[update-status] n8n response:`, {
+            status: response.status,
+            statusText: response.statusText,
+            body: responseText.substring(0, 500),
+          });
+
+          if (!response.ok) {
+            console.error(`[update-status] n8n returned ${response.status}: ${responseText}`);
+            return res.status(502).json({
+              error: "Status update failed",
+              message: `n8n returned ${response.status}: ${response.statusText}`,
+              details: responseText.substring(0, 200),
+            });
+          }
+
+          // Parse the response
+          let data;
+          try {
+            data = JSON.parse(responseText);
+          } catch {
+            data = { success: true, contactId, newStatus: statusCode };
+          }
+
+          console.log(`[update-status] Success for contactId ${contactId}:`, data);
+          return res.json({ success: true, contactId, newStatus: statusCode, ...data });
+        } catch (liveError) {
+          const errorMessage = liveError instanceof Error ? liveError.message : "Unknown error";
+          console.error(`[update-status] Live update failed for contactId ${contactId}:`, errorMessage);
+          return res.status(500).json({
+            error: "Status update failed",
+            message: `Could not update status: ${errorMessage}`,
+          });
         }
-
-        const data = await response.json();
-        return res.json(data);
       } else {
-        // Update mock data in memory - map statusCode to string status
+        // Mock mode - update by index
         const statusCodeToString: Record<number, string> = {
           100: "intake",
           101: "waiting",
@@ -450,15 +1223,13 @@ export async function registerRoutes(
           300: "on_hold",
           400: "closed",
         };
-        
-        const contact = mockContacts.find(
-          (c) => c.name.toLowerCase() === contactName.toLowerCase()
-        );
+
+        const contact = mockContacts[contactId - 1];
         if (!contact) {
-          return res.status(404).json({ error: "Contact not found" });
+          return res.status(404).json({ error: "Contact not found", contactId });
         }
         contact.status = statusCodeToString[statusCode] || contact.status;
-        return res.json({ success: true, contactName, newStatus: statusCode });
+        return res.json({ success: true, contactId, newStatus: statusCode });
       }
     } catch (error) {
       console.error("Error updating status:", error);
@@ -466,52 +1237,111 @@ export async function registerRoutes(
     }
   });
 
-  // Add note to contact
+  // Add note to contact by contactId
+  // n8n contract: { contactId, note, author, timestamp }
+  // n8n handles appending to Excel "Notes added by agent" column
   app.post("/api/add-note", async (req, res) => {
     try {
-      const { contactName, note } = req.body;
-      
-      if (!contactName || typeof contactName !== "string") {
-        return res.status(400).json({ error: "contactName is required" });
+      const { contactId, note, author, timestamp } = req.body;
+
+      // Validate all required fields
+      if (contactId === undefined || typeof contactId !== "number") {
+        return res.status(400).json({ error: "contactId (number) is required" });
       }
-      if (!note || typeof note !== "string") {
-        return res.status(400).json({ error: "note is required" });
+      if (!note || typeof note !== "string" || note.trim() === "") {
+        return res.status(400).json({ error: "note content is required" });
       }
+      if (!author || typeof author !== "string" || author.trim() === "") {
+        return res.status(400).json({ error: "author initials are required" });
+      }
+      if (!timestamp || typeof timestamp !== "string") {
+        return res.status(400).json({ error: "timestamp is required" });
+      }
+
+      console.log(`[add-note] Adding note to contactId ${contactId}`, {
+        author,
+        timestamp,
+        notePreview: note.substring(0, 50),
+      });
 
       if (DATA_MODE === "live") {
-        const response = await fetch(N8N_ENDPOINTS.addNote, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contactName, note }),
-        });
+        try {
+          // Forward exact payload to n8n - it handles Excel formatting
+          const payload = {
+            contactId,
+            note: note.trim(),
+            author: author.trim(),
+            timestamp,
+          };
 
-        if (!response.ok) {
-          throw new Error(`n8n webhook returned ${response.status}`);
+          console.log(`[add-note] Sending to n8n:`, payload);
+
+          const response = await fetch(N8N_ENDPOINTS.addNote, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+
+          const responseText = await response.text();
+          console.log(`[add-note] n8n response:`, {
+            status: response.status,
+            body: responseText.substring(0, 200),
+          });
+
+          if (!response.ok) {
+            console.error(`[add-note] n8n returned ${response.status}: ${responseText}`);
+            return res.status(502).json({
+              error: "Failed to add note",
+              message: `n8n returned ${response.status}`,
+              details: responseText.substring(0, 200),
+            });
+          }
+
+          // Parse response if JSON
+          let data = {};
+          try {
+            data = JSON.parse(responseText);
+          } catch {
+            // Response might not be JSON - that's OK
+          }
+
+          console.log(`[add-note] Success for contactId ${contactId}`);
+          return res.json({
+            success: true,
+            contactId,
+            note: {
+              date: timestamp,
+              content: `${author}: ${note.trim()}`,
+            },
+            ...data,
+          });
+        } catch (liveError) {
+          const errorMessage = liveError instanceof Error ? liveError.message : "Unknown error";
+          console.error(`[add-note] Live update failed for contactId ${contactId}:`, errorMessage);
+          return res.status(500).json({
+            error: "Failed to add note",
+            message: errorMessage,
+          });
         }
-
-        const data = await response.json();
-        return res.json(data);
       } else {
-        // Add note to mock data in memory
-        const contact = mockContacts.find(
-          (c) => c.name.toLowerCase() === contactName.toLowerCase()
-        );
+        // Mock mode - update by index
+        const contact = mockContacts[contactId - 1];
         if (!contact) {
-          return res.status(404).json({ error: "Contact not found" });
+          return res.status(404).json({ error: "Contact not found", contactId });
         }
-        
+
         const newNote = {
-          date: new Date().toISOString().split('T')[0],
-          content: note,
+          date: timestamp,
+          content: `${author}: ${note.trim()}`,
         };
-        
+
         if (!contact.notes) {
           contact.notes = [];
         }
         contact.notes.unshift(newNote);
-        contact.lastContact = newNote.date;
-        
-        return res.json({ success: true, contactName, note: newNote });
+        contact.lastContact = timestamp.split("T")[0];
+
+        return res.json({ success: true, contactId, note: newNote });
       }
     } catch (error) {
       console.error("Error adding note:", error);

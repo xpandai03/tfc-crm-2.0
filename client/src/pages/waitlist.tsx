@@ -15,20 +15,27 @@ import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { PageLayout } from "@/components/layout/page-layout";
 import { DroppableColumn } from "@/components/kanban/droppable-column";
 import { DraggableCard } from "@/components/kanban/draggable-card";
+import { WaitlistListView } from "@/components/waitlist/waitlist-list-view";
 import { QuickNoteModal } from "@/components/ui/quick-note-modal";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { LoadingState } from "@/components/ui/loading-spinner";
 import { SyncStatus } from "@/components/ui/sync-status";
 import { FallbackBanner } from "@/components/ui/fallback-banner";
+import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, LayoutGrid, List } from "lucide-react";
+import { StatusLegendModal } from "@/components/ui/status-legend-modal";
 import { getWaitlistBoard, updateContactStatus, addNoteToContact } from "@/lib/api";
 import { useDataSource } from "@/lib/data-source-context";
-import { 
-  PIPELINE_COLUMNS, 
-  getColumnForStatus, 
+import { useAuth } from "@/lib/auth-context";
+import {
+  PIPELINE_COLUMNS,
+  getColumnForStatus,
+  getUmbrellaForStatus,
+  getEntryStatusForUmbrella,
   stringStatusToCode,
-  type PipelineColumnId 
+  type PipelineColumnId,
+  type UmbrellaId,
 } from "@/lib/status-config";
 import type { WaitlistContact } from "@shared/schema";
 
@@ -38,12 +45,58 @@ import type { WaitlistContact } from "@shared/schema";
  * Aggregates alone are insufficient.
  * Do NOT mark Kanban as live unless rows come from Excel-backed source.
  */
+// View mode type
+type ViewMode = "kanban" | "list";
+
+// localStorage key for view preference
+const VIEW_MODE_KEY = "waitlist-view-mode";
+
+// Helper to derive author initials from full name
+function getAuthorInitials(name: string | undefined): string {
+  if (!name || name.trim() === "") return "??";
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) {
+    return parts[0].substring(0, 2).toUpperCase();
+  }
+  return parts
+    .map((p) => p[0])
+    .join("")
+    .toUpperCase()
+    .substring(0, 3); // Max 3 initials
+}
+
+// Helper to generate timestamp in consistent format
+function generateTimestamp(): string {
+  return new Date().toISOString();
+}
+
 export default function Waitlist() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { user } = useAuth();
   const { updateContactsSource, updateSyncTime, lastSyncTime } = useDataSource();
   const [activeCard, setActiveCard] = useState<WaitlistContact | null>(null);
-  const [noteModalContact, setNoteModalContact] = useState<string | null>(null);
+  const [noteModalContact, setNoteModalContact] = useState<{ contactId: number; name: string } | null>(null);
+
+  // Derive author initials from authenticated user
+  const authorInitials = getAuthorInitials(user?.name);
+
+  // View mode state - persisted in localStorage
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem(VIEW_MODE_KEY);
+      if (saved === "kanban" || saved === "list") {
+        return saved;
+      }
+    }
+    return "kanban";
+  });
+
+  // Persist view mode to localStorage
+  const handleViewModeChange = (mode: ViewMode) => {
+    setViewMode(mode);
+    localStorage.setItem(VIEW_MODE_KEY, mode);
+  };
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const sensors = useSensors(
@@ -96,64 +149,132 @@ export default function Waitlist() {
     setIsRefreshing(false);
   };
 
+  // Extended mutation variables for better debugging and UX
+  type StatusUpdateVars = {
+    contactId: number;
+    contactName: string; // For display only
+    statusCode: number;
+    previousStatus?: number;
+    targetLabel?: string;
+  };
+
   const updateStatusMutation = useMutation({
-    mutationFn: ({ contactName, statusCode }: { contactName: string; statusCode: number }) =>
-      updateContactStatus(contactName, statusCode),
-    onMutate: async ({ contactName, statusCode }) => {
+    mutationFn: ({ contactId, statusCode }: StatusUpdateVars) =>
+      updateContactStatus(contactId, statusCode),
+    onMutate: async ({ contactId, statusCode }) => {
+      // Cancel outgoing refetches to prevent overwriting optimistic update
       await queryClient.cancelQueries({ queryKey: ["/api/get-waitlist-board"] });
+
+      // Snapshot previous value for rollback
       const previousData = queryClient.getQueryData<{ contacts: WaitlistContact[]; _source?: string }>(["/api/get-waitlist-board"]);
+
+      // Optimistically update the cache using contactId
       queryClient.setQueryData<{ contacts: WaitlistContact[]; _source?: string }>(["/api/get-waitlist-board"], (old) => {
         if (!old) return old;
         return {
           ...old,
           contacts: old.contacts.map((c) =>
-            c.name === contactName ? { ...c, statusCode } : c
+            c.contactId === contactId ? { ...c, statusCode } : c
           ),
         };
       });
+
       return { previousData };
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      // Invalidate to refetch fresh data
       queryClient.invalidateQueries({ queryKey: ["/api/get-waitlist-board"] });
       queryClient.invalidateQueries({ queryKey: ["/api/waitlist-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/contact", variables.contactId] });
+
+      // Show success toast
+      toast({
+        title: "Status updated",
+        description: `${variables.contactName} moved to ${variables.targetLabel || "new status"}`,
+      });
+
+      console.log("[waitlist] Status update succeeded:", variables);
     },
-    onError: (_error, variables, context) => {
+    onError: (error, variables, context) => {
+      // Rollback to previous state
       if (context?.previousData) {
         queryClient.setQueryData(["/api/get-waitlist-board"], context.previousData);
       }
       queryClient.invalidateQueries({ queryKey: ["/api/waitlist-summary"] });
+
+      // Extract error message
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+
+      console.error("[waitlist] Status update failed:", {
+        contactId: variables.contactId,
+        contactName: variables.contactName,
+        attemptedStatus: variables.statusCode,
+        previousStatus: variables.previousStatus,
+        error: errorMessage,
+      });
+
       toast({
         title: "Failed to update status",
-        description: `Could not update ${variables.contactName}. Please try again.`,
+        description: `Could not update ${variables.contactName}. ${errorMessage}`,
         variant: "destructive",
       });
     },
   });
 
   const addNoteMutation = useMutation({
-    mutationFn: ({ contactName, note }: { contactName: string; note: string }) =>
-      addNoteToContact(contactName, note),
-    onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/get-waitlist-board"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/contact", variables.contactName] });
+    mutationFn: ({ contactId, note, author, timestamp }: {
+      contactId: number;
+      note: string;
+      author: string;
+      timestamp: string;
+    }) => addNoteToContact({ contactId, note, author, timestamp }),
+    onMutate: async () => {
+      // Create pending toast
+      const toastRef = toast({
+        title: "Adding note...",
+        description: "Saving to Excel",
+      });
+
+      // Close modal immediately (optimistic)
       setNoteModalContact(null);
-      toast({
-        title: "Note added",
-        description: `Note added to ${variables.contactName}`,
-      });
+
+      return { toastRef };
     },
-    onError: (_error, variables) => {
-      toast({
-        title: "Failed to add note",
-        description: `Could not add note to ${variables.contactName}. Please try again.`,
-        variant: "destructive",
-      });
+    onSuccess: (_data, variables, context) => {
+      // Update toast to success
+      if (context?.toastRef) {
+        context.toastRef.update({
+          id: context.toastRef.id,
+          title: "Note added",
+          description: "Note has been saved to Excel.",
+        });
+        setTimeout(() => context.toastRef.dismiss(), 2000);
+      }
+
+      // Refetch to reconcile with server
+      queryClient.invalidateQueries({ queryKey: ["/api/get-waitlist-board"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/contact", variables.contactId] });
+    },
+    onError: (error, _variables, context) => {
+      // Update toast to error
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      if (context?.toastRef) {
+        context.toastRef.update({
+          id: context.toastRef.id,
+          title: "Failed to add note",
+          description: errorMessage,
+          variant: "destructive",
+        });
+        setTimeout(() => context.toastRef.dismiss(), 5000);
+      }
     },
   });
 
   const handleDragStart = (event: DragStartEvent) => {
     const { active } = event;
-    const draggedContact = contacts?.find((c) => c.name === active.id);
+    // CANONICAL: Look up by contactId (the drag ID is now contactId.toString())
+    const draggedContactId = parseInt(active.id as string, 10);
+    const draggedContact = contacts?.find((c) => c.contactId === draggedContactId);
     setActiveCard(draggedContact || null);
   };
 
@@ -173,33 +294,63 @@ export default function Waitlist() {
 
     if (!over || !contacts) return;
 
-    const contactName = active.id as string;
+    // CANONICAL: Parse contactId from the drag ID (now uses contactId.toString())
+    const draggedContactId = parseInt(active.id as string, 10);
     const targetColumnId = over.id as PipelineColumnId | "other";
-    const contact = contacts.find((c) => c.name === contactName);
 
-    if (!contact) return;
+    // Look up contact by contactId - the ONLY valid identifier
+    const contact = contacts.find((c) => c.contactId === draggedContactId);
 
-    // Get the current column for this contact
+    // DATA INTEGRITY GUARD: Reject if contact not found or contactId is invalid
+    if (!contact) {
+      console.error("[DATA INTEGRITY ERROR] Contact not found for drag ID:", active.id);
+      toast({
+        title: "Error",
+        description: "Contact not found. Please refresh the page.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Get the current umbrella for this contact
     const currentStatusCode = contact.statusCode ?? stringStatusToCode(contact.status);
-    const currentColumn = getColumnForStatus(currentStatusCode);
+    const currentUmbrella = getUmbrellaForStatus(currentStatusCode);
 
-    if (currentColumn === targetColumnId) return;
+    // No-op: dropping on "other" column or same umbrella
+    if (targetColumnId === "other") return;
+    if (currentUmbrella === targetColumnId) return;
 
-    // Get the first status code for the target column
+    // Get the entry status code for the target umbrella
+    // Entry status = the default status assigned when moving to this workflow stage
+    const newStatusCode = getEntryStatusForUmbrella(targetColumnId as UmbrellaId);
     const targetColumn = PIPELINE_COLUMNS.find(col => col.id === targetColumnId);
-    if (!targetColumn) return;
 
-    const newStatusCode = targetColumn.codes[0];
-
-    toast({
-      title: "Status updated",
-      description: `${contactName} moved to ${targetColumn.label}`,
+    // Log the update attempt for debugging - contactId is the canonical identifier
+    console.log("[waitlist] Drag status update:", {
+      contactId: contact.contactId,
+      contactName: contact.name, // For debugging only
+      fromStatus: currentStatusCode,
+      toStatus: newStatusCode,
+      targetUmbrella: targetColumnId,
     });
 
-    updateStatusMutation.mutate({ contactName, statusCode: newStatusCode });
+    // Show pending toast
+    toast({
+      title: "Updating status...",
+      description: `Moving ${contact.name} to ${targetColumn?.label ?? targetColumnId}`,
+    });
+
+    // Execute mutation with contactId as the canonical identifier
+    updateStatusMutation.mutate({
+      contactId: contact.contactId,
+      contactName: contact.name, // For display only
+      statusCode: newStatusCode,
+      previousStatus: currentStatusCode,
+      targetLabel: targetColumn?.label ?? targetColumnId,
+    });
   };
 
-  const handleAddNote = (contactName: string) => {
+  const handleAddNote = (contact: WaitlistContact) => {
     // Disable notes in demo mode
     if (isDemoMode) {
       toast({
@@ -209,12 +360,29 @@ export default function Waitlist() {
       });
       return;
     }
-    setNoteModalContact(contactName);
+    // DATA INTEGRITY GUARD: contactId is now required but check at runtime
+    if (contact.contactId === undefined || contact.contactId === null) {
+      console.error("[DATA INTEGRITY ERROR] Missing contactId for add note:", contact.name);
+      toast({
+        title: "Data Error",
+        description: "Contact is missing an ID. Please refresh and try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setNoteModalContact({ contactId: contact.contactId, name: contact.name });
   };
 
   const handleSubmitNote = (note: string) => {
     if (noteModalContact) {
-      addNoteMutation.mutate({ contactName: noteModalContact, note });
+      // Generate timestamp and use derived author initials
+      const timestamp = generateTimestamp();
+      addNoteMutation.mutate({
+        contactId: noteModalContact.contactId,
+        note,
+        author: authorInitials,
+        timestamp,
+      });
     }
   };
 
@@ -279,65 +447,97 @@ export default function Waitlist() {
           <div>
             <h1 className="text-2xl font-semibold text-foreground" data-testid="text-page-title">Waitlist Pipeline</h1>
             <p className="text-sm text-muted-foreground mt-1" data-testid="text-page-subtitle">
-              {isDemoMode 
-                ? "Demo rows (drag & drop disabled)" 
-                : "Drag cards between columns to update status"
+              {viewMode === "kanban"
+                ? isDemoMode
+                  ? "Demo rows (drag & drop disabled)"
+                  : "Drag cards between columns to update status"
+                : "Click a row to view contact details"
               }
             </p>
           </div>
-          <SyncStatus 
-            lastSyncTime={lastSyncTime} 
-            onRefresh={handleRefresh}
-            isRefreshing={isRefreshing}
-          />
+          <div className="flex items-center gap-2">
+            {/* View Toggle */}
+            <div className="flex items-center border rounded-md">
+              <Button
+                variant={viewMode === "kanban" ? "default" : "ghost"}
+                size="sm"
+                className="rounded-r-none"
+                onClick={() => handleViewModeChange("kanban")}
+              >
+                <LayoutGrid className="h-4 w-4 mr-1" />
+                Kanban
+              </Button>
+              <Button
+                variant={viewMode === "list" ? "default" : "ghost"}
+                size="sm"
+                className="rounded-l-none"
+                onClick={() => handleViewModeChange("list")}
+              >
+                <List className="h-4 w-4 mr-1" />
+                List
+              </Button>
+            </div>
+
+            <StatusLegendModal />
+            <SyncStatus
+              lastSyncTime={lastSyncTime}
+              onRefresh={handleRefresh}
+              isRefreshing={isRefreshing}
+            />
+          </div>
         </div>
 
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCorners}
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
-        >
-          <ScrollArea className="w-full">
-            <div className="flex gap-4 pb-4 min-w-max">
-              {PIPELINE_COLUMNS.map((column) => (
-                <DroppableColumn
-                  key={column.id}
-                  columnId={column.id}
-                  title={column.label}
-                  contacts={getContactsByColumn(column.id)}
-                  onAddNote={handleAddNote}
-                  className="h-[calc(100vh-220px)] min-h-[400px]"
-                />
-              ))}
-              {unknownContacts.length > 0 && (
-                <DroppableColumn
-                  key="other"
-                  columnId="other"
-                  title="Needs Review"
-                  contacts={unknownContacts}
-                  onAddNote={handleAddNote}
-                  className="h-[calc(100vh-220px)] min-h-[400px]"
-                />
-              )}
-            </div>
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+        {/* Conditional View Rendering */}
+        {viewMode === "kanban" ? (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCorners}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+          >
+            <ScrollArea className="w-full">
+              <div className="flex gap-4 pb-4 min-w-max">
+                {PIPELINE_COLUMNS.map((column) => (
+                  <DroppableColumn
+                    key={column.id}
+                    columnId={column.id}
+                    title={column.label}
+                    contacts={getContactsByColumn(column.id)}
+                    onAddNote={handleAddNote}
+                    color={column.color as "slate" | "amber" | "purple" | "red"}
+                    className="h-[calc(100vh-220px)] min-h-[400px]"
+                  />
+                ))}
+                {unknownContacts.length > 0 && (
+                  <DroppableColumn
+                    key="other"
+                    columnId="other"
+                    title="Needs Review"
+                    contacts={unknownContacts}
+                    onAddNote={handleAddNote}
+                    className="h-[calc(100vh-220px)] min-h-[400px]"
+                  />
+                )}
+              </div>
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
 
-          <DragOverlay>
-            {activeCard ? (
-              <DraggableCard contact={activeCard} isDragging onAddNote={() => {}} />
-            ) : null}
-          </DragOverlay>
-        </DndContext>
+            <DragOverlay>
+              {activeCard ? (
+                <DraggableCard contact={activeCard} isDragging onAddNote={() => {}} />
+              ) : null}
+            </DragOverlay>
+          </DndContext>
+        ) : (
+          <WaitlistListView contacts={contacts} />
+        )}
       </div>
 
       <QuickNoteModal
         isOpen={!!noteModalContact}
-        contactName={noteModalContact || ""}
+        contactName={noteModalContact?.name || ""}
         onClose={() => setNoteModalContact(null)}
         onSubmit={handleSubmitNote}
-        isSubmitting={addNoteMutation.isPending}
       />
     </PageLayout>
   );

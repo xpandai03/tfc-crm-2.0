@@ -17,7 +17,7 @@ function Router() {
     <Switch>
       <Route path="/" component={Home} />
       <Route path="/waitlist" component={Waitlist} />
-      <Route path="/contact/:name" component={ContactDetail} />
+      <Route path="/contact/:id" component={ContactDetail} />
       <Route path="/insights" component={Insights} />
       <Route component={NotFound} />
     </Switch>
