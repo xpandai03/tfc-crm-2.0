@@ -28,6 +28,10 @@ export function FallbackBanner({
   onRefresh,
   isRefreshing = false
 }: FallbackBannerProps) {
+  // DISABLED: App now always shows live Excel data
+  // To re-enable, remove this early return
+  return null;
+
   const [dismissed, setDismissed] = useState(false);
   const [timeAgo, setTimeAgo] = useState<string>("");
 
