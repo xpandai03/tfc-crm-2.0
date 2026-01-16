@@ -13,8 +13,16 @@ export function KanbanCard({ contact }: KanbanCardProps) {
   const isUrgent = contact.daysOnWaitlist > 60;
   const isWarning = contact.daysOnWaitlist > 30 && contact.daysOnWaitlist <= 60;
 
+  // DATA INTEGRITY: Log warning if contactId is missing
+  if (contact.contactId === undefined || contact.contactId === null) {
+    console.warn("[KanbanCard] Missing contactId for contact:", contact.name);
+  }
+
+  // CANONICAL: Use contactId for navigation
+  const contactHref = contact.contactId ? `/contact/${contact.contactId}` : "#";
+
   return (
-    <Link href={`/contact/${encodeURIComponent(contact.name)}`} data-testid={`link-contact-${contact.name.toLowerCase().replace(/\s+/g, '-')}`}>
+    <Link href={contactHref} data-testid={`link-contact-${contact.name.toLowerCase().replace(/\s+/g, '-')}`}>
       <Card
         className={cn(
           "hover-elevate active-elevate-2 cursor-pointer transition-transform duration-200 hover:translate-y-[-1px] overflow-visible",

@@ -12,21 +12,86 @@ export const contactStatuses = [
 
 export type ContactStatus = (typeof contactStatuses)[number];
 
-// Contact snapshot schema (matches n8n webhook response)
+// Umbrella status types for pipeline columns
+export const umbrellaIds = ["WL", "PS", "PMR", "INS", "unknown"] as const;
+export type UmbrellaId = (typeof umbrellaIds)[number];
+
+// Contact snapshot schema (matches expanded server contract)
 export const contactSnapshotSchema = z.object({
+  // Core identity
+  contactId: z.number(),
   name: z.string(),
-  email: z.string().optional(),
-  phone: z.string().optional(),
-  status: z.enum(contactStatuses),
+
+  // Contact info (from n8n detailed response)
+  email: z.string().nullable().optional(),
+  phone: z.string().nullable().optional(),
+
+  // Intake info (from n8n detailed response)
+  requestingFor: z.string().nullable().optional(),
+  reasonForSeeking: z.string().nullable().optional(),
+  formCompletedBy: z.string().nullable().optional(),
+
+  // Additional intake fields (Phase 6)
+  modality: z.string().nullable().optional(),        // In-person vs Telehealth
+  referralSource: z.string().nullable().optional(),  // How client found TFC
+  priorServices: z.string().nullable().optional(),   // Previous service history
+  priorProvider: z.string().nullable().optional(),   // Previous provider name
+
+  // Insurance fields (Phase 6.3)
+  insurancePayer: z.string().nullable().optional(),  // Insurance company name
+  insurancePlan: z.string().nullable().optional(),   // Plan name
+  insuranceId: z.string().nullable().optional(),     // Member/Policy ID
+  insuranceStatus: z.string().nullable().optional(), // Verification status
+
+  // Referral fields (Phase 6.3)
+  referralAuth: z.string().nullable().optional(),    // Authorization number
+  referralStatus: z.string().nullable().optional(),  // Referral status
+
+  // Demographics (Phase 6.2)
+  patientDob: z.string().nullable().optional(),      // Patient date of birth
+  gender: z.string().nullable().optional(),          // Gender / Sex
+  age: z.number().nullable().optional(),             // Age (if computed)
+
+  // Address (Phase 6.2)
+  streetAddress: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  state: z.string().nullable().optional(),
+  zipCode: z.string().nullable().optional(),
+  county: z.string().nullable().optional(),          // County
+
+  // Contact preferences (Phase 6.2)
+  preferredContact: z.string().nullable().optional(), // Preferred contact method
+
+  // Admin / Flags (Phase 6.3)
+  custody: z.string().nullable().optional(),         // Custody status
+  flags: z.string().nullable().optional(),           // Alert flags
+  priority: z.string().nullable().optional(),        // Priority/Urgency
+
+  // Links (Phase 6.3 - CRITICAL)
+  rfsLink: z.string().nullable().optional(),         // RFS / SharePoint link
+  documentLink: z.string().nullable().optional(),    // Document link
+
+  // Status fields
+  statusCode: z.number(),
+  umbrella: z.enum(umbrellaIds),
+  status: z.enum(contactStatuses).optional(),
+
+  // Waitlist tracking
   serviceRequested: z.string(),
   daysOnWaitlist: z.number(),
-  dateAdded: z.string(),
+  dateAdded: z.string().nullable().optional(),
+  lastContact: z.string().nullable().optional(), // Last contact date
+
+  // Assignment and notes
+  assignedTo: z.string().nullable().optional(),
   notes: z.array(z.object({
     date: z.string(),
     content: z.string(),
+    author: z.string().optional(), // Author initials extracted from note (Phase 6)
   })).optional(),
-  lastContact: z.string().optional(),
-  assignedTo: z.string().optional(),
+
+  // Data source indicator
+  _source: z.enum(["live", "fallback", "mock", "derived"]).optional(),
 });
 
 export type ContactSnapshot = z.infer<typeof contactSnapshotSchema>;
@@ -47,12 +112,13 @@ export const waitlistSummarySchema = z.object({
 export type WaitlistSummary = z.infer<typeof waitlistSummarySchema>;
 
 // Waitlist contact (for pipeline view)
-// Supports both string status (legacy/mock) and numeric statusCode (live Excel)
+// contactId and statusCode are REQUIRED - these are the canonical identifiers
+// Any contact without these fields should be rejected/logged as a data integrity error
 export const waitlistContactSchema = z.object({
-  contactId: z.number().optional(),
+  contactId: z.number(), // REQUIRED - canonical identifier for all operations
   name: z.string(),
-  status: z.enum(contactStatuses).optional(),
-  statusCode: z.number().optional(),
+  status: z.enum(contactStatuses).optional(), // Legacy string status (deprecated)
+  statusCode: z.number(), // REQUIRED - authoritative status from Excel
   serviceRequested: z.string(),
   daysOnWaitlist: z.number(),
   dateAdded: z.string().nullable(),
@@ -62,7 +128,19 @@ export type WaitlistContact = z.infer<typeof waitlistContactSchema>;
 
 // API request/response types
 export const getContactSnapshotRequestSchema = z.object({
-  contactName: z.string(),
+  contactId: z.number(),
 });
 
 export type GetContactSnapshotRequest = z.infer<typeof getContactSnapshotRequestSchema>;
+
+// User types (for future auth features)
+export interface User {
+  id: string;
+  username: string;
+  password: string;
+}
+
+export interface InsertUser {
+  username: string;
+  password: string;
+}

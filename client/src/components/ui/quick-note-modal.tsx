@@ -15,7 +15,6 @@ interface QuickNoteModalProps {
   contactName: string;
   onClose: () => void;
   onSubmit: (note: string) => void;
-  isSubmitting?: boolean;
 }
 
 export function QuickNoteModal({
@@ -23,7 +22,6 @@ export function QuickNoteModal({
   contactName,
   onClose,
   onSubmit,
-  isSubmitting = false,
 }: QuickNoteModalProps) {
   const [note, setNote] = useState("");
 
@@ -62,17 +60,16 @@ export function QuickNoteModal({
           <Button
             variant="outline"
             onClick={handleClose}
-            disabled={isSubmitting}
             data-testid="button-cancel-note"
           >
             Cancel
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={!note.trim() || isSubmitting}
+            disabled={!note.trim()}
             data-testid="button-submit-note"
           >
-            {isSubmitting ? "Adding..." : "Add Note"}
+            Add Note
           </Button>
         </DialogFooter>
       </DialogContent>

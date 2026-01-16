@@ -10,13 +10,15 @@ import type { WaitlistContact } from "@shared/schema";
 
 interface DraggableCardProps {
   contact: WaitlistContact;
-  onAddNote: (contactName: string) => void;
+  onAddNote: (contact: WaitlistContact) => void;
   isDragging?: boolean;
 }
 
 export function DraggableCard({ contact, onAddNote, isDragging = false }: DraggableCardProps) {
+  // CRITICAL: Use contactId as the canonical drag identifier
+  // This ensures status updates target the correct Excel row
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
-    id: contact.name,
+    id: contact.contactId.toString(), // contactId is now required - use it as the drag ID
   });
 
   const isUrgent = contact.daysOnWaitlist > 60;
@@ -31,7 +33,7 @@ export function DraggableCard({ contact, onAddNote, isDragging = false }: Dragga
   const handleAddNoteClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    onAddNote(contact.name);
+    onAddNote(contact);
   };
 
   return (
@@ -56,7 +58,7 @@ export function DraggableCard({ contact, onAddNote, isDragging = false }: Dragga
         <CardContent className="p-3">
           <div className="flex items-start justify-between gap-2">
             <Link
-              href={`/contact/${encodeURIComponent(contact.name)}`}
+              href={`/contact/${contact.contactId}`}
               onClick={(e) => e.stopPropagation()}
               className="flex-1 min-w-0"
               data-testid={`link-contact-${contact.name.toLowerCase().replace(/\s+/g, '-')}`}
