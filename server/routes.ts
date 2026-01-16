@@ -481,6 +481,9 @@ export async function registerRoutes(
             // Intake info from n8n detailed response
             requestingFor: (detailed.requestingFor as string) || null,
             reasonForSeeking: (detailed.reasonForSeeking as string) || null,
+            // Detailed Reason - INTERNAL USE ONLY (provider matching)
+            // Not displayed in UI - sensitive narrative data
+            detailedReason: (detailed.detailedReason as string) || (detailed.DetailedReason as string) || null,
             formCompletedBy: (detailed.formCompletedBy as string) || null,
 
             // Additional intake fields (Phase 6)
