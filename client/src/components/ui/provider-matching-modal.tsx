@@ -83,11 +83,11 @@ export function ProviderMatchingModal({
           </Alert>
         )}
 
-        {/* Results */}
-        <div className="flex-1 min-h-0">
+        {/* Results - flex-1 min-h-0 overflow-hidden ensures proper scroll context */}
+        <div className="flex-1 min-h-0 overflow-hidden">
           {hasMatches ? (
-            <ScrollArea className="h-full max-h-[400px] pr-4">
-              <div className="space-y-3">
+            <ScrollArea className="h-full pr-4">
+              <div className="space-y-3 pb-1">
                 {matches.map((match, index) => (
                   <ProviderMatchCard
                     key={match.provider.name}
