@@ -7,7 +7,13 @@
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Check, AlertTriangle, Minus } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Check, AlertTriangle, Minus, Info } from "lucide-react";
 import type { ProviderMatch } from "@/lib/provider-matching";
 import { LOCATION_LABELS, AGE_GROUP_LABELS } from "@/lib/providers";
 
@@ -101,9 +107,33 @@ export function ProviderMatchCard({ match, rank }: ProviderMatchCardProps) {
 
           {/* Score and tier */}
           <div className="flex items-center gap-2 flex-shrink-0">
-            <span className="text-lg font-bold text-foreground tabular-nums">
-              {score}
-            </span>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1 cursor-help">
+                    <span className="text-lg font-bold text-foreground tabular-nums">
+                      {score}
+                    </span>
+                    <Info className="h-3.5 w-3.5 text-muted-foreground/60" />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="left" className="max-w-[220px]">
+                  <p className="font-medium mb-1">Match Score (0-125)</p>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Based on specialty fit, age group, location, and availability.
+                  </p>
+                  <p className="text-xs">
+                    <span className="text-green-600">90+ Excellent</span>
+                    {" · "}
+                    <span className="text-blue-600">70-89 Good</span>
+                    <br />
+                    <span className="text-amber-600">50-69 Fair</span>
+                    {" · "}
+                    <span className="text-muted-foreground">30-49 Poor</span>
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <Badge className={cn("text-xs font-medium", tierStyle.badge)}>
               {tierStyle.label}
             </Badge>
