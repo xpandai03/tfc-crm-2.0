@@ -51,13 +51,12 @@ export function TopNav() {
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="flex h-14 items-center px-6 gap-6">
-        <Link href="/" className="flex items-center gap-2" data-testid="link-logo">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground font-semibold text-sm">
-            TFC
-          </div>
-          <span className="font-semibold text-foreground hidden sm:inline-block">
-            The Family Connection
-          </span>
+        <Link href="/" className="flex items-center" data-testid="link-logo">
+          <img
+            src="/tfc-logo.jpg"
+            alt="The Family Connection"
+            className="h-9 w-auto"
+          />
         </Link>
 
         <nav className="flex items-center gap-1 ml-auto">
