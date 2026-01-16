@@ -29,6 +29,8 @@ export const contactSnapshotSchema = z.object({
   // Intake info (from n8n detailed response)
   requestingFor: z.string().nullable().optional(),
   reasonForSeeking: z.string().nullable().optional(),
+  // Provider Matching signal (INTERNAL - not displayed in UI)
+  detailedReason: z.string().nullable().optional(),
   formCompletedBy: z.string().nullable().optional(),
 
   // Additional intake fields (Phase 6)

@@ -56,29 +56,82 @@ const SCORES = {
 };
 
 // Map reason keywords to specialties
+// Expanded for better matching with detailedReason narratives
 const REASON_TO_SPECIALTY: Record<string, Specialty> = {
+  // Anxiety spectrum
   "anxiety": "anxiety",
   "anxious": "anxiety",
+  "panic": "anxiety",
+  "worry": "anxiety",
+  "nervous": "anxiety",
+  "phobia": "anxiety",
+  "ocd": "anxiety",
+  "obsessive": "anxiety",
+
+  // Trauma spectrum
   "trauma": "trauma",
   "ptsd": "trauma",
   "traumatic": "trauma",
+  "abuse": "trauma",
+  "neglect": "trauma",
+  "assault": "trauma",
+
+  // Depression spectrum
   "depression": "depression",
   "depressed": "depression",
   "sad": "depression",
+  "hopeless": "depression",
+  "suicidal": "depression",
+  "self-harm": "depression",
+
+  // Grief and loss
   "grief": "grief",
   "loss": "grief",
   "bereavement": "grief",
+  "death": "grief",
+  "mourning": "grief",
+  "dying": "grief",
+
+  // Anger and behavioral
   "anger": "anger_issues",
   "angry": "anger_issues",
   "rage": "anger_issues",
+  "tantrums": "anger_issues",
+  "outbursts": "anger_issues",
+  "acting out": "anger_issues",
+  "aggression": "anger_issues",
+  "aggressive": "anger_issues",
+  "defiant": "anger_issues",
+  "oppositional": "anger_issues",
+
+  // Family and parenting
   "family": "family",
   "parenting": "family",
+  "custody": "family",
+  "divorce": "family",
+  "separation": "family",
+  "blended": "family",
+  "co-parenting": "family",
+  "coparenting": "family",
+  "sibling": "family",
+
+  // Couples and relationships
   "couples": "couples",
   "relationship": "couples",
   "marriage": "couples",
+  "partner": "couples",
+  "spouse": "couples",
+  "intimacy": "couples",
+  "communication": "couples",
+
+  // Stress management
   "stress": "stress_management",
   "overwhelmed": "stress_management",
   "burnout": "stress_management",
+  "coping": "stress_management",
+  "emotional regulation": "stress_management",
+  "dysregulation": "stress_management",
+  "self-regulation": "stress_management",
 };
 
 // Map city names to provider locations
@@ -227,13 +280,21 @@ export function buildMatchingContext(contact: ContactSnapshot): MatchingContext 
     ageGroup = inferAgeGroupFromRequestingFor(contact.requestingFor);
   }
 
-  // Try to extract specialty from reasonForSeeking first, then serviceRequested
-  let primarySpecialty = extractPrimarySpecialty(contact.reasonForSeeking);
+  // Precedence: detailedReason → reasonForSeeking → serviceRequested
+  // detailedReason is the primary clinical narrative (INTERNAL - not displayed in UI)
+  let primarySpecialty = extractPrimarySpecialty(contact.detailedReason);
+  if (!primarySpecialty) {
+    primarySpecialty = extractPrimarySpecialty(contact.reasonForSeeking);
+  }
   if (!primarySpecialty) {
     primarySpecialty = extractPrimarySpecialty(contact.serviceRequested);
   }
 
-  const secondaryKeywords = extractSecondaryKeywords(contact.reasonForSeeking);
+  // Combine keywords from detailedReason and reasonForSeeking (deduplicated)
+  const secondaryKeywords = [
+    ...extractSecondaryKeywords(contact.detailedReason),
+    ...extractSecondaryKeywords(contact.reasonForSeeking),
+  ].filter((v, i, a) => a.indexOf(v) === i);
   const location = mapCityToLocation(contact.city);
 
   return {
@@ -421,7 +482,10 @@ export function computeProviderMatches(contact: ContactSnapshot): {
   if (!context.ageGroup) {
     globalWarnings.push("Unable to determine age group from intake data");
   }
-  if (!context.primarySpecialty) {
+  // Only show "no primary concern" warning if NO specialty source exists
+  // detailedReason is the primary source - if it exists, we have data to work with
+  const hasSpecialtySource = !!(contact.detailedReason || contact.reasonForSeeking || contact.serviceRequested);
+  if (!context.primarySpecialty && !hasSpecialtySource) {
     globalWarnings.push("Unable to identify primary concern from intake data");
   }
 
