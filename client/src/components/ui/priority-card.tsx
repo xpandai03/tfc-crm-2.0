@@ -7,6 +7,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { OwnerBadge } from "@/components/ui/owner-badge";
 import { Link } from "wouter";
 import { Calendar, MessageSquarePlus, CheckCircle, Check } from "lucide-react";
 import type { WaitlistContact } from "@shared/schema";
@@ -16,6 +17,7 @@ interface PriorityCardProps {
   priority: "high" | "medium" | "standard";
   position?: number; // 1-indexed position in the list
   avgWaitDays?: number; // Average wait days for comparison
+  currentUserEmail?: string; // For owner badge "You" display
   // Phase 3: Action props
   actionsEnabled?: boolean; // true when live mode is active
   isHandled?: boolean; // true when action has been taken on this contact
@@ -23,10 +25,11 @@ interface PriorityCardProps {
   onMarkContacted?: (contact: WaitlistContact) => void;
 }
 
+// Gradient border styles using pseudo-element for glassmorphic effect
 const priorityStyles = {
-  high: "border-l-4 border-l-red-500 rounded-l-none",
-  medium: "border-l-4 border-l-amber-500 rounded-l-none",
-  standard: "border-l-4 border-l-blue-500 rounded-l-none",
+  high: "relative rounded-l-none before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1 before:bg-gradient-to-b before:from-red-500 before:via-red-400 before:to-red-600 before:rounded-l-lg before:shadow-[0_0_8px_rgba(239,68,68,0.4)]",
+  medium: "relative rounded-l-none before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1 before:bg-gradient-to-b before:from-amber-500 before:via-amber-400 before:to-amber-600 before:rounded-l-lg before:shadow-[0_0_8px_rgba(245,158,11,0.4)]",
+  standard: "relative rounded-l-none before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1 before:bg-gradient-to-b before:from-blue-500 before:via-blue-400 before:to-blue-600 before:rounded-l-lg before:shadow-[0_0_8px_rgba(59,130,246,0.4)]",
 };
 
 // Urgency based on days waiting (independent of bucket)
@@ -66,6 +69,7 @@ export function PriorityCard({
   priority,
   position,
   avgWaitDays = 0,
+  currentUserEmail,
   actionsEnabled = false,
   isHandled = false,
   onAddNote,
@@ -115,18 +119,19 @@ export function PriorityCard({
     <Link href={contactHref} data-testid={`link-priority-${testIdSlug}`}>
       <Card
         className={cn(
-          "hover-elevate active-elevate-2 cursor-pointer transition-all duration-200 hover:translate-y-[-2px] overflow-visible group",
+          "hover-elevate active-elevate-2 cursor-pointer transition-all duration-300 hover:translate-y-[-4px] hover:shadow-xl hover:shadow-black/10 dark:hover:shadow-black/30 hover:scale-[1.02] overflow-visible group",
+          "bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm",
           priorityStyles[priority],
-          isTopPriority && "ring-1 ring-offset-1 ring-offset-background",
-          isTopPriority && priority === "high" && "ring-red-300 dark:ring-red-700",
-          isTopPriority && priority === "medium" && "ring-amber-300 dark:ring-amber-700",
-          isTopPriority && priority === "standard" && "ring-blue-300 dark:ring-blue-700",
+          isTopPriority && "ring-2 ring-offset-2 ring-offset-background/50",
+          isTopPriority && priority === "high" && "ring-red-400/50 dark:ring-red-600/50 shadow-red-500/20 animate-subtle-pulse",
+          isTopPriority && priority === "medium" && "ring-amber-400/50 dark:ring-amber-600/50 shadow-amber-500/20",
+          isTopPriority && priority === "standard" && "ring-blue-400/50 dark:ring-blue-600/50 shadow-blue-500/20",
           // Visual feedback when handled
           isHandled && "opacity-60"
         )}
         data-testid={`priority-card-${testIdSlug}`}
       >
-        <CardContent className="p-3">
+        <CardContent className="p-4">
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-start gap-2 min-w-0 flex-1">
               {position && (
@@ -171,6 +176,17 @@ export function PriorityCard({
               </Badge>
             </div>
           </div>
+
+          {/* Owner badge row */}
+          {contact?.assignedTo && (
+            <div className="mt-2 pt-2 border-t border-border/30">
+              <OwnerBadge
+                email={contact.assignedTo}
+                currentUserEmail={currentUserEmail}
+                size="sm"
+              />
+            </div>
+          )}
 
           {/* Hover context row with actions */}
           <div className="grid grid-rows-[0fr] group-hover:grid-rows-[1fr] transition-[grid-template-rows] duration-150">

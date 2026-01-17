@@ -4,6 +4,7 @@ import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { OwnerBadge } from "@/components/ui/owner-badge";
 import { cn } from "@/lib/utils";
 import { Plus, Clock } from "lucide-react";
 import type { WaitlistContact } from "@shared/schema";
@@ -12,9 +13,10 @@ interface DraggableCardProps {
   contact: WaitlistContact;
   onAddNote: (contact: WaitlistContact) => void;
   isDragging?: boolean;
+  currentUserEmail?: string;
 }
 
-export function DraggableCard({ contact, onAddNote, isDragging = false }: DraggableCardProps) {
+export function DraggableCard({ contact, onAddNote, isDragging = false, currentUserEmail }: DraggableCardProps) {
   // CRITICAL: Use contactId as the canonical drag identifier
   // This ensures status updates target the correct Excel row
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
@@ -85,16 +87,25 @@ export function DraggableCard({ contact, onAddNote, isDragging = false }: Dragga
               <Clock className="h-3 w-3" />
               <span>{contact.daysOnWaitlist}d</span>
             </div>
-            {isUrgent && (
-              <Badge variant="destructive" className="text-xs px-1.5 py-0">
-                Urgent
-              </Badge>
-            )}
-            {isWarning && !isUrgent && (
-              <Badge variant="secondary" className="text-xs px-1.5 py-0 bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
-                30+ days
-              </Badge>
-            )}
+            <div className="flex items-center gap-1">
+              {contact.assignedTo && (
+                <OwnerBadge
+                  email={contact.assignedTo}
+                  currentUserEmail={currentUserEmail}
+                  size="sm"
+                />
+              )}
+              {isUrgent && (
+                <Badge variant="destructive" className="text-xs px-1.5 py-0">
+                  Urgent
+                </Badge>
+              )}
+              {isWarning && !isUrgent && (
+                <Badge variant="secondary" className="text-xs px-1.5 py-0 bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
+                  30+ days
+                </Badge>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>

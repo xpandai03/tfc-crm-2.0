@@ -9,6 +9,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { OwnerBadge } from "@/components/ui/owner-badge";
 import {
   Select,
   SelectContent,
@@ -31,6 +32,7 @@ import type { WaitlistContact } from "@shared/schema";
 
 interface WaitlistListViewProps {
   contacts: WaitlistContact[];
+  currentUserEmail?: string;
 }
 
 type SortField = "daysOnWaitlist" | "dateAdded" | "name";
@@ -43,7 +45,7 @@ const umbrellaColors: Record<UmbrellaId, string> = {
   INS: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
 };
 
-export function WaitlistListView({ contacts }: WaitlistListViewProps) {
+export function WaitlistListView({ contacts, currentUserEmail }: WaitlistListViewProps) {
   // Filter state
   const [umbrellaFilter, setUmbrellaFilter] = useState<UmbrellaId | "all">("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -217,10 +219,10 @@ export function WaitlistListView({ contacts }: WaitlistListViewProps) {
       </div>
 
       {/* Table */}
-      <div className="rounded-md border">
+      <div className="rounded-2xl border border-white/40 dark:border-gray-700/40 bg-white/60 dark:bg-gray-900/60 backdrop-blur-xl shadow-lg overflow-hidden">
         <Table>
-          <TableHeader>
-            <TableRow>
+          <TableHeader className="sticky top-0 z-10 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md border-b border-white/40 dark:border-gray-700/40 shadow-sm">
+            <TableRow className="hover:bg-transparent">
               <TableHead>
                 <Button
                   variant="ghost"
@@ -257,12 +259,13 @@ export function WaitlistListView({ contacts }: WaitlistListViewProps) {
                   <SortIcon field="dateAdded" />
                 </Button>
               </TableHead>
+              <TableHead>Assigned To</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {sortedContacts.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
                   No contacts match the current filters
                 </TableCell>
               </TableRow>
@@ -276,7 +279,11 @@ export function WaitlistListView({ contacts }: WaitlistListViewProps) {
                 return (
                   <TableRow
                     key={contact.contactId || contact.name}
-                    className="cursor-pointer hover:bg-muted/50"
+                    className={cn(
+                      "cursor-pointer transition-all duration-200",
+                      "bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm",
+                      "hover:bg-white/90 dark:hover:bg-gray-800/90 hover:backdrop-blur-md hover:shadow-md hover:-translate-y-0.5"
+                    )}
                   >
                     <TableCell className="font-medium">
                       <Link href={`/contact/${contact.contactId}`}>
@@ -314,6 +321,14 @@ export function WaitlistListView({ contacts }: WaitlistListViewProps) {
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {contact.dateAdded || "—"}
+                    </TableCell>
+                    <TableCell>
+                      <OwnerBadge
+                        email={contact.assignedTo}
+                        currentUserEmail={currentUserEmail}
+                        showUnassigned={false}
+                        size="sm"
+                      />
                     </TableCell>
                   </TableRow>
                 );

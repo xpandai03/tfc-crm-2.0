@@ -1,6 +1,6 @@
 import { useParams, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { PageLayout } from "@/components/layout/page-layout";
 import { AIInsightPanel } from "@/components/ui/ai-insight-panel";
 import { getStatusLabel } from "@/components/ui/status-badge";
@@ -37,8 +37,11 @@ import {
   AlertCircle,
   FileText,
   Users,
+  Bell,
 } from "lucide-react";
-import { getContactSnapshot, updateContactStatus, addNoteToContact, type WithSource } from "@/lib/api";
+import { getContactSnapshot, updateContactStatus, addNoteToContact, createReminder, type WithSource } from "@/lib/api";
+import { ReminderModal } from "@/components/ui/reminder-modal";
+import { AssignmentSelector } from "@/components/ui/assignment-selector";
 import { useDataSource } from "@/lib/data-source-context";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
@@ -118,6 +121,18 @@ export default function ContactDetail() {
 
   const [newNote, setNewNote] = useState("");
   const [showProviderMatching, setShowProviderMatching] = useState(false);
+  const [showReminderModal, setShowReminderModal] = useState(false);
+  const [isCreatingReminder, setIsCreatingReminder] = useState(false);
+  const noteTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Quick Action: prefill note and focus textarea
+  const prefillNote = (text: string) => {
+    setNewNote(text);
+    // Focus textarea after state update
+    setTimeout(() => {
+      noteTextareaRef.current?.focus();
+    }, 0);
+  };
 
   // Status update mutation - same logic as Kanban drag
   // Optimistic update with toast lifecycle
@@ -284,6 +299,47 @@ export default function ContactDetail() {
     });
   };
 
+  // Handle create reminder - fire-and-forget with toast feedback
+  const handleCreateReminder = async (params: {
+    contactId: number;
+    contactName: string;
+    createdByEmail: string;
+    reminderText: string;
+    reminderDateTime: string;
+    secondReminderDateTime?: string;
+  }) => {
+    setIsCreatingReminder(true);
+    try {
+      await createReminder(params);
+
+      // Format date for toast
+      const reminderDate = new Date(params.reminderDateTime);
+      const formattedDate = reminderDate.toLocaleDateString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+
+      toast({
+        title: "Reminder scheduled",
+        description: `You'll be emailed on ${formattedDate}`,
+      });
+
+      setShowReminderModal(false);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      toast({
+        title: "Failed to create reminder",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsCreatingReminder(false);
+    }
+  };
+
   // Get current status code from contact data
   const currentStatusCode = contact?.statusCode ?? 100;
 
@@ -412,7 +468,7 @@ export default function ContactDetail() {
           {/* Main Content */}
           <div className="lg:col-span-2 space-y-6">
             {/* Contact Header */}
-            <Card className="overflow-visible">
+            <Card className="overflow-visible bg-white/90 dark:bg-gray-800/90 backdrop-blur-md">
               <CardContent className="p-6">
                 <div className="flex items-start gap-4">
                   {isLoading ? (
@@ -499,7 +555,7 @@ export default function ContactDetail() {
 
             {/* Status Info */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <Card className="overflow-visible">
+              <Card className="overflow-visible bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm">
                 <CardContent className="p-4">
                   <div className="flex items-center gap-2 text-muted-foreground mb-1">
                     <Clock className="h-4 w-4" />
@@ -514,7 +570,7 @@ export default function ContactDetail() {
                   )}
                 </CardContent>
               </Card>
-              <Card className="overflow-visible">
+              <Card className="overflow-visible bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm">
                 <CardContent className="p-4">
                   <div className="flex items-center gap-2 text-muted-foreground mb-1">
                     <Calendar className="h-4 w-4" />
@@ -529,7 +585,7 @@ export default function ContactDetail() {
                   )}
                 </CardContent>
               </Card>
-              <Card className="overflow-visible">
+              <Card className="overflow-visible bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm">
                 <CardContent className="p-4">
                   <div className="flex items-center gap-2 text-muted-foreground mb-1">
                     <Calendar className="h-4 w-4" />
@@ -544,17 +600,26 @@ export default function ContactDetail() {
                   )}
                 </CardContent>
               </Card>
-              <Card className="overflow-visible">
+              <Card className="overflow-visible bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm">
                 <CardContent className="p-4">
                   <div className="flex items-center gap-2 text-muted-foreground mb-1">
                     <User className="h-4 w-4" />
                     <span className="text-xs">Assigned To</span>
                   </div>
                   {isLoading ? (
-                    <Skeleton className="h-5 w-28" />
+                    <Skeleton className="h-9 w-full" />
+                  ) : contactId ? (
+                    <AssignmentSelector
+                      contactId={contactId}
+                      currentAssignee={contact?.assignedTo || null}
+                      onAssignmentChange={() => {
+                        // Refetch contact data to reflect the change
+                        queryClient.invalidateQueries({ queryKey: ["/api/contact", contactId] });
+                      }}
+                    />
                   ) : (
                     <p className="text-sm font-medium text-foreground" data-testid="text-assigned-to">
-                      {contact?.assignedTo || "Unassigned"}
+                      Unassigned
                     </p>
                   )}
                 </CardContent>
@@ -562,7 +627,7 @@ export default function ContactDetail() {
             </div>
 
             {/* Activity Timeline - Parsed from Excel "Notes added by agent" column */}
-            <Card className="overflow-visible">
+            <Card className="overflow-visible bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm">
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base font-medium">
                   <Activity className="h-4 w-4" />
@@ -576,6 +641,7 @@ export default function ContactDetail() {
                 {/* Add Note */}
                 <div className="space-y-2">
                   <Textarea
+                    ref={noteTextareaRef}
                     placeholder="Add a note..."
                     value={newNote}
                     onChange={(e) => setNewNote(e.target.value)}
@@ -863,6 +929,7 @@ export default function ContactDetail() {
                             className="w-full justify-start"
                             size="sm"
                             disabled={!hasEmail || isLoading}
+                            onClick={() => prefillNote(`Sent an email to ${displayName}.`)}
                             data-testid="button-send-email"
                           >
                             <Mail className="h-4 w-4 mr-2" />
@@ -887,6 +954,7 @@ export default function ContactDetail() {
                             className="w-full justify-start"
                             size="sm"
                             disabled={!hasPhone || isLoading}
+                            onClick={() => prefillNote(`Scheduled a call with ${displayName}.`)}
                             data-testid="button-schedule-call"
                           >
                             <Phone className="h-4 w-4 mr-2" />
@@ -907,10 +975,23 @@ export default function ContactDetail() {
                     className="w-full justify-start"
                     size="sm"
                     disabled={isLoading}
+                    onClick={() => prefillNote(`Scheduled an appointment with ${displayName}.`)}
                     data-testid="button-schedule-appt"
                   >
                     <Calendar className="h-4 w-4 mr-2" />
                     Schedule Appointment
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start"
+                    size="sm"
+                    disabled={isLoading || !user?.email}
+                    onClick={() => setShowReminderModal(true)}
+                    data-testid="button-add-reminder"
+                  >
+                    <Bell className="h-4 w-4 mr-2" />
+                    Add Reminder
                   </Button>
 
                   <Button
@@ -936,6 +1017,16 @@ export default function ContactDetail() {
         isOpen={showProviderMatching}
         onClose={() => setShowProviderMatching(false)}
         contact={contact || null}
+      />
+
+      {/* Reminder Modal */}
+      <ReminderModal
+        isOpen={showReminderModal}
+        onClose={() => setShowReminderModal(false)}
+        contact={contact ? { contactId: contact.contactId, name: contact.name } : null}
+        userEmail={user?.email || ""}
+        onSubmit={handleCreateReminder}
+        isSubmitting={isCreatingReminder}
       />
     </PageLayout>
   );
