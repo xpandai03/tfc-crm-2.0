@@ -13,6 +13,7 @@ interface DroppableColumnProps {
   onAddNote: (contact: WaitlistContact) => void;
   className?: string;
   color?: "slate" | "amber" | "purple" | "red";
+  currentUserEmail?: string;
 }
 
 // Color scheme mapping for umbrella columns
@@ -46,6 +47,7 @@ export function DroppableColumn({
   onAddNote,
   className,
   color = "slate",
+  currentUserEmail,
 }: DroppableColumnProps) {
   const { isOver, setNodeRef } = useDroppable({
     id: columnId,
@@ -85,6 +87,7 @@ export function DroppableColumn({
                   key={contact.contactId || `${contact.name}-${index}`}
                   contact={contact}
                   onAddNote={onAddNote}
+                  currentUserEmail={currentUserEmail}
                 />
               ))
             )}

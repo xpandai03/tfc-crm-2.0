@@ -88,3 +88,79 @@ export async function addNoteToContact(
   });
   return response.json();
 }
+
+export interface CreateReminderParams {
+  contactId: number;
+  contactName: string;
+  createdByEmail: string;
+  reminderText: string;
+  reminderDateTime: string;       // ISO 8601
+  secondReminderDateTime?: string; // ISO 8601, optional
+}
+
+export async function createReminder(
+  params: CreateReminderParams
+): Promise<{ success: boolean; id: string; _source?: string }> {
+  const { contactId, contactName, createdByEmail, reminderText, reminderDateTime, secondReminderDateTime } = params;
+
+  // Validation
+  if (contactId === undefined || contactId === null || isNaN(contactId)) {
+    throw new Error("[API] contactId is required for creating reminders");
+  }
+  if (!contactName || typeof contactName !== "string" || contactName.trim() === "") {
+    throw new Error("[API] contactName is required");
+  }
+  if (!createdByEmail || typeof createdByEmail !== "string" || !createdByEmail.includes("@")) {
+    throw new Error("[API] valid createdByEmail is required");
+  }
+  if (!reminderText || typeof reminderText !== "string" || reminderText.trim() === "") {
+    throw new Error("[API] reminderText is required");
+  }
+  if (!reminderDateTime || typeof reminderDateTime !== "string") {
+    throw new Error("[API] reminderDateTime is required");
+  }
+
+  const response = await apiRequest("POST", "/api/reminders", {
+    contactId,
+    contactName: contactName.trim(),
+    createdByEmail: createdByEmail.trim(),
+    reminderText: reminderText.trim(),
+    reminderDateTime,
+    secondReminderDateTime,
+  });
+  return response.json();
+}
+
+// ============================================================================
+// Task Ownership API
+// ============================================================================
+
+export interface AssignmentResponse {
+  success: boolean;
+  contactId: number;
+  assignedTo: string | null;
+}
+
+export async function assignContact(
+  contactId: number,
+  assignedTo: string | null
+): Promise<AssignmentResponse> {
+  // Validation
+  if (contactId === undefined || contactId === null || isNaN(contactId)) {
+    throw new Error("[API] contactId is required for assignment");
+  }
+
+  const response = await apiRequest("POST", "/api/assign-contact", {
+    contactId,
+    assignedTo,
+  });
+  return response.json();
+}
+
+export async function getStaffList(): Promise<{ staff: string[] }> {
+  const response = await fetch("/api/staff-list");
+  if (!response.ok) {
+    throw new Error("Failed to fetch staff list");
+  }
+  return response.json();
+}

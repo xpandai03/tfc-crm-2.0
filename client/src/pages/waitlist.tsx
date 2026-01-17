@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
@@ -18,12 +18,14 @@ import { DraggableCard } from "@/components/kanban/draggable-card";
 import { WaitlistListView } from "@/components/waitlist/waitlist-list-view";
 import { QuickNoteModal } from "@/components/ui/quick-note-modal";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
-import { LoadingState } from "@/components/ui/loading-spinner";
+import { PageLoader } from "@/components/ui/page-loader";
 import { SyncStatus } from "@/components/ui/sync-status";
 import { FallbackBanner } from "@/components/ui/fallback-banner";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { AlertCircle, LayoutGrid, List } from "lucide-react";
+import { AlertCircle, LayoutGrid, List, User } from "lucide-react";
 import { StatusLegendModal } from "@/components/ui/status-legend-modal";
 import { getWaitlistBoard, updateContactStatus, addNoteToContact } from "@/lib/api";
 import { useDataSource } from "@/lib/data-source-context";
@@ -99,6 +101,9 @@ export default function Waitlist() {
   };
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  // Task ownership filter state
+  const [showOnlyMine, setShowOnlyMine] = useState(false);
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -120,8 +125,15 @@ export default function Waitlist() {
     queryFn: getWaitlistBoard,
   });
 
-  const contacts = contactsData?.contacts;
-  
+  const allContacts = contactsData?.contacts;
+
+  // Filter contacts by ownership if toggle is enabled
+  const contacts = useMemo(() => {
+    if (!allContacts || allContacts.length === 0) return allContacts;
+    if (!showOnlyMine || !user?.email) return allContacts;
+    return allContacts.filter(c => c.assignedTo?.toLowerCase() === user.email?.toLowerCase());
+  }, [allContacts, showOnlyMine, user?.email]);
+
   // Waitlist page is authoritative over its own data source
   // Use board response _source directly - ignore context state
   const isLiveBoard = contactsData?._source === "live";
@@ -412,7 +424,7 @@ export default function Waitlist() {
   if (isLoading) {
     return (
       <PageLayout>
-        <LoadingState message="Loading waitlist..." />
+        <PageLoader context="waitlist" />
       </PageLayout>
     );
   }
@@ -456,6 +468,19 @@ export default function Waitlist() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            {/* Assigned to Me filter toggle */}
+            <div className="flex items-center gap-2 bg-white/60 dark:bg-gray-900/60 backdrop-blur-sm rounded-lg px-3 py-2 border border-white/20 dark:border-gray-700/30">
+              <User className="h-4 w-4 text-muted-foreground" />
+              <Switch
+                id="waitlist-show-only-mine"
+                checked={showOnlyMine}
+                onCheckedChange={setShowOnlyMine}
+              />
+              <Label htmlFor="waitlist-show-only-mine" className="text-sm cursor-pointer">
+                Assigned to Me
+              </Label>
+            </div>
+
             {/* View Toggle */}
             <div className="flex items-center border rounded-md">
               <Button
@@ -506,6 +531,7 @@ export default function Waitlist() {
                     onAddNote={handleAddNote}
                     color={column.color as "slate" | "amber" | "purple" | "red"}
                     className="h-[calc(100vh-220px)] min-h-[400px]"
+                    currentUserEmail={user?.email}
                   />
                 ))}
                 {unknownContacts.length > 0 && (
@@ -516,6 +542,7 @@ export default function Waitlist() {
                     contacts={unknownContacts}
                     onAddNote={handleAddNote}
                     className="h-[calc(100vh-220px)] min-h-[400px]"
+                    currentUserEmail={user?.email}
                   />
                 )}
               </div>
@@ -529,7 +556,7 @@ export default function Waitlist() {
             </DragOverlay>
           </DndContext>
         ) : (
-          <WaitlistListView contacts={contacts} />
+          <WaitlistListView contacts={contacts} currentUserEmail={user?.email} />
         )}
       </div>
 

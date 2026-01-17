@@ -8,10 +8,12 @@ import { AIInsightPanel } from "@/components/ui/ai-insight-panel";
 import { QuickNoteModal } from "@/components/ui/quick-note-modal";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { LoadingState } from "@/components/ui/loading-spinner";
+import { PageLoader } from "@/components/ui/page-loader";
 import { SyncStatus } from "@/components/ui/sync-status";
 import { FallbackBanner } from "@/components/ui/fallback-banner";
-import { AlertTriangle, Clock, CalendarCheck, AlertCircle, CheckCircle2, Inbox } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { AlertTriangle, Clock, CalendarCheck, AlertCircle, CheckCircle2, Inbox, User } from "lucide-react";
 import { getWaitlistSummary, getWaitlistContacts, addNoteToContact, updateContactStatus, type WithSource } from "@/lib/api";
 import { useDataSource } from "@/lib/data-source-context";
 import { useAuth } from "@/lib/auth-context";
@@ -52,6 +54,17 @@ function generateTimestamp(): string {
   return new Date().toISOString();
 }
 
+// Helper to get day of week (e.g., "Monday", "Tuesday")
+function getDayOfWeek(): string {
+  return new Date().toLocaleDateString('en-US', { weekday: 'long' });
+}
+
+// Helper to extract first name from full name
+function getFirstName(fullName: string | undefined): string {
+  if (!fullName || !fullName.trim()) return '';
+  return fullName.trim().split(/\s+/)[0];
+}
+
 export default function Home() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -61,10 +74,20 @@ export default function Home() {
   // Derive author initials from authenticated user
   const authorInitials = getAuthorInitials(user?.name);
 
+  // Get personalized greeting
+  const dayOfWeek = getDayOfWeek();
+  const firstName = getFirstName(user?.name);
+  const greeting = firstName 
+    ? `Happy ${dayOfWeek}, ${firstName}`
+    : `Happy ${dayOfWeek}`;
+
   // Phase 3: Action state
   const [noteModalOpen, setNoteModalOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<WaitlistContact | null>(null);
   const [handledContacts, setHandledContacts] = useState<Set<string>>(new Set());
+
+  // Task ownership filter state
+  const [showOnlyMine, setShowOnlyMine] = useState(false);
 
   // Check data sources for honest indicators
   // Only show as live when user has explicitly enabled live mode AND data is actually live
@@ -306,9 +329,16 @@ export default function Home() {
     };
   }, [computedMetrics, summaryData, contacts]);
 
+  // Filter contacts by ownership if toggle is enabled
+  const filteredContacts = useMemo(() => {
+    if (!contacts || contacts.length === 0) return [];
+    if (!showOnlyMine || !user?.email) return contacts;
+    return contacts.filter(c => c.assignedTo?.toLowerCase() === user.email?.toLowerCase());
+  }, [contacts, showOnlyMine, user?.email]);
+
   // Priority queues based on status codes, sorted by urgency (longest waiting first)
   const priorityQueues = useMemo(() => {
-    if (!contacts || contacts.length === 0) {
+    if (!filteredContacts || filteredContacts.length === 0) {
       return { over60Days: [], readyToSchedule: [], needsFollowUp: [] };
     }
 
@@ -316,21 +346,21 @@ export default function Home() {
     const sortByUrgency = (a: WaitlistContact, b: WaitlistContact) =>
       (b.daysOnWaitlist || 0) - (a.daysOnWaitlist || 0);
 
-    const over60Days = contacts
+    const over60Days = filteredContacts
       .filter(c => {
         const statusCode = getContactStatusCode(c);
         return (c.daysOnWaitlist || 0) >= 60 && isActiveStatus(statusCode);
       })
       .sort(sortByUrgency);
 
-    const readyToSchedule = contacts
+    const readyToSchedule = filteredContacts
       .filter(c => {
         const statusCode = getContactStatusCode(c);
         return STATUS_GROUPS.ready_to_schedule.includes(statusCode as 200);
       })
       .sort(sortByUrgency);
 
-    const needsFollowUp = contacts
+    const needsFollowUp = filteredContacts
       .filter(c => {
         const statusCode = getContactStatusCode(c);
         const days = c.daysOnWaitlist || 0;
@@ -340,7 +370,7 @@ export default function Home() {
       .sort(sortByUrgency);
 
     return { over60Days, readyToSchedule, needsFollowUp };
-  }, [contacts]);
+  }, [filteredContacts]);
 
   // Generate dynamic insights from contacts and metrics
   const insights = useMemo(() => {
@@ -350,7 +380,7 @@ export default function Home() {
   if (isLoading) {
     return (
       <PageLayout>
-        <LoadingState message="Loading dashboard..." />
+        <PageLoader context="today" />
       </PageLayout>
     );
   }
@@ -387,16 +417,30 @@ export default function Home() {
       <div className="space-y-8">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-semibold text-foreground" data-testid="text-page-title">Today</h1>
+            <h1 className="text-2xl font-semibold text-foreground" data-testid="text-page-title">{greeting}</h1>
             <p className="text-sm text-muted-foreground mt-1" data-testid="text-page-subtitle">
-              What needs your attention right now
+              Here's what needs your attention right now
             </p>
           </div>
-          <SyncStatus 
-            lastSyncTime={lastSyncTime} 
-            onRefresh={handleRefresh}
-            isRefreshing={isRefreshing}
-          />
+          <div className="flex items-center gap-4">
+            {/* Assigned to Me filter toggle */}
+            <div className="flex items-center gap-2 bg-white/60 dark:bg-gray-900/60 backdrop-blur-sm rounded-lg px-3 py-2 border border-white/20 dark:border-gray-700/30">
+              <User className="h-4 w-4 text-muted-foreground" />
+              <Switch
+                id="show-only-mine"
+                checked={showOnlyMine}
+                onCheckedChange={setShowOnlyMine}
+              />
+              <Label htmlFor="show-only-mine" className="text-sm cursor-pointer">
+                Assigned to Me
+              </Label>
+            </div>
+            <SyncStatus
+              lastSyncTime={lastSyncTime}
+              onRefresh={handleRefresh}
+              isRefreshing={isRefreshing}
+            />
+          </div>
         </div>
 
         {/* Metrics Row */}
@@ -430,7 +474,7 @@ export default function Home() {
           {/* Priority Queues */}
           <div className="xl:col-span-3 grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Over 60 Days */}
-            <Card className="flex flex-col h-[calc(100vh-320px)] overflow-visible">
+            <Card className="flex flex-col h-[calc(100vh-320px)] overflow-visible bg-white/60 dark:bg-gray-900/60 backdrop-blur-xl border-white/20 dark:border-gray-700/30 shadow-lg shadow-red-500/5 bg-gradient-to-b from-red-500/5 to-transparent">
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base font-medium">
                   <AlertTriangle className="h-4 w-4 text-red-500" />
@@ -454,6 +498,7 @@ export default function Home() {
                           priority="high"
                           position={index + 1}
                           avgWaitDays={metrics.avgWaitDays}
+                          currentUserEmail={user?.email}
                           actionsEnabled={actionsEnabled}
                           isHandled={isContactHandled(contact)}
                           onAddNote={handleAddNote}
@@ -467,7 +512,7 @@ export default function Home() {
             </Card>
 
             {/* Ready to Schedule */}
-            <Card className="flex flex-col h-[calc(100vh-320px)] overflow-visible">
+            <Card className="flex flex-col h-[calc(100vh-320px)] overflow-visible bg-white/60 dark:bg-gray-900/60 backdrop-blur-xl border-white/20 dark:border-gray-700/30 shadow-lg shadow-green-500/5 bg-gradient-to-b from-green-500/5 to-transparent">
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base font-medium">
                   <CalendarCheck className="h-4 w-4 text-amber-500" />
@@ -491,6 +536,7 @@ export default function Home() {
                           priority="medium"
                           position={index + 1}
                           avgWaitDays={metrics.avgWaitDays}
+                          currentUserEmail={user?.email}
                           actionsEnabled={actionsEnabled}
                           isHandled={isContactHandled(contact)}
                           onAddNote={handleAddNote}
@@ -504,7 +550,7 @@ export default function Home() {
             </Card>
 
             {/* Needs Follow-up */}
-            <Card className="flex flex-col h-[calc(100vh-320px)] overflow-visible">
+            <Card className="flex flex-col h-[calc(100vh-320px)] overflow-visible bg-white/60 dark:bg-gray-900/60 backdrop-blur-xl border-white/20 dark:border-gray-700/30 shadow-lg shadow-blue-500/5 bg-gradient-to-b from-blue-500/5 to-transparent">
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base font-medium">
                   <Clock className="h-4 w-4 text-blue-500" />
@@ -528,6 +574,7 @@ export default function Home() {
                           priority="standard"
                           position={index + 1}
                           avgWaitDays={metrics.avgWaitDays}
+                          currentUserEmail={user?.email}
                           actionsEnabled={actionsEnabled}
                           isHandled={isContactHandled(contact)}
                           onAddNote={handleAddNote}

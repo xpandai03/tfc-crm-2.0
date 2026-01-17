@@ -124,6 +124,7 @@ export const waitlistContactSchema = z.object({
   serviceRequested: z.string(),
   daysOnWaitlist: z.number(),
   dateAdded: z.string().nullable(),
+  assignedTo: z.string().nullable().optional(), // Staff email address (e.g., "jsmith@tfc.help")
 });
 
 export type WaitlistContact = z.infer<typeof waitlistContactSchema>;

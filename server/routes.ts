@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { createReminder as createReminderInDb, getReminderStats } from "./reminders";
 
 // Configuration for mock vs live data mode
 // Change to "live" to use real n8n webhooks instead of mock data
@@ -95,6 +96,7 @@ const N8N_ENDPOINTS = {
   waitlistBoard: process.env.N8N_GET_WAITLIST_BOARD_URL || "https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-board",
   updateStatus: process.env.N8N_UPDATE_CONTACT_STATUS_URL || "https://n8n-familyconnection.agentglu.agency/webhook/update-contact-status",
   addNote: process.env.N8N_ADD_CONTACT_NOTE_URL || "https://n8n-familyconnection.agentglu.agency/webhook/add-contact-note",
+  assignContact: process.env.N8N_ASSIGN_CONTACT_URL || "https://n8n-familyconnection.agentglu.agency/webhook/assign-contact",
 } as const;
 
 // Mock data for development
@@ -1349,6 +1351,265 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error adding note:", error);
       return res.status(500).json({ error: "Failed to add note" });
+    }
+  });
+
+  // Create email reminder for a contact
+  // Stores in SQLite database, cron job sends emails when due
+  app.post("/api/reminders", async (req, res) => {
+    try {
+      const {
+        contactId,
+        contactName,
+        createdByEmail,
+        reminderText,
+        reminderDateTime,
+        secondReminderDateTime,
+      } = req.body;
+
+      // Validate required fields
+      if (contactId === undefined || typeof contactId !== "number") {
+        return res.status(400).json({ error: "contactId (number) is required" });
+      }
+      if (!contactName || typeof contactName !== "string" || contactName.trim() === "") {
+        return res.status(400).json({ error: "contactName is required" });
+      }
+      if (!createdByEmail || typeof createdByEmail !== "string" || !createdByEmail.includes("@")) {
+        return res.status(400).json({ error: "valid createdByEmail is required" });
+      }
+      if (!reminderText || typeof reminderText !== "string" || reminderText.trim() === "") {
+        return res.status(400).json({ error: "reminderText is required" });
+      }
+      if (!reminderDateTime || typeof reminderDateTime !== "string") {
+        return res.status(400).json({ error: "reminderDateTime is required" });
+      }
+
+      // Validate reminderDateTime is in the future
+      const reminderDate = new Date(reminderDateTime);
+      if (isNaN(reminderDate.getTime())) {
+        return res.status(400).json({ error: "reminderDateTime must be a valid ISO date string" });
+      }
+      if (reminderDate <= new Date()) {
+        return res.status(400).json({ error: "reminderDateTime must be in the future" });
+      }
+
+      // Validate secondReminderDateTime if provided
+      if (secondReminderDateTime) {
+        const secondDate = new Date(secondReminderDateTime);
+        if (isNaN(secondDate.getTime())) {
+          return res.status(400).json({ error: "secondReminderDateTime must be a valid ISO date string" });
+        }
+        if (secondDate >= reminderDate) {
+          return res.status(400).json({ error: "secondReminderDateTime must be before reminderDateTime" });
+        }
+      }
+
+      console.log(`[create-reminder] Creating reminder for contactId ${contactId}`, {
+        contactName,
+        createdByEmail,
+        reminderDateTime,
+        hasSecondReminder: !!secondReminderDateTime,
+      });
+
+      // Create reminder in SQLite database
+      const result = createReminderInDb({
+        contactId,
+        contactName: contactName.trim(),
+        createdByEmail: createdByEmail.trim(),
+        reminderText: reminderText.trim(),
+        reminderDateTime,
+        secondReminderDateTime: secondReminderDateTime || undefined,
+      });
+
+      console.log(`[create-reminder] Success for contactId ${contactId}: id=${result.id}`);
+
+      return res.json({
+        success: true,
+        id: result.id,
+        secondReminderId: result.secondId,
+        _source: "app",
+      });
+    } catch (error) {
+      console.error("Error creating reminder:", error);
+      return res.status(500).json({ error: "Failed to create reminder" });
+    }
+  });
+
+  // Get reminder stats (monitoring endpoint)
+  app.get("/api/reminders/stats", async (_req, res) => {
+    try {
+      const stats = getReminderStats();
+      return res.json(stats);
+    } catch (error) {
+      console.error("Error getting reminder stats:", error);
+      return res.status(500).json({ error: "Failed to get reminder stats" });
+    }
+  });
+
+  // ============================================================================
+  // Task Ownership API Endpoints
+  // ============================================================================
+
+  // Staff list cache (5 minute TTL)
+  let staffListCache: { staff: string[]; timestamp: number } | null = null;
+  const STAFF_LIST_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+  // Assign contact to staff member
+  // Updates Excel "Assigned To" column via n8n webhook
+  app.post("/api/assign-contact", async (req, res) => {
+    try {
+      const { contactId, assignedTo } = req.body;
+
+      // Validate contactId
+      if (contactId === undefined || typeof contactId !== "number") {
+        return res.status(400).json({ error: "contactId (number) is required" });
+      }
+
+      // Validate assignedTo is valid email or null
+      if (assignedTo !== null && assignedTo !== undefined) {
+        if (typeof assignedTo !== "string") {
+          return res.status(400).json({ error: "assignedTo must be a string (email) or null" });
+        }
+        // Basic email validation
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (assignedTo.trim() !== "" && !emailRegex.test(assignedTo)) {
+          return res.status(400).json({ error: "assignedTo must be a valid email address" });
+        }
+      }
+
+      console.log(`[assign-contact] Assigning contactId ${contactId} to ${assignedTo || "unassigned"}`);
+
+      if (DATA_MODE === "live") {
+        try {
+          const payload = {
+            contactId,
+            assignedTo: assignedTo || null,
+          };
+
+          console.log(`[assign-contact] Calling n8n with payload:`, payload);
+
+          const response = await fetch(N8N_ENDPOINTS.assignContact, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+
+          const responseText = await response.text();
+          console.log(`[assign-contact] n8n response:`, {
+            status: response.status,
+            body: responseText.substring(0, 200),
+          });
+
+          if (!response.ok) {
+            console.error(`[assign-contact] n8n returned ${response.status}: ${responseText}`);
+            return res.status(502).json({
+              error: "Assignment failed",
+              message: `n8n returned ${response.status}: ${response.statusText}`,
+              details: responseText.substring(0, 200),
+            });
+          }
+
+          // Parse response if JSON
+          let data = {};
+          try {
+            data = JSON.parse(responseText);
+          } catch {
+            // Response might not be JSON - that's OK
+          }
+
+          // Invalidate staff list cache since assignments changed
+          staffListCache = null;
+
+          console.log(`[assign-contact] Success for contactId ${contactId}`);
+          return res.json({
+            success: true,
+            contactId,
+            assignedTo: assignedTo || null,
+            ...data,
+          });
+        } catch (liveError) {
+          const errorMessage = liveError instanceof Error ? liveError.message : "Unknown error";
+          console.error(`[assign-contact] Live update failed for contactId ${contactId}:`, errorMessage);
+          return res.status(500).json({
+            error: "Assignment failed",
+            message: errorMessage,
+          });
+        }
+      } else {
+        // Mock mode - update by index
+        const contact = mockContacts[contactId - 1];
+        if (!contact) {
+          return res.status(404).json({ error: "Contact not found", contactId });
+        }
+        contact.assignedTo = assignedTo || undefined;
+        return res.json({ success: true, contactId, assignedTo: assignedTo || null });
+      }
+    } catch (error) {
+      console.error("Error assigning contact:", error);
+      return res.status(500).json({ error: "Failed to assign contact" });
+    }
+  });
+
+  // Get list of known staff from existing assignments
+  // Returns unique non-null assignedTo values from board data
+  app.get("/api/staff-list", async (_req, res) => {
+    try {
+      // Check cache first
+      if (staffListCache) {
+        const age = Date.now() - staffListCache.timestamp;
+        if (age < STAFF_LIST_CACHE_TTL_MS) {
+          console.log(`[staff-list] Cache hit (age: ${Math.round(age / 1000)}s)`);
+          return res.json({ staff: staffListCache.staff });
+        }
+        console.log("[staff-list] Cache expired, refreshing");
+      }
+
+      // Get board data (use cache if available)
+      let contacts: Array<{ assignedTo?: string | null; [key: string]: unknown }> = [];
+      const cachedBoard = getBoardFromCache();
+
+      if (cachedBoard) {
+        contacts = cachedBoard.contacts;
+      } else if (DATA_MODE === "live") {
+        try {
+          const response = await fetch(N8N_ENDPOINTS.waitlistBoard, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            contacts = data.contacts || [];
+            setBoardCache({ contacts: data.contacts });
+          }
+        } catch (error) {
+          console.warn("[staff-list] Failed to fetch board data:", error);
+        }
+      } else {
+        // Mock mode
+        contacts = mockContacts;
+      }
+
+      // Extract unique non-null assignedTo values
+      const staffSet = new Set<string>();
+      for (const contact of contacts) {
+        if (contact.assignedTo && typeof contact.assignedTo === "string" && contact.assignedTo.trim() !== "") {
+          staffSet.add(contact.assignedTo.trim());
+        }
+      }
+
+      // Sort alphabetically
+      const staff = Array.from(staffSet).sort((a, b) => a.localeCompare(b));
+
+      // Update cache
+      staffListCache = { staff, timestamp: Date.now() };
+
+      console.log(`[staff-list] Returning ${staff.length} staff members`);
+      return res.json({ staff });
+    } catch (error) {
+      console.error("Error fetching staff list:", error);
+      return res.status(500).json({ error: "Failed to fetch staff list" });
     }
   });
 
