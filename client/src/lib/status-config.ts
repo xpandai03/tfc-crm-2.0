@@ -8,10 +8,11 @@
  * The UI groups these codes into 4 umbrella workflow stages.
  *
  * GROUND TRUTH:
- * - WL (Waitlist): 100-104 — Initial contact phase
- * - PS (Pending Scheduling): 200-204 — Provider matched, scheduling in progress
+ * - WL (Waitlist): 100-102 — Initial contact phase (active only)
+ * - PS (Pending Scheduling): 200-201 — Provider matched, scheduling in progress (active only)
+ * - SCH (Scheduled): 202 — Appointment confirmed (active)
  * - PMR (PM Review): 300 — Requires practice manager attention
- * - INS (Insurance N/A): 400 — Cannot proceed due to insurance
+ * - INS (Insurance N/A): 103, 104, 203, 204, 400 — Inactive/declined contacts
  */
 
 // Status code to human-readable label mapping
@@ -58,16 +59,22 @@ export const STATUS_DESCRIPTIONS: Record<number, string> = {
  */
 export const STATUS_UMBRELLAS = {
   WL: {
-    codes: [100, 101, 102, 103, 104],
+    codes: [100, 101, 102],
     entry: 100,
     label: "Waitlist",
     color: "slate"
   },
   PS: {
-    codes: [200, 201, 202, 203, 204],
+    codes: [200, 201],
     entry: 200,
     label: "Pending Scheduling",
     color: "amber"
+  },
+  SCH: {
+    codes: [202],
+    entry: 202,
+    label: "Scheduled",
+    color: "green"
   },
   PMR: {
     codes: [300],
@@ -76,7 +83,7 @@ export const STATUS_UMBRELLAS = {
     color: "purple"
   },
   INS: {
-    codes: [400],
+    codes: [103, 104, 203, 204, 400],
     entry: 400,
     label: "Insurance N/A",
     color: "red"
@@ -85,7 +92,7 @@ export const STATUS_UMBRELLAS = {
 
 export type UmbrellaId = keyof typeof STATUS_UMBRELLAS;
 
-// Pipeline columns configuration - 4 umbrella columns
+// Pipeline columns configuration - 5 umbrella columns
 export interface PipelineColumn {
   id: UmbrellaId;
   label: string;
@@ -96,6 +103,7 @@ export interface PipelineColumn {
 export const PIPELINE_COLUMNS: PipelineColumn[] = [
   { id: "WL", label: "Waitlist", codes: STATUS_UMBRELLAS.WL.codes, color: "slate" },
   { id: "PS", label: "Pending Scheduling", codes: STATUS_UMBRELLAS.PS.codes, color: "amber" },
+  { id: "SCH", label: "Scheduled", codes: STATUS_UMBRELLAS.SCH.codes, color: "green" },
   { id: "PMR", label: "PM Review", codes: STATUS_UMBRELLAS.PMR.codes, color: "purple" },
   { id: "INS", label: "Insurance N/A", codes: STATUS_UMBRELLAS.INS.codes, color: "red" },
 ];
@@ -107,13 +115,31 @@ export type PipelineColumnId = UmbrellaId;
 export const ACTIVE_STATUS_CODES = [
   ...STATUS_UMBRELLAS.WL.codes,
   ...STATUS_UMBRELLAS.PS.codes,
+  ...STATUS_UMBRELLAS.SCH.codes,
   ...STATUS_UMBRELLAS.PMR.codes,
   ...STATUS_UMBRELLAS.INS.codes,
 ];
 
-// Get all inactive/declined status codes (contacts that may need special handling)
-// Note: In the umbrella model, declined (103, 204) still appear in their respective columns
-export const INACTIVE_STATUS_CODES: number[] = [103, 104, 204];
+/**
+ * INACTIVE_STATUS_CODES
+ *
+ * These are terminal states where no further action is expected.
+ * Contacts with these codes are excluded from "Active Waitlist" counts.
+ *
+ * - 103: Declined Services (WL) - explicitly declined
+ * - 104: Inactive -- No Response (WL) - no response after attempts
+ * - 203: No Response (PS) - no response to scheduling attempts
+ * - 204: Declined (PS) - declined scheduling
+ * - 400: Insurance Not Accepted (INS) - cannot proceed
+ *
+ * NOTE: Status 102 appears in the WL column and is still considered ACTIVE for counting purposes.
+ *
+ * ADDING NEW STATUS CODES:
+ * 1. Add to STATUS_LABELS and STATUS_DESCRIPTIONS
+ * 2. Add to appropriate umbrella in STATUS_UMBRELLAS
+ * 3. If terminal/non-actionable: add to INACTIVE_STATUS_CODES
+ */
+export const INACTIVE_STATUS_CODES: number[] = [103, 104, 203, 204, 400];
 
 /**
  * BACKWARD COMPATIBILITY: STATUS_GROUPS
@@ -122,21 +148,24 @@ export const INACTIVE_STATUS_CODES: number[] = [103, 104, 204];
  */
 export const STATUS_GROUPS = {
   intake: [100] as readonly number[],
-  waiting: [101, 102, 103, 104] as readonly number[],
+  waiting: [101, 102] as readonly number[],
   ready_to_schedule: [200] as readonly number[],
-  pending: [201, 203] as readonly number[],
+  pending: [201] as readonly number[],
   scheduled: [202] as readonly number[],
   pm_review: [300] as readonly number[],
   declined: [103, 204] as readonly number[],
-  inactive: [104, 400] as readonly number[],
+  inactive: [103, 104, 203, 204, 400] as readonly number[],
 } as const;
 
 /**
  * Check if a status code is active (not declined or inactive)
- * Active Waitlist = all contacts NOT in declined (103, 204) or inactive (104, 400)
+ * Active Waitlist = all contacts NOT in INACTIVE_STATUS_CODES
+ *
+ * Safe default: undefined/null => true (active)
+ * This prevents accidentally hiding potentially actionable contacts.
  */
 export function isActiveStatus(statusCode: number | undefined | null): boolean {
-  if (statusCode === undefined || statusCode === null) return false;
+  if (statusCode === undefined || statusCode === null) return true; // Safe default
   return !INACTIVE_STATUS_CODES.includes(statusCode);
 }
 
