@@ -5,7 +5,7 @@ import { MetricCard } from "@/components/ui/metric-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { LoadingState } from "@/components/ui/loading-spinner";
+import { PageLoader } from "@/components/ui/page-loader";
 import { SyncStatus } from "@/components/ui/sync-status";
 import { FallbackBanner } from "@/components/ui/fallback-banner";
 import { Download, AlertCircle } from "lucide-react";
@@ -21,6 +21,147 @@ import {
   PIPELINE_COLUMNS,
 } from "@/lib/status-config";
 import type { WaitlistSummary, WaitlistContact } from "@shared/schema";
+
+/**
+ * Insurance normalization mapping (raw values → canonical categories)
+ * Based on Dawn's insurance categorization document
+ * Maps multiple raw variants to a single canonical category
+ */
+const INSURANCE_NORMALIZATION_MAP: Record<string, string> = {
+  // 1. VACCN
+  "vaccn": "VACCN",
+  "va": "VACCN",
+  
+  // 2. Presbyterian Commercial
+  "presbyterian": "Presbyterian Commercial",
+  "magellan": "Presbyterian Commercial",
+  "presbyterian aps": "Presbyterian Commercial",
+  "pres commercial": "Presbyterian Commercial",
+  "pres": "Presbyterian Commercial",
+  "presbyterian health plan": "Presbyterian Commercial",
+  
+  // 3. BlueCross BlueShield Commercial
+  "bcbs of nm": "BlueCross BlueShield Commercial",
+  "bcbs": "BlueCross BlueShield Commercial",
+  "blue cross blue shield": "BlueCross BlueShield Commercial",
+  "bcbs comm": "BlueCross BlueShield Commercial",
+  "highmark blue cross blue shield": "BlueCross BlueShield Commercial",
+  "bluegrass blueshield": "BlueCross BlueShield Commercial",
+  "bcbs of new mexico": "BlueCross BlueShield Commercial",
+  "bluecross blueshield of new mexico": "BlueCross BlueShield Commercial",
+  "blue cross blue sheild": "BlueCross BlueShield Commercial", // typo handling
+  "blue cross": "BlueCross BlueShield Commercial",
+  "blue cross blueshield": "BlueCross BlueShield Commercial",
+  "blue cross blue shield of minnesota": "BlueCross BlueShield Commercial",
+  "blue cross blue shield nm": "BlueCross BlueShield Commercial",
+  "bcbs of texas": "BlueCross BlueShield Commercial",
+  "blue cross blue shield fep": "BlueCross BlueShield Commercial",
+  "bcbsnm": "BlueCross BlueShield Commercial",
+  "bcbs nm": "BlueCross BlueShield Commercial",
+  
+  // 4. Tricare
+  "tricare": "Tricare",
+  "tricare west": "Tricare",
+  "tricare select": "Tricare",
+  "tricare west prime": "Tricare",
+  "tri care": "Tricare",
+  "triwest": "Tricare",
+  "tricare prime or triwest": "Tricare",
+  
+  // 5. Presbyterian Turquoise Care
+  "pres tc": "Presbyterian Turquoise Care",
+  "presbyterian - turquoise care": "Presbyterian Turquoise Care",
+  "pres turquoise": "Presbyterian Turquoise Care",
+  "presbyterian turquoise care": "Presbyterian Turquoise Care",
+  "presbyterian turquoise": "Presbyterian Turquoise Care",
+  "magellan turquoise care": "Presbyterian Turquoise Care",
+  "pres cent - turquoise": "Presbyterian Turquoise Care",
+  "turquoise care presbyterian": "Presbyterian Turquoise Care",
+  "truq care presbyterian health plan": "Presbyterian Turquoise Care",
+  "presbyterian centennial": "Presbyterian Turquoise Care",
+  
+  // 6. BlueCross BlueShield Turquoise Care
+  "bcbs cent": "BlueCross BlueShield Turquoise Care",
+  "bcbs - turquoise care": "BlueCross BlueShield Turquoise Care",
+  "bcbs turquoise care": "BlueCross BlueShield Turquoise Care",
+  "blue cross blue shield - turquoise care": "BlueCross BlueShield Turquoise Care",
+  "blue cross blue shield turquoise": "BlueCross BlueShield Turquoise Care",
+  "bcbs tc": "BlueCross BlueShield Turquoise Care",
+  "bcbs centenial": "BlueCross BlueShield Turquoise Care", // typo handling
+  "bcbs turquioise": "BlueCross BlueShield Turquoise Care", // typo handling
+  
+  // 7. United Healthcare
+  "united healthcare": "United Healthcare",
+  "uhc": "United Healthcare",
+  "united healrhcare": "United Healthcare", // typo handling
+  
+  // 8. Aetna
+  "atena": "Aetna", // typo handling
+  "aetna": "Aetna",
+  
+  // 9. Medicare
+  "medicare": "Medicare",
+  "blue cross blue shield medicare": "Medicare",
+  "uhc medicare": "Medicare",
+  "bcbs medicare advantage": "Medicare",
+  
+  // 10. UMR
+  "umr": "UMR",
+  "umr - secondy medicaid -": "UMR",
+  
+  // 11. Molina
+  "molina": "Molina",
+  
+  // 12. Medicaid
+  "turquoise care native american": "Medicaid",
+  "medicaid": "Medicaid",
+  
+  // 13. Self-Pay
+  "self-pay": "Self-Pay",
+  
+  // 14. ComPsych
+  "compsych": "ComPsych",
+  
+  // 15. Need to remove as we do not accept insurance
+  "healthscope benifits quantum health": "Need to remove as we do not accept insurance",
+  "lisa hale": "Need to remove as we do not accept insurance",
+  "humana medicare": "Need to remove as we do not accept insurance",
+  "medicare amb": "Need to remove as we do not accept insurance",
+};
+
+/**
+ * Modality normalization mapping (raw values → canonical categories)
+ */
+const MODALITY_NORMALIZATION_MAP: Record<string, string> = {
+  "th": "Telehealth",
+  "telehealth": "Telehealth",
+};
+
+/**
+ * Normalize insurance payer name to canonical category
+ * Pure function: no side effects, deterministic
+ * Returns "Unknown" for unmapped values
+ */
+function normalizeInsurance(rawValue: string | null | undefined): string {
+  if (!rawValue) return "Unknown";
+  const trimmed = rawValue.trim();
+  if (!trimmed) return "Unknown";
+  const normalized = trimmed.toLowerCase();
+  return INSURANCE_NORMALIZATION_MAP[normalized] || "Unknown";
+}
+
+/**
+ * Normalize modality to canonical category
+ * Pure function: no side effects, deterministic
+ * Returns "Unknown" for unmapped values
+ */
+function normalizeModality(rawValue: string | null | undefined): string {
+  if (!rawValue) return "Unknown";
+  const trimmed = rawValue.trim();
+  if (!trimmed) return "Unknown";
+  const normalized = trimmed.toLowerCase();
+  return MODALITY_NORMALIZATION_MAP[normalized] || "Unknown";
+}
 
 /**
  * Insights Page
@@ -103,6 +244,8 @@ export default function Insights() {
         needsFollowUp: 0,
         statusDistribution: {} as Record<string, number>,
         serviceTypes: {} as Record<string, number>,
+        insuranceTypes: {} as Record<string, number>,
+        modalityTypes: {} as Record<string, number>,
       };
     }
 
@@ -159,6 +302,22 @@ export default function Insights() {
       serviceTypes[service] = (serviceTypes[service] || 0) + 1;
     }
 
+    // Insurance type distribution (active only)
+    // Normalize raw insurance values to canonical categories before aggregation
+    const insuranceTypes: Record<string, number> = {};
+    for (const c of activeContacts) {
+      const normalizedInsurance = normalizeInsurance(c.insurancePayer);
+      insuranceTypes[normalizedInsurance] = (insuranceTypes[normalizedInsurance] || 0) + 1;
+    }
+
+    // Modality type distribution (active only)
+    // Normalize raw modality values to canonical categories before aggregation
+    const modalityTypes: Record<string, number> = {};
+    for (const c of activeContacts) {
+      const normalizedModality = normalizeModality(c.modality);
+      modalityTypes[normalizedModality] = (modalityTypes[normalizedModality] || 0) + 1;
+    }
+
     return {
       totalActive,
       avgWaitDays,
@@ -170,6 +329,8 @@ export default function Insights() {
       needsFollowUp,
       statusDistribution,
       serviceTypes,
+      insuranceTypes,
+      modalityTypes,
     };
   }, [contacts]);
 
@@ -206,7 +367,7 @@ export default function Insights() {
   if (isLoading) {
     return (
       <PageLayout>
-        <LoadingState message="Loading insights..." />
+        <PageLoader context="insights" />
       </PageLayout>
     );
   }
@@ -247,6 +408,12 @@ export default function Insights() {
 
   // Sort service types by count
   const sortedServiceTypes = Object.entries(computedMetrics.serviceTypes).sort((a, b) => b[1] - a[1]);
+
+  // Sort insurance types by count
+  const sortedInsuranceTypes = Object.entries(computedMetrics.insuranceTypes).sort((a, b) => b[1] - a[1]);
+
+  // Sort modality types by count
+  const sortedModalityTypes = Object.entries(computedMetrics.modalityTypes).sort((a, b) => b[1] - a[1]);
 
   return (
     <PageLayout>
@@ -323,9 +490,9 @@ export default function Insights() {
                       </span>
                       <span className="font-medium text-foreground">{count}</span>
                     </div>
-                    <div className="h-2 bg-muted rounded-full overflow-hidden">
+                    <div className="h-2 bg-muted/50 backdrop-blur-sm rounded-full overflow-hidden border border-white/20 dark:border-gray-700/30">
                       <div
-                        className="h-full bg-primary rounded-full transition-all duration-500"
+                        className="h-full bg-gradient-to-r from-primary via-primary/90 to-primary rounded-full transition-all duration-500 backdrop-blur-sm shadow-md hover:shadow-lg"
                         style={{ width: `${maxStatusCount > 0 ? (count / maxStatusCount) * 100 : 0}%` }}
                         data-testid={`bar-${columnId}`}
                       />
@@ -349,12 +516,64 @@ export default function Insights() {
                   sortedServiceTypes.map(([service, count]) => (
                     <div
                       key={service}
-                      className="flex items-center justify-between p-3 rounded-lg bg-muted/50"
+                      className="flex items-center justify-between p-3 rounded-lg bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border border-white/40 dark:border-gray-700/40 shadow-md transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-white/90 dark:hover:bg-gray-800/90"
                     >
                       <span className="text-sm font-medium text-foreground">
                         {service}
                       </span>
-                      <Badge variant="secondary">{count}</Badge>
+                      <Badge variant="secondary" className="backdrop-blur-sm border-white/40 dark:border-gray-700/40 shadow-md">{count}</Badge>
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Insurance Types */}
+          <Card className="overflow-visible">
+            <CardHeader>
+              <CardTitle className="text-base font-medium">By Insurance Type</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {sortedInsuranceTypes.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">No insurance data available</p>
+                ) : (
+                  sortedInsuranceTypes.map(([insurance, count]) => (
+                    <div
+                      key={insurance}
+                      className="flex items-center justify-between p-3 rounded-lg bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border border-white/40 dark:border-gray-700/40 shadow-md transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-white/90 dark:hover:bg-gray-800/90"
+                    >
+                      <span className="text-sm font-medium text-foreground">
+                        {insurance}
+                      </span>
+                      <Badge variant="secondary" className="backdrop-blur-sm border-white/40 dark:border-gray-700/40 shadow-md">{count}</Badge>
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Modality Types */}
+          <Card className="overflow-visible">
+            <CardHeader>
+              <CardTitle className="text-base font-medium">By Modality / Location</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {sortedModalityTypes.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">No modality data available</p>
+                ) : (
+                  sortedModalityTypes.map(([modality, count]) => (
+                    <div
+                      key={modality}
+                      className="flex items-center justify-between p-3 rounded-lg bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border border-white/40 dark:border-gray-700/40 shadow-md transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-white/90 dark:hover:bg-gray-800/90"
+                    >
+                      <span className="text-sm font-medium text-foreground">
+                        {modality}
+                      </span>
+                      <Badge variant="secondary" className="backdrop-blur-sm border-white/40 dark:border-gray-700/40 shadow-md">{count}</Badge>
                     </div>
                   ))
                 )}
@@ -369,30 +588,30 @@ export default function Insights() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                <div className="flex items-center justify-between p-3 rounded-lg border border-red-200 bg-red-50/50 dark:border-red-800 dark:bg-red-950/30">
+                <div className="flex items-center justify-between p-3 rounded-lg border border-red-500/30 dark:border-red-500/20 bg-red-500/20 dark:bg-red-500/10 backdrop-blur-md shadow-lg shadow-red-500/10 bg-gradient-to-br from-red-500/10 to-transparent relative before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1 before:bg-gradient-to-b before:from-red-500 before:via-red-400 before:to-red-600 before:rounded-l-lg">
                   <div>
                     <p className="text-sm font-medium text-foreground">Over 60 Days</p>
                     <p className="text-xs text-muted-foreground">Critical attention needed</p>
                   </div>
-                  <span className="text-2xl font-bold text-red-600 dark:text-red-400" data-testid="text-over-60-days">
+                  <span className="text-2xl font-bold text-red-600 dark:text-red-400 backdrop-blur-sm bg-white/40 dark:bg-gray-900/40 px-3 py-1 rounded-lg shadow-md" data-testid="text-over-60-days">
                     {safeNumber(metrics.over60Days)}
                   </span>
                 </div>
-                <div className="flex items-center justify-between p-3 rounded-lg border border-amber-200 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/30">
+                <div className="flex items-center justify-between p-3 rounded-lg border border-amber-500/30 dark:border-amber-500/20 bg-amber-500/20 dark:bg-amber-500/10 backdrop-blur-md shadow-lg shadow-amber-500/10 bg-gradient-to-br from-amber-500/10 to-transparent relative before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1 before:bg-gradient-to-b before:from-amber-500 before:via-amber-400 before:to-amber-600 before:rounded-l-lg">
                   <div>
                     <p className="text-sm font-medium text-foreground">Over 30 Days</p>
                     <p className="text-xs text-muted-foreground">Requires follow-up</p>
                   </div>
-                  <span className="text-2xl font-bold text-amber-600 dark:text-amber-400" data-testid="text-over-30-days">
+                  <span className="text-2xl font-bold text-amber-600 dark:text-amber-400 backdrop-blur-sm bg-white/40 dark:bg-gray-900/40 px-3 py-1 rounded-lg shadow-md" data-testid="text-over-30-days">
                     {safeNumber(metrics.over30Days)}
                   </span>
                 </div>
-                <div className="flex items-center justify-between p-3 rounded-lg border border-green-200 bg-green-50/50 dark:border-green-800 dark:bg-green-950/30">
+                <div className="flex items-center justify-between p-3 rounded-lg border border-green-500/30 dark:border-green-500/20 bg-green-500/20 dark:bg-green-500/10 backdrop-blur-md shadow-lg shadow-green-500/10 bg-gradient-to-br from-green-500/10 to-transparent relative before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1 before:bg-gradient-to-b before:from-green-500 before:via-green-400 before:to-green-600 before:rounded-l-lg">
                   <div>
                     <p className="text-sm font-medium text-foreground">Under 30 Days</p>
                     <p className="text-xs text-muted-foreground">On track</p>
                   </div>
-                  <span className="text-2xl font-bold text-green-600 dark:text-green-400" data-testid="text-under-30-days">
+                  <span className="text-2xl font-bold text-green-600 dark:text-green-400 backdrop-blur-sm bg-white/40 dark:bg-gray-900/40 px-3 py-1 rounded-lg shadow-md" data-testid="text-under-30-days">
                     {safeNumber(Math.max(0, metrics.totalActive - metrics.over30Days))}
                   </span>
                 </div>
@@ -406,7 +625,7 @@ export default function Insights() {
               <CardTitle className="text-base font-medium">Attention Required</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="p-4 rounded-lg border-l-4 border-l-red-500 bg-red-50/50 dark:bg-red-950/20">
+              <div className="p-4 rounded-lg relative bg-red-500/20 dark:bg-red-500/10 backdrop-blur-md border border-red-500/30 dark:border-red-500/20 shadow-lg shadow-red-500/10 bg-gradient-to-br from-red-500/10 to-transparent before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1 before:bg-gradient-to-b before:from-red-500 before:via-red-400 before:to-red-600 before:rounded-l-lg">
                 <p className="text-sm text-muted-foreground mb-1">Longest Waiting</p>
                 <p className="text-lg font-semibold text-foreground mb-2" data-testid="text-longest-waiting">
                   {safeString(metrics.longestWaitingName)}
@@ -414,7 +633,7 @@ export default function Insights() {
                 <div className="flex items-center gap-2">
                   {metrics.longestWaitDays > 0 ? (
                     <>
-                      <Badge variant="destructive">{metrics.longestWaitDays} days</Badge>
+                      <Badge variant="destructive" className="backdrop-blur-sm border-white/40 dark:border-gray-700/40 shadow-md">{metrics.longestWaitDays} days</Badge>
                       <span className="text-xs text-muted-foreground">on waitlist</span>
                     </>
                   ) : (
@@ -423,7 +642,7 @@ export default function Insights() {
                 </div>
               </div>
 
-              <div className="mt-4 p-4 rounded-lg bg-muted/50">
+              <div className="mt-4 p-4 rounded-lg bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border border-white/40 dark:border-gray-700/40 shadow-md">
                 <p className="text-sm text-muted-foreground mb-1">Needs Follow-up</p>
                 <p className="text-3xl font-bold text-foreground" data-testid="metric-needs-followup">
                   {safeNumber(metrics.needsFollowUp)}
