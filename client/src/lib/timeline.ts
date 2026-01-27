@@ -83,9 +83,29 @@ function safeParseDate(value: unknown): string | null {
 
     // Handle string dates
     if (typeof value === "string") {
-      // Try parsing as-is
+      // Handle ISO date format (YYYY-MM-DD) - parse as LOCAL date to avoid timezone shifts
+      const isoDateMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (isoDateMatch) {
+        const [, year, month, day] = isoDateMatch;
+        // Parse as local date (not UTC) to avoid timezone conversion issues
+        // This ensures "2025-11-25" stays as Nov 25, not Nov 24 in timezones behind UTC
+        const parsed = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+        if (!isNaN(parsed.getTime())) {
+          // Return the original ISO string since we parsed it correctly as local date
+          // The date components are what we want, so return as-is
+          return value; // Return original ISO string - it's already correct
+        }
+      }
+
+      // Try parsing as-is (for other formats)
       const date = new Date(value);
       if (!isNaN(date.getTime())) {
+        // For non-ISO strings, check if it's a date-only value
+        // If it looks like a date-only string, parse as local date
+        if (/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}$/.test(value.trim())) {
+          // Already handled by MM/DD/YY pattern below, but fallback here
+          return date.toISOString().split("T")[0];
+        }
         // Return ISO date string for consistency
         return date.toISOString().split("T")[0];
       }
@@ -95,9 +115,14 @@ function safeParseDate(value: unknown): string | null {
       if (mmddyy) {
         const [, month, day, year] = mmddyy;
         const fullYear = year.length === 2 ? (parseInt(year) > 50 ? 1900 + parseInt(year) : 2000 + parseInt(year)) : parseInt(year);
+        // Parse as local date to avoid timezone shifts
         const parsed = new Date(fullYear, parseInt(month) - 1, parseInt(day));
         if (!isNaN(parsed.getTime())) {
-          return parsed.toISOString().split("T")[0];
+          // Return ISO date string using local date components
+          const localYear = parsed.getFullYear();
+          const localMonth = String(parsed.getMonth() + 1).padStart(2, '0');
+          const localDay = String(parsed.getDate()).padStart(2, '0');
+          return `${localYear}-${localMonth}-${localDay}`;
         }
       }
     }
@@ -250,6 +275,7 @@ export function buildTimelineEvents(
 /**
  * Parse a timestamp string into a Date object.
  * Handles date-only (YYYY-MM-DD), ISO datetime, and fallback.
+ * IMPORTANT: ISO date strings (YYYY-MM-DD) are parsed as LOCAL dates to avoid timezone shifts.
  *
  * FAIL-SOFT: Returns epoch date (Jan 1, 1970) for invalid input.
  */
@@ -259,6 +285,18 @@ function parseTimestamp(timestamp: string | null | undefined): Date {
   }
 
   try {
+    // Handle ISO date format (YYYY-MM-DD) - parse as LOCAL date to avoid timezone shifts
+    // This prevents "2025-11-25" from showing as "Nov 24" in timezones behind UTC
+    const isoDateMatch = timestamp.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (isoDateMatch) {
+      const [, year, month, day] = isoDateMatch;
+      const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+      if (!isNaN(date.getTime())) {
+        return date;
+      }
+    }
+
+    // For other formats (ISO datetime, etc.), use standard Date parsing
     const date = new Date(timestamp);
     if (isNaN(date.getTime())) {
       return new Date(0);
