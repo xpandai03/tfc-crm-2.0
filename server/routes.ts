@@ -89,11 +89,17 @@ function excelSerialToIso(serial: number): string {
   return date.toISOString().split("T")[0];
 }
 
-// n8n webhook URLs from environment variables (server-only, never exposed to frontend)
+// ============================================================================
+// HARD-LOCKED n8n URLs - NO ENV VARS FOR CRITICAL ENDPOINTS
+// ============================================================================
+// The waitlist board URL MUST be this exact value. No env var fallback.
+// This prevents URL resolution bugs from misconfigured environment variables.
+const WAITLIST_BOARD_URL = "https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-board";
+const WAITLIST_SUMMARY_URL = "https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-summary";
+
+// Other n8n endpoints (less critical, can use env vars)
 const N8N_ENDPOINTS = {
   contactSnapshot: process.env.N8N_GET_CONTACT_SNAPSHOT_URL || "https://n8n-familyconnection.agentglu.agency/webhook/get-contact-snapshot",
-  waitlistSummary: process.env.N8N_GET_WAITLIST_SUMMARY_URL || "https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-summary",
-  waitlistBoard: process.env.N8N_GET_WAITLIST_BOARD_URL || "https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-board",
   updateStatus: process.env.N8N_UPDATE_CONTACT_STATUS_URL || "https://n8n-familyconnection.agentglu.agency/webhook/update-contact-status",
   addNote: process.env.N8N_ADD_CONTACT_NOTE_URL || "https://n8n-familyconnection.agentglu.agency/webhook/add-contact-note",
   assignContact: process.env.N8N_ASSIGN_CONTACT_URL || "https://n8n-familyconnection.agentglu.agency/webhook/assign-contact",
@@ -400,7 +406,8 @@ export async function registerRoutes(
           } else {
             // Cache miss - fetch fresh board data from n8n
             console.log(`[contact-snapshot] Cache miss, fetching board from n8n for contact ${contactId}`);
-            const boardResponse = await fetch(N8N_ENDPOINTS.waitlistBoard, {
+            console.log(`[contact-snapshot] FINAL FETCH URL =`, WAITLIST_BOARD_URL);
+            const boardResponse = await fetch(WAITLIST_BOARD_URL, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({}),
@@ -461,6 +468,14 @@ export async function registerRoutes(
           // Extract detailed fields from n8n response
           const detailed = detailedData as Record<string, unknown>;
 
+          // Debug: Log assignedTo from all sources
+          console.log(`[contact-snapshot] assignedTo sources for ${contact.name}:`, {
+            "detailed.assignedTo": detailed.assignedTo,
+            "detailed['Admin Assigned To Contact']": detailed["Admin Assigned To Contact"],
+            "contact.assignedTo": contact.assignedTo,
+            "contact['Admin Assigned To Contact']": contact["Admin Assigned To Contact"],
+          });
+
           // Compute umbrella from status code
           const statusCode = contact.statusCode as number | undefined;
           const umbrella = statusCode !== undefined
@@ -483,6 +498,12 @@ export async function registerRoutes(
             // Intake info from n8n detailed response
             requestingFor: (detailed.requestingFor as string) || null,
             reasonForSeeking: (detailed.reasonForSeeking as string) || null,
+            // Excel column BD: Reason for Therapy MCQ (comma-separated string)
+            reasonForTherapy: (detailed.reasonForTherapy as string) 
+              || (detailed["Reason for Therapy MCQ"] as string)
+              || (detailed.reasonForTherapyMCQ as string)
+              || (detailed["Reason for Therapy"] as string)
+              || null,
             // Detailed Reason - INTERNAL USE ONLY (provider matching)
             // Not displayed in UI - sensitive narrative data
             detailedReason: (detailed.detailedReason as string) || (detailed.DetailedReason as string) || null,
@@ -540,7 +561,12 @@ export async function registerRoutes(
             lastContact: normalizeExcelDate(detailed.lastContact),
 
             // Assignment and notes
-            assignedTo: (detailed.assignedTo as string) || null,
+            // Check multiple sources: n8n snapshot, board data (may have different field names)
+            assignedTo: (detailed.assignedTo as string)
+              || (detailed["Admin Assigned To Contact"] as string)
+              || (contact.assignedTo as string)
+              || (contact["Admin Assigned To Contact"] as string)
+              || null,
             notes: parseNotesFromLastNote(detailed.lastNote as string | undefined),
           };
 
@@ -695,13 +721,73 @@ export async function registerRoutes(
   /**
    * Main parser function v4 - comprehensive date extraction
    */
+  /**
+   * Infer context year from dates found in the text
+   * Since all data is Oct 2025 - Jan 2026, we infer year intelligently
+   */
+  function inferContextYearFromText(text: string): number {
+    // First, try to find any full dates (with year) in the text
+    const fullDatePattern = /\d{1,2}[\/\-]\d{1,2}[\/\-](\d{2,4})/g;
+    const years: number[] = [];
+    let match;
+    
+    while ((match = fullDatePattern.exec(text)) !== null) {
+      const yearStr = match[1];
+      if (yearStr.length === 4) {
+        years.push(parseInt(yearStr));
+      } else if (yearStr.length === 2) {
+        const year = 2000 + parseInt(yearStr);
+        years.push(year);
+      }
+    }
+    
+    // If we found years, use the most recent one
+    if (years.length > 0) {
+      return Math.max(...years);
+    }
+    
+    // For short dates without year, infer from month:
+    // Oct-Dec (10-12) = 2025, Jan (1) = 2026
+    // Check for any month indicators in the text
+    const monthPattern = /\b(?:Jan|January|Oct|October|Nov|November|Dec|December)\b/i;
+    if (monthPattern.test(text)) {
+      const textLower = text.toLowerCase();
+      if (textLower.includes('jan') || textLower.includes('january')) {
+        return 2026;
+      }
+      return 2025;
+    }
+    
+    // Default: if we're currently in Jan 2026, use 2026; otherwise 2025
+    const now = new Date();
+    const currentMonth = now.getMonth() + 1; // 1-12
+    const currentYear = now.getFullYear();
+    
+    if (currentMonth === 1 && currentYear === 2026) {
+      return 2026;
+    }
+    
+    return 2025;
+  }
+
+  /**
+   * Infer year for a short date (M/D) based on month
+   * Oct-Dec (10-12) = 2025, Jan (1) = 2026
+   */
+  function inferYearForShortDate(month: number): number {
+    if (month >= 1 && month <= 1) return 2026; // January
+    if (month >= 10 && month <= 12) return 2025; // Oct-Dec
+    return 2025; // Default fallback
+  }
+
   function parseNotesRobust(lastNote: string | undefined): ParsedNote[] {
     if (!lastNote || typeof lastNote !== "string" || lastNote.trim() === "") {
       return [];
     }
 
     const results: ParsedNote[] = [];
-    const contextYear = 2025; // Default context year for short dates
+    // Infer context year from the text itself (handles Oct 2025 - Jan 2026 range)
+    const contextYear = inferContextYearFromText(lastNote);
 
     // Handle CRM notes first (they're well-structured)
     const crmHeaderPattern = /\[([A-Z]{2,3})\s*\|\s*(\d{1,2}\/\d{1,2}\/\d{4}),\s*(\d{1,2}:\d{2}\s*[AP]M)\]/g;
@@ -782,7 +868,7 @@ export async function registerRoutes(
       }
     }
 
-    // Pattern B: INITIALS + DATE (no time)
+    // Pattern B: INITIALS + DATE (no time) - full date with year
     const initialsDatePattern = /([A-Z]{2,3})\s+(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})(?!\s+\d{1,2}:\d{2})/g;
     while ((match = initialsDatePattern.exec(legacyText)) !== null) {
       if (!isTimeIndicator(match[1])) {
@@ -798,6 +884,36 @@ export async function registerRoutes(
             endIndex: match.index + match[0].length,
             date: match[2],
             normalizedDate: normalizeDate(match[2]),
+            author: match[1],
+            hasTime: false,
+            isEndMarker: !atLineStart,
+          });
+        }
+      }
+    }
+
+    // Pattern B2: INITIALS + SHORT_DATE (M/D without year) - NEW PATTERN
+    // Matches: "NB 1/9", "LVM 1/9", "EB 11/25", etc.
+    const initialsShortDatePattern = /([A-Z]{2,3})\s+(\d{1,2}\/\d{1,2})(?![\/\-\d])/g;
+    while ((match = initialsShortDatePattern.exec(legacyText)) !== null) {
+      if (!isTimeIndicator(match[1])) {
+        const overlaps = markers.some(m =>
+          (match!.index >= m.index && match!.index < m.endIndex) ||
+          (m.index >= match!.index && m.index < match!.index + match![0].length)
+        );
+        if (!overlaps) {
+          // Infer year from month: Jan = 2026, Oct-Dec = 2025
+          const dateParts = match[2].split('/');
+          const month = parseInt(dateParts[0]);
+          const inferredYear = inferYearForShortDate(month);
+          
+          const beforeText = legacyText.slice(Math.max(0, match.index - 20), match.index);
+          const atLineStart = /(?:^|[\n\\])\s*$/.test(beforeText) || match.index === 0;
+          markers.push({
+            index: match.index,
+            endIndex: match.index + match[0].length,
+            date: match[2],
+            normalizedDate: normalizeDate(match[2], inferredYear),
             author: match[1],
             hasTime: false,
             isEndMarker: !atLineStart,
@@ -854,11 +970,16 @@ export async function registerRoutes(
         (m.index >= match!.index && m.index < match!.index + match![0].length)
       );
       if (!overlaps) {
+        // Infer year from month: Jan = 2026, Oct-Dec = 2025
+        const dateParts = match[1].split('/');
+        const month = parseInt(dateParts[0]);
+        const inferredYear = inferYearForShortDate(month);
+        
         markers.push({
           index: match.index,
           endIndex: match.index + match[0].length,
           date: match[1],
-          normalizedDate: normalizeDate(match[1], contextYear),
+          normalizedDate: normalizeDate(match[1], inferredYear),
           author: undefined,
           hasTime: false,
           isEndMarker: false,
@@ -878,11 +999,14 @@ export async function registerRoutes(
         const month = parseInt(parts[0]);
         const day = parseInt(parts[1]);
         if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+          // Infer year from month: Jan = 2026, Oct-Dec = 2025
+          const inferredYear = inferYearForShortDate(month);
+          
           markers.push({
             index: match.index + 1,
             endIndex: match.index + match[0].length,
             date: match[1],
-            normalizedDate: normalizeDate(match[1], contextYear),
+            normalizedDate: normalizeDate(match[1], inferredYear),
             author: undefined,
             hasTime: false,
             isEndMarker: false,
@@ -959,13 +1083,18 @@ export async function registerRoutes(
 
   // Get waitlist summary
   app.post("/api/get-waitlist-summary", async (_req, res) => {
+    console.log("[SUMMARY] === REQUEST START ===");
+    console.log("[SUMMARY] FINAL FETCH URL =", WAITLIST_SUMMARY_URL);
     try {
       if (DATA_MODE === "live") {
         try {
-          const response = await fetch(N8N_ENDPOINTS.waitlistSummary, {
+          // HARD-LOCKED URL - no env vars, no fallbacks
+          const response = await fetch(WAITLIST_SUMMARY_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
           });
+
+          console.log("[SUMMARY] n8n response status:", response.status);
 
           if (!response.ok) {
             throw new Error(`n8n webhook returned ${response.status}`);
@@ -1006,106 +1135,238 @@ export async function registerRoutes(
   // Get all waitlist contacts (for Today page priority queues)
   // Uses the board endpoint to ensure contactId is always present
   app.get("/api/waitlist-contacts", async (_req, res) => {
+    console.log("[WAITLIST-CONTACTS] === REQUEST START ===");
+    console.log("[WAITLIST-CONTACTS] DATA_MODE:", DATA_MODE);
+    console.log("[WAITLIST-CONTACTS] FINAL FETCH URL =", WAITLIST_BOARD_URL);
     try {
       if (DATA_MODE === "live") {
         try {
-          // Use board endpoint - it returns contacts with contactId
-          const response = await fetch(N8N_ENDPOINTS.waitlistBoard, {
+          // HARD-LOCKED URL - no env vars, no fallbacks
+          const response = await fetch(WAITLIST_BOARD_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({}), // Required for n8n to respond
+            body: JSON.stringify({}),
           });
 
+          console.log("[WAITLIST-CONTACTS] n8n response status:", response.status);
+          console.log("[WAITLIST-CONTACTS] n8n response content-type:", response.headers.get("content-type"));
+
+          // CRITICAL: Detect HTML responses (wrong URL symptom)
+          const contentType = response.headers.get("content-type") || "";
+          if (contentType.includes("text/html")) {
+            const htmlPreview = await response.text();
+            console.error("[WAITLIST-CONTACTS] RECEIVED HTML INSTEAD OF JSON!");
+            console.error("[WAITLIST-CONTACTS] HTML preview:", htmlPreview.substring(0, 500));
+            throw new Error("Received HTML response - wrong URL or n8n error");
+          }
+
           if (!response.ok) {
+            console.error("[WAITLIST-CONTACTS] n8n returned non-200 status:", response.status, response.statusText);
             throw new Error(`n8n webhook returned ${response.status}`);
           }
 
-          const data = await response.json();
+          // Parse response
+          const text = await response.text();
+          console.log("[WAITLIST-CONTACTS] n8n response length:", text.length);
+          console.log("[WAITLIST-CONTACTS] n8n response preview:", text.substring(0, 300));
+
+          if (!text || text.trim() === "") {
+            console.error("[WAITLIST-CONTACTS] Empty response from n8n");
+            throw new Error("Empty response from n8n");
+          }
+
+          let data;
+          try {
+            data = JSON.parse(text);
+            console.log("[WAITLIST-CONTACTS] JSON parsed successfully");
+          } catch (parseError) {
+            console.error("[WAITLIST-CONTACTS] JSON parse error:", parseError);
+            console.error("[WAITLIST-CONTACTS] Response text that failed to parse:", text.substring(0, 500));
+            throw new Error(`Failed to parse n8n response as JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
+          }
+
+          console.log("[WAITLIST-CONTACTS] Parsed data keys:", Object.keys(data));
+          console.log("[WAITLIST-CONTACTS] _source from n8n:", data._source);
+          console.log("[WAITLIST-CONTACTS] contacts type:", typeof data.contacts, Array.isArray(data.contacts) ? "array" : "not array");
+          console.log("[WAITLIST-CONTACTS] contacts length:", data.contacts?.length ?? "undefined");
+
+          // CRITICAL: Use n8n's _source if present, otherwise default to "live" if we have valid data
+          const source = data._source === "live" || data._source === "fallback" ? data._source : "live";
+
           if (data.contacts && Array.isArray(data.contacts)) {
-            // Validate that contacts have contactId
-            const validContacts = data.contacts.filter((c: any) => {
-              if (c.contactId === undefined || c.contactId === null) {
-                console.warn("[waitlist-contacts] Contact missing contactId:", c.name);
-                return false;
-              }
-              return true;
-            });
+            console.log("[WAITLIST-CONTACTS] Contacts array is valid, filtering for contactId");
+            
+            // Validate that contacts have contactId (log but don't fail)
+            // Also extract insurancePayer if present (for insights aggregation)
+            const validContacts = data.contacts
+              .filter((c: any) => {
+                if (c.contactId === undefined || c.contactId === null) {
+                  console.warn("[WAITLIST-CONTACTS] Contact missing contactId:", c.name);
+                  return false;
+                }
+                return true;
+              })
+              .map((c: any) => {
+                // Pass-through insurancePayer if present (for insights aggregation)
+                // Try multiple field name variations from Excel/n8n
+                const insurancePayer = c.insurancePayer 
+                  || c.insurance 
+                  || c["Primary Insurance Provider"]
+                  || c["Primary insurance provider"]
+                  || c["primaryInsuranceProvider"]
+                  || c["Insurance"]
+                  || c["Insurance Payer"]
+                  || c["Primary Insurance"]
+                  || null;
+                
+                // Pass-through modality if present (for insights aggregation)
+                const modality = c.modality
+                  || c["Desired Modality"]
+                  || c.desiredModality
+                  || null;
+                
+                // Normalize dateAdded from Excel serial to ISO format (YYYY-MM-DD)
+                const dateAdded = normalizeExcelDate(c.dateAdded);
+                
+                return {
+                  ...c,
+                  insurancePayer: insurancePayer ? String(insurancePayer).trim() : undefined, // Convert null to undefined for optional field
+                  modality: modality ? String(modality).trim() : undefined, // Convert null to undefined for optional field
+                  dateAdded: dateAdded || null, // Normalized date (YYYY-MM-DD) or null
+                };
+              });
+
+            console.log("[WAITLIST-CONTACTS] Valid contacts after filtering:", validContacts.length, "out of", data.contacts.length);
 
             // Populate server-side cache for contact-snapshot lookups
             // This reduces duplicate n8n calls when navigating from Today to Contact Detail
             setBoardCache({ contacts: validContacts });
 
-            return res.json({ contacts: validContacts, _source: "live" });
+            console.log("[WAITLIST-CONTACTS] Returning live data with _source:", source, "and", validContacts.length, "contacts");
+            return res.json({ contacts: validContacts, _source: source });
+          } else {
+            console.error("[WAITLIST-CONTACTS] Invalid data structure - contacts is not an array");
+            console.error("[WAITLIST-CONTACTS] data.contacts type:", typeof data.contacts, "value:", data.contacts);
+            // If contacts array is missing or empty, that's still valid data (just means no contacts)
+            // Only fall back if the structure is completely wrong
+            if (data.contacts === undefined) {
+              console.warn("[WAITLIST-CONTACTS] No contacts field in response, falling back to mock");
+              return res.json({ contacts: getMockWaitlistContacts(), _source: "fallback" });
+            }
+            // If contacts exists but isn't an array, treat as empty array rather than falling back
+            console.warn("[WAITLIST-CONTACTS] contacts is not an array, treating as empty array");
+            setBoardCache({ contacts: [] });
+            return res.json({ contacts: [], _source: source });
           }
-          console.warn("[waitlist-contacts] No contacts in response, falling back to mock");
-          return res.json({ contacts: getMockWaitlistContacts(), _source: "fallback" });
         } catch (liveError) {
-          console.warn("Live data fetch failed, falling back to mock:", liveError);
+          const errorMessage = liveError instanceof Error ? liveError.message : String(liveError);
+          const errorStack = liveError instanceof Error ? liveError.stack : undefined;
+          console.error("[WAITLIST-CONTACTS] Live data fetch failed:", errorMessage);
+          if (errorStack) {
+            console.error("[WAITLIST-CONTACTS] Error stack:", errorStack);
+          }
+          console.warn("[WAITLIST-CONTACTS] Falling back to mock data");
           return res.json({ contacts: getMockWaitlistContacts(), _source: "fallback" });
         }
       } else {
+        console.log("[WAITLIST-CONTACTS] DATA_MODE is 'mock', returning mock data");
         return res.json({ contacts: getMockWaitlistContacts(), _source: "mock" });
       }
     } catch (error) {
-      console.error("Error fetching waitlist contacts:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error("[WAITLIST-CONTACTS] Unexpected error:", errorMessage);
       return res.status(500).json({ error: "Failed to fetch waitlist contacts" });
     }
   });
 
   // Get waitlist board (contact rows for Kanban - uses dedicated live endpoint)
   app.post("/api/get-waitlist-board", async (_req, res) => {
-    console.log("[BOARD API HIT]", new Date().toISOString());
+    console.log("[BOARD] === REQUEST START ===");
+    console.log("[BOARD] DATA_MODE:", DATA_MODE);
+    console.log("[BOARD] FINAL FETCH URL =", WAITLIST_BOARD_URL);
     try {
       if (DATA_MODE === "live") {
         try {
-          console.log("Fetching live board from:", N8N_ENDPOINTS.waitlistBoard);
-          
-          // Send empty JSON body - required for n8n to respond
-          const response = await fetch(N8N_ENDPOINTS.waitlistBoard, {
+          // HARD-LOCKED URL - no env vars, no fallbacks
+          const response = await fetch(WAITLIST_BOARD_URL, {
             method: "POST",
-            headers: { 
+            headers: {
               "Content-Type": "application/json",
               "Accept": "application/json",
             },
             body: JSON.stringify({}),
           });
 
-          console.log("n8n board response status:", response.status);
-          
+          console.log("[BOARD] n8n response status:", response.status);
+          console.log("[BOARD] n8n response content-type:", response.headers.get("content-type"));
+
+          // CRITICAL: Detect HTML responses (wrong URL symptom)
+          const contentType = response.headers.get("content-type") || "";
+          if (contentType.includes("text/html")) {
+            const htmlPreview = await response.text();
+            console.error("[BOARD] RECEIVED HTML INSTEAD OF JSON!");
+            console.error("[BOARD] HTML preview:", htmlPreview.substring(0, 500));
+            throw new Error("Received HTML response - wrong URL or n8n error");
+          }
+
           if (!response.ok) {
             throw new Error(`n8n webhook returned ${response.status}`);
           }
 
           const text = await response.text();
-          console.log("n8n board response length:", text.length);
-          console.log("n8n board response preview:", text.substring(0, 200));
-          
+          console.log("[BOARD] n8n response length:", text.length);
+          console.log("[BOARD] n8n response preview:", text.substring(0, 200));
+
           if (!text || text.trim() === "") {
             throw new Error("Empty response from n8n");
           }
-          
-          const data = JSON.parse(text);
-          console.log("n8n board _source:", data._source);
-          console.log("n8n board contacts count:", data.contacts?.length);
 
-          // Defensive: Check for contacts missing required fields
+          let data;
+          try {
+            data = JSON.parse(text);
+            console.log("[BOARD] JSON parsed successfully");
+          } catch (parseError) {
+            console.error("[BOARD] JSON parse error:", parseError);
+            console.error("[BOARD] Response text that failed to parse:", text.substring(0, 500));
+            throw new Error(`Failed to parse n8n response as JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
+          }
+
+          console.log("[BOARD] Parsed data keys:", Object.keys(data));
+          console.log("[BOARD] n8n board _source:", data._source);
+          console.log("[BOARD] n8n board contacts type:", typeof data.contacts, Array.isArray(data.contacts) ? "array" : "not array");
+          console.log("[BOARD] n8n board contacts count:", data.contacts?.length ?? "undefined");
+
+          // CRITICAL: Preserve _source from n8n response, default to "live" if missing but data is valid
+          const source = data._source === "live" || data._source === "fallback" ? data._source : "live";
+
+          // Defensive: Check for contacts missing required fields (log warnings, don't fail)
           if (data.contacts && Array.isArray(data.contacts)) {
             const missingContactId = data.contacts.filter((c: any) => c.contactId === undefined || c.contactId === null);
             const missingStatusCode = data.contacts.filter((c: any) => c.statusCode === undefined);
             if (missingContactId.length > 0) {
-              console.warn(`[DATA_INTEGRITY] ${missingContactId.length} contacts missing contactId:`, missingContactId.map((c: any) => c.name));
+              console.warn(`[BOARD][DATA_INTEGRITY] ${missingContactId.length} contacts missing contactId:`, missingContactId.slice(0, 5).map((c: any) => c.name));
             }
             if (missingStatusCode.length > 0) {
-              console.warn(`[DATA_INTEGRITY] ${missingStatusCode.length} contacts missing statusCode:`, missingStatusCode.map((c: any) => c.name || c.contactId));
+              console.warn(`[BOARD][DATA_INTEGRITY] ${missingStatusCode.length} contacts missing statusCode:`, missingStatusCode.slice(0, 5).map((c: any) => c.name || c.contactId));
             }
 
             // Populate server-side cache for contact-snapshot lookups
             // This reduces duplicate n8n calls when navigating from list to detail view
             setBoardCache({ contacts: data.contacts });
+            
+            console.log("[BOARD] Returning live data with _source:", source, "and", data.contacts.length, "contacts");
+          } else {
+            console.warn("[BOARD] Contacts field is missing or not an array");
+            console.warn("[BOARD] data.contacts type:", typeof data.contacts, "value:", data.contacts);
+            // Still return the data structure even if contacts is missing/invalid
+            // Let the frontend handle it
+            if (!data.contacts) {
+              data.contacts = [];
+            }
           }
 
-          // Return the response directly, preserving _source field
-          return res.json(data);
+          // Return the response with preserved/ensured _source field
+          return res.json({ ...data, _source: source });
         } catch (liveError) {
           console.warn("Live board fetch failed, falling back to mock:", liveError);
           return res.json({ contacts: getMockWaitlistContacts(), _source: "fallback" });
@@ -1517,8 +1778,9 @@ export async function registerRoutes(
             // Response might not be JSON - that's OK
           }
 
-          // Invalidate staff list cache since assignments changed
+          // Invalidate caches since assignments changed
           staffListCache = null;
+          boardCache = null; // CRITICAL: Clear board cache so next fetch gets fresh data
 
           console.log(`[assign-contact] Success for contactId ${contactId}`);
           return res.json({
@@ -1572,7 +1834,8 @@ export async function registerRoutes(
         contacts = cachedBoard.contacts;
       } else if (DATA_MODE === "live") {
         try {
-          const response = await fetch(N8N_ENDPOINTS.waitlistBoard, {
+          console.log("[staff-list] FINAL FETCH URL =", WAITLIST_BOARD_URL);
+          const response = await fetch(WAITLIST_BOARD_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({}),
