@@ -131,10 +131,43 @@ const INSURANCE_NORMALIZATION_MAP: Record<string, string> = {
 
 /**
  * Modality normalization mapping (raw values → canonical categories)
+ * Maps form options and historical values to display categories
  */
 const MODALITY_NORMALIZATION_MAP: Record<string, string> = {
-  "th": "Telehealth",
+  // Hybrid
+  "hybrid": "Hybrid",
+  
+  // In Person - Albuquerque (ABQ)
+  "in person - albuquerque": "In Person ABQ",
+  "in person-abq": "In Person ABQ",
+  "in person abq": "In Person ABQ",
+  "abq": "In Person ABQ",
+  "albuquerque": "In Person ABQ",
+  
+  // In Person - Rio Rancho (RR)
+  "in person - rio rancho": "In Person RR",
+  "in person-rio rancho": "In Person RR",
+  "in person rr": "In Person RR",
+  "rio rancho": "In Person RR",
+  
+  // In Person (generic - includes Los Lunas, combined options, and old values without location)
+  "in person": "In Person",
+  "in person - los lunas": "In Person",
+  "in person - albuquerque or rio rancho": "In Person",
+  "in-person": "In Person",
+  "in person los lunas": "In Person",
+  
+  // Telehealth
   "telehealth": "Telehealth",
+  "th": "Telehealth",
+  "tele-health": "Telehealth",
+  "tele health": "Telehealth",
+  
+  // Flexible/Flex
+  "flexible (open to any option)": "Flex",
+  "flexible": "Flex",
+  "flex": "Flex",
+  "open to any option": "Flex",
 };
 
 /**
