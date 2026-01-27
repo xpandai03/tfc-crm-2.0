@@ -12,7 +12,7 @@
  * - PS (Pending Scheduling): 200-201 — Provider matched, scheduling in progress (active only)
  * - SCH (Scheduled): 202 — Appointment confirmed (active)
  * - PMR (PM Review): 300 — Requires practice manager attention
- * - INS (Insurance N/A): 103, 104, 203, 204, 400 — Inactive/declined contacts
+ * - INS (Insurance N/A): 103, 104, 203, 204, 205, 400 — Inactive/declined contacts
  */
 
 // Status code to human-readable label mapping
@@ -28,6 +28,7 @@ export const STATUS_LABELS: Record<number, string> = {
   202: "Scheduled",
   203: "No Response",
   204: "Declined",
+  205: "Initial Appt Completed",
   300: "Submitted for Review",
   400: "Insurance Not Accepted",
 };
@@ -44,6 +45,7 @@ export const STATUS_DESCRIPTIONS: Record<number, string> = {
   202: "Appointment confirmed",
   203: "No response to scheduling attempts",
   204: "Declined scheduling",
+  205: "First appointment completed, moved to inactive",
   300: "Requires PM attention",
   400: "Cannot proceed due to insurance",
 };
@@ -83,7 +85,7 @@ export const STATUS_UMBRELLAS = {
     color: "purple"
   },
   INS: {
-    codes: [103, 104, 203, 204, 400],
+    codes: [103, 104, 203, 204, 205, 400],
     entry: 400,
     label: "Insurance N/A",
     color: "red"
@@ -130,6 +132,7 @@ export const ACTIVE_STATUS_CODES = [
  * - 104: Inactive -- No Response (WL) - no response after attempts
  * - 203: No Response (PS) - no response to scheduling attempts
  * - 204: Declined (PS) - declined scheduling
+ * - 205: Initial Appt Completed (PS) - first appointment completed, moved to inactive
  * - 400: Insurance Not Accepted (INS) - cannot proceed
  *
  * NOTE: Status 102 appears in the WL column and is still considered ACTIVE for counting purposes.
@@ -139,7 +142,7 @@ export const ACTIVE_STATUS_CODES = [
  * 2. Add to appropriate umbrella in STATUS_UMBRELLAS
  * 3. If terminal/non-actionable: add to INACTIVE_STATUS_CODES
  */
-export const INACTIVE_STATUS_CODES: number[] = [103, 104, 203, 204, 400];
+export const INACTIVE_STATUS_CODES: number[] = [103, 104, 203, 204, 205, 400];
 
 /**
  * BACKWARD COMPATIBILITY: STATUS_GROUPS
@@ -154,7 +157,7 @@ export const STATUS_GROUPS = {
   scheduled: [202] as readonly number[],
   pm_review: [300] as readonly number[],
   declined: [103, 204] as readonly number[],
-  inactive: [103, 104, 203, 204, 400] as readonly number[],
+  inactive: [103, 104, 203, 204, 205, 400] as readonly number[],
 } as const;
 
 /**
