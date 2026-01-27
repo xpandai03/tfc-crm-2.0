@@ -1386,8 +1386,9 @@ export async function registerRoutes(
   });
 
   // Valid status codes for the umbrella model
-  // WL (100-104), PS (200-204), PMR (300), INS (400)
-  const VALID_STATUS_CODES = [100, 101, 102, 103, 104, 200, 201, 202, 203, 204, 300, 400];
+  // WL (100-104), PS (200-205), PMR (300), INS (400)
+  // Note: 205 (Initial Appt Completed) is inactive and appears in INS column
+  const VALID_STATUS_CODES = [100, 101, 102, 103, 104, 200, 201, 202, 203, 204, 205, 300, 400];
 
   // Umbrella types for status grouping
   type UmbrellaId = "WL" | "PS" | "PMR" | "INS" | "unknown";
