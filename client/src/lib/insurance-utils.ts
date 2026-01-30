@@ -178,6 +178,8 @@ export const INSURANCE_NORMALIZATION_MAP: Record<string, string> = {
   "partners direct health": "Partners Direct Health",
 
   // Rejected insurances (not accepted by TFC)
+  "healthscope": "Not Accepted",
+  "healthscope benefits": "Not Accepted",
   "healthscope benifits quantum health": "Not Accepted",
   "lisa hale": "Not Accepted",
   "humana medicare": "Not Accepted",
