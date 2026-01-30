@@ -22,8 +22,9 @@ export type AgeGroup = "adults" | "adolescents" | "children_6_11" | "children_0_
 // Capability level for a specialty
 export type CapabilityLevel = "full" | "slow" | "none";
 
-// Provider location codes
-export type ProviderLocation = "Corp" | "ABQ" | "LL" | "RR";
+// Provider location codes (3 TFC locations)
+// Note: "Corp" (Corporate) is treated as ABQ
+export type ProviderLocation = "ABQ" | "LL" | "RR";
 
 // Specialty capability with level
 export interface SpecialtyCapability {
@@ -73,7 +74,7 @@ export const PROVIDERS: Provider[] = [
   {
     name: "Amanda Davison",
     credentials: "LMFT",
-    location: "Corp",
+    location: "ABQ", // Was "Corp" but Corp is mapped to ABQ
     acceptingNewPatients: false,
     ageGroups: [
       {
@@ -289,49 +290,6 @@ export const PROVIDERS: Provider[] = [
       },
     ],
     additionalSpecialties: ["ADHD"],
-  },
-  {
-    name: "Vera Molina",
-    credentials: "LPCC",
-    location: "ABQ",
-    acceptingNewPatients: true,
-    ageGroups: [
-      {
-        ageGroup: "adults",
-        specialties: [
-          { specialty: "anger_issues", level: "full" },
-          { specialty: "anxiety", level: "full" },
-          { specialty: "couples", level: "slow" },
-          { specialty: "depression", level: "full" },
-          { specialty: "grief", level: "full" },
-          { specialty: "trauma", level: "full" },
-          { specialty: "stress_management", level: "full" },
-        ],
-      },
-      {
-        ageGroup: "adolescents",
-        specialties: [
-          { specialty: "anger_issues", level: "full" },
-          { specialty: "anxiety", level: "full" },
-          { specialty: "depression", level: "full" },
-          { specialty: "grief", level: "full" },
-          { specialty: "trauma", level: "full" },
-          { specialty: "stress_management", level: "full" },
-        ],
-      },
-      {
-        ageGroup: "children_6_11",
-        specialties: [
-          { specialty: "anger_issues", level: "full" },
-          { specialty: "anxiety", level: "full" },
-          { specialty: "family", level: "full" },
-          { specialty: "grief", level: "full" },
-          { specialty: "trauma", level: "full" },
-          { specialty: "stress_management", level: "full" },
-        ],
-      },
-    ],
-    additionalSpecialties: ["Christian Counseling", "Parenting"],
   },
   {
     name: "Angelica Chavez",
@@ -978,9 +936,8 @@ export const PROVIDERS: Provider[] = [
   },
 ];
 
-// Location label mapping
+// Location label mapping (3 TFC locations)
 export const LOCATION_LABELS: Record<ProviderLocation, string> = {
-  Corp: "Corporate",
   ABQ: "Albuquerque",
   LL: "Los Lunas",
   RR: "Rio Rancho",
