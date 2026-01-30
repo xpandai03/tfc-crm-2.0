@@ -1,6 +1,8 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { createReminder as createReminderInDb, getReminderStats } from "./reminders";
+import * as XLSX from "xlsx";
+import * as path from "path";
 
 // Configuration for mock vs live data mode
 // Change to "live" to use real n8n webhooks instead of mock data
@@ -683,12 +685,20 @@ export async function registerRoutes(
 
   /**
    * Extract trailing initials from end of text segment
-   * Handles: DP, JN\, -EB-, CM\, . AC, etc.
+   *
+   * CONTEXTUAL SIGNATURE DETECTION:
+   * Only extracts initials when they appear in clear signature-like patterns.
+   *
+   * DOES extract: "-EB-", "...waitlist. DP", "...process. AC\", "...email, DP"
+   * Does NOT extract: "...in TN." (initials are part of sentence, period comes AFTER)
+   *
+   * Key insight: Real signatures have punctuation BEFORE initials, not after.
    */
   function extractTrailingInitials(text: string): { initials: string; cleanText: string } | null {
     const trimmed = text.trim();
 
     // Pattern 1: -INITIALS- format (e.g., -EB-)
+    // Unambiguous signature pattern - always extract
     let match = trimmed.match(/\s*-([A-Z]{2,3})-\s*$/);
     if (match && isValidInitials(match[1])) {
       return {
@@ -697,8 +707,22 @@ export async function registerRoutes(
       };
     }
 
-    // Pattern 2: INITIALS\ or INITIALS, or INITIALS. or just INITIALS at end
-    match = trimmed.match(/[.,\s]+([A-Z]{2,3})[\\,.\s]*$/);
+    // Pattern 2: Sentence-ending punctuation + space + INITIALS (+ optional backslash)
+    // Matches: "...on the waitlist. DP" or "...process! AC" or "...email. TN\"
+    // Does NOT match: "...in TN." (period comes AFTER initials, not before)
+    match = trimmed.match(/([.!?])\s+([A-Z]{2,3})\\?\s*$/);
+    if (match && isValidInitials(match[2])) {
+      // Keep the sentence-ending punctuation in cleanText
+      return {
+        initials: match[2],
+        cleanText: trimmed.slice(0, trimmed.length - match[0].length + 1).trim()
+      };
+    }
+
+    // Pattern 3: Comma + space + INITIALS at very end (no trailing punctuation)
+    // Matches: "...scheduling, DP" or "...review, AC"
+    // Does NOT match: "...in TN." (no comma before)
+    match = trimmed.match(/,\s+([A-Z]{2,3})\s*$/);
     if (match && isValidInitials(match[1])) {
       return {
         initials: match[1],
@@ -706,8 +730,10 @@ export async function registerRoutes(
       };
     }
 
-    // Pattern 3: Just INITIALS at end (space + initials)
-    match = trimmed.match(/\s([A-Z]{2,3})$/);
+    // Pattern 4: INITIALS + backslash at end (common signature pattern in dataset)
+    // Matches: "...follow up accordingly JN\" or "...on waitlist DP\"
+    // The backslash confirms signature intent
+    match = trimmed.match(/\s([A-Z]{2,3})\\$/);
     if (match && isValidInitials(match[1])) {
       return {
         initials: match[1],
@@ -792,12 +818,21 @@ export async function registerRoutes(
     // Handle CRM notes first (they're well-structured)
     const crmHeaderPattern = /\[([A-Z]{2,3})\s*\|\s*(\d{1,2}\/\d{1,2}\/\d{4}),\s*(\d{1,2}:\d{2}\s*[AP]M)\]/g;
     let crmMatch;
+    let firstCrmStart = -1;
     let lastCrmContentEnd = 0;
 
     while ((crmMatch = crmHeaderPattern.exec(lastNote)) !== null) {
+      // Track where first CRM note starts (for legacy text before it)
+      if (firstCrmStart === -1) {
+        firstCrmStart = crmMatch.index;
+      }
+
       const headerEnd = crmMatch.index + crmMatch[0].length;
       const nextCrmMatch = lastNote.slice(headerEnd).search(/\[([A-Z]{2,3})\s*\|/);
       const nextDoubleNewline = lastNote.slice(headerEnd).indexOf("\n\n");
+
+      // Also look for standalone dates (without initials) as content boundary
+      const standaloneDateMatch = lastNote.slice(headerEnd).search(/(?:^|[\\])\s*\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/);
 
       let contentEnd: number;
       if (nextCrmMatch >= 0 && nextDoubleNewline >= 0) {
@@ -807,8 +842,15 @@ export async function registerRoutes(
       } else if (nextCrmMatch >= 0) {
         contentEnd = headerEnd + nextCrmMatch;
       } else {
+        // Look for legacy date patterns OR standalone dates after backslash
         const legacyDateMatch = lastNote.slice(headerEnd).search(/[A-Z]{2,3}\s+\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4}/);
-        contentEnd = legacyDateMatch >= 0 ? headerEnd + legacyDateMatch : lastNote.length;
+        if (legacyDateMatch >= 0) {
+          contentEnd = headerEnd + legacyDateMatch;
+        } else if (standaloneDateMatch >= 0) {
+          contentEnd = headerEnd + standaloneDateMatch;
+        } else {
+          contentEnd = lastNote.length;
+        }
       }
 
       const content = lastNote.slice(headerEnd, contentEnd).trim();
@@ -822,11 +864,16 @@ export async function registerRoutes(
       lastCrmContentEnd = Math.max(lastCrmContentEnd, contentEnd);
     }
 
-    // Get legacy text
+    // Get legacy text - include text BEFORE first CRM note AND after last CRM content
     let legacyText: string;
-    if (lastCrmContentEnd > 0) {
-      const doubleNewline = lastNote.indexOf("\n\n", lastCrmContentEnd - 10);
-      legacyText = doubleNewline >= 0 ? lastNote.slice(doubleNewline).trim() : lastNote.slice(lastCrmContentEnd).trim();
+    if (firstCrmStart > 0) {
+      // There's text before the first CRM note - this is legacy text!
+      const textBefore = lastNote.slice(0, firstCrmStart).trim();
+      const textAfter = lastCrmContentEnd < lastNote.length ? lastNote.slice(lastCrmContentEnd).trim() : "";
+      legacyText = [textBefore, textAfter].filter(Boolean).join(" ");
+    } else if (lastCrmContentEnd > 0) {
+      // CRM note at start, get text after
+      legacyText = lastNote.slice(lastCrmContentEnd).trim();
     } else {
       legacyText = lastNote;
     }
@@ -850,12 +897,28 @@ export async function registerRoutes(
     const markers: DateMarker[] = [];
     let match;
 
+    // Helper: Determine if a marker is a START marker (content follows) vs END marker (content precedes)
+    // A marker is a START marker if:
+    // 1. It's at the start of a line (after newline/backslash)
+    // 2. It's followed by a colon (e.g., "DP 01/26/2026: content...")
+    // 3. It comes after a sentence boundary (". " or "! " or "? ")
+    function isStartMarker(matchIndex: number, matchLength: number): boolean {
+      // Check what comes BEFORE the match
+      const beforeText = legacyText.slice(Math.max(0, matchIndex - 20), matchIndex);
+      const atLineStart = /(?:^|[\n\\])\s*$/.test(beforeText) || matchIndex === 0;
+      const afterSentenceBoundary = /[.!?]\s+$/.test(beforeText);
+
+      // Check what comes AFTER the match - colon indicates START marker
+      const afterText = legacyText.slice(matchIndex + matchLength, matchIndex + matchLength + 3);
+      const followedByColon = afterText.trimStart().startsWith(':');
+
+      return atLineStart || followedByColon || afterSentenceBoundary;
+    }
+
     // Pattern A: INITIALS + DATE + TIME
     const endMarkerPattern = /([A-Z]{2,3})\s+(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})\s+(\d{1,2}:\d{2}\s*[AP]M)/g;
     while ((match = endMarkerPattern.exec(legacyText)) !== null) {
       if (!isTimeIndicator(match[1])) {
-        const beforeText = legacyText.slice(Math.max(0, match.index - 20), match.index);
-        const atLineStart = /(?:^|[\n\\])\s*$/.test(beforeText) || match.index === 0;
         markers.push({
           index: match.index,
           endIndex: match.index + match[0].length,
@@ -863,7 +926,7 @@ export async function registerRoutes(
           normalizedDate: normalizeDate(match[2]),
           author: match[1],
           hasTime: true,
-          isEndMarker: !atLineStart,
+          isEndMarker: !isStartMarker(match.index, match[0].length),
         });
       }
     }
@@ -877,8 +940,6 @@ export async function registerRoutes(
           (m.index >= match!.index && m.index < match!.index + match![0].length)
         );
         if (!overlaps) {
-          const beforeText = legacyText.slice(Math.max(0, match.index - 20), match.index);
-          const atLineStart = /(?:^|[\n\\])\s*$/.test(beforeText) || match.index === 0;
           markers.push({
             index: match.index,
             endIndex: match.index + match[0].length,
@@ -886,7 +947,7 @@ export async function registerRoutes(
             normalizedDate: normalizeDate(match[2]),
             author: match[1],
             hasTime: false,
-            isEndMarker: !atLineStart,
+            isEndMarker: !isStartMarker(match.index, match[0].length),
           });
         }
       }
@@ -906,9 +967,7 @@ export async function registerRoutes(
           const dateParts = match[2].split('/');
           const month = parseInt(dateParts[0]);
           const inferredYear = inferYearForShortDate(month);
-          
-          const beforeText = legacyText.slice(Math.max(0, match.index - 20), match.index);
-          const atLineStart = /(?:^|[\n\\])\s*$/.test(beforeText) || match.index === 0;
+
           markers.push({
             index: match.index,
             endIndex: match.index + match[0].length,
@@ -916,7 +975,7 @@ export async function registerRoutes(
             normalizedDate: normalizeDate(match[2], inferredYear),
             author: match[1],
             hasTime: false,
-            isEndMarker: !atLineStart,
+            isEndMarker: !isStartMarker(match.index, match[0].length),
           });
         }
       }
@@ -1874,6 +1933,177 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching staff list:", error);
       return res.status(500).json({ error: "Failed to fetch staff list" });
+    }
+  });
+
+  // ============================================================================
+  // Provider Skills Spreadsheet API (Beta - Read Only)
+  // ============================================================================
+  // Parses the Provider Skills Spreadsheet and returns raw data for visualization
+  // No interpretation of values - preserves "x", "x - Slow", empty exactly as-is
+  // ============================================================================
+
+  // Cache for provider data (5 minute TTL)
+  let providerDataCache: { providers: unknown[]; timestamp: number; lastModified?: string } | null = null;
+  const PROVIDER_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+  // Provider Skills Spreadsheet path - configurable via env var
+  // Priority: 1) env var, 2) project data dir, 3) user Downloads
+  const PROVIDER_SPREADSHEET_PATH = process.env.PROVIDER_SPREADSHEET_PATH
+    || path.join(process.cwd(), "data", "Provider Skills Spreadsheet.xlsx");
+
+  app.get("/api/providers", async (_req, res) => {
+    try {
+      console.log("[providers] === REQUEST START ===");
+      console.log("[providers] Spreadsheet path:", PROVIDER_SPREADSHEET_PATH);
+
+      // Check cache first
+      if (providerDataCache) {
+        const age = Date.now() - providerDataCache.timestamp;
+        if (age < PROVIDER_CACHE_TTL_MS) {
+          console.log(`[providers] Cache hit (age: ${Math.round(age / 1000)}s, ${providerDataCache.providers.length} providers)`);
+          return res.json({
+            providers: providerDataCache.providers,
+            _source: "cached",
+            lastModified: providerDataCache.lastModified,
+          });
+        }
+        console.log("[providers] Cache expired, re-reading spreadsheet");
+      }
+
+      // Read the spreadsheet
+      let workbook: XLSX.WorkBook;
+      try {
+        workbook = XLSX.readFile(PROVIDER_SPREADSHEET_PATH);
+      } catch (fileError) {
+        console.error("[providers] Failed to read spreadsheet:", fileError);
+        return res.status(500).json({
+          error: "Failed to read Provider Skills Spreadsheet",
+          message: fileError instanceof Error ? fileError.message : "Unknown error",
+          path: PROVIDER_SPREADSHEET_PATH,
+        });
+      }
+
+      // Parse the "Current" sheet (active providers)
+      const sheet = workbook.Sheets["Current"];
+      if (!sheet) {
+        console.error("[providers] 'Current' sheet not found in spreadsheet");
+        return res.status(500).json({
+          error: "Sheet 'Current' not found in Provider Skills Spreadsheet",
+        });
+      }
+
+      const data = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as string[][];
+      console.log("[providers] Raw rows:", data.length);
+
+      // Column mapping based on spreadsheet structure:
+      // Col 0: Provider Name (with credentials)
+      // Col 1: Location
+      // Cols 2-9: Adults (18+) specialties
+      // Cols 10-16: Adolescents (12-17) specialties
+      // Cols 17-23: Children (6-11) specialties
+      // Cols 24-28: Children (0-5) specialties
+      // Col 29: Notes
+
+      const adultSpecialties = ["Anger Issues", "Anxiety", "Couples", "Depression", "Family", "Grief", "Trauma", "Stress Management"];
+      const adolescentSpecialties = ["Anger Issues", "Anxiety", "Depression", "Family", "Grief", "Trauma", "Stress Management"];
+      const children6to11Specialties = ["Anger Issues", "Anxiety", "Depression", "Family", "Grief", "Trauma", "Stress Management"];
+      const children0to5Specialties = ["Anxiety", "Depression", "Family", "Grief", "Trauma"];
+
+      const providers: unknown[] = [];
+
+      // Skip header rows (0, 1), process data rows
+      for (let i = 2; i < data.length; i++) {
+        const row = data[i];
+        const nameWithCredentials = row[0]?.toString().trim();
+
+        // Skip empty rows
+        if (!nameWithCredentials) continue;
+
+        // Parse name and credentials
+        // Format: "FirstName LastName, CREDENTIALS" or "FirstName LastName, CREDENTIALS (Language)"
+        const nameMatch = nameWithCredentials.match(/^(.+?),\s*(.+)$/);
+        let name = nameMatch ? nameMatch[1].trim() : nameWithCredentials;
+        const credentials = nameMatch ? nameMatch[2].trim() : "";
+
+        // Correct names that are in "Last First" format in the spreadsheet
+        const nameCorrections: Record<string, string> = {
+          "Neuhart Jessica": "Jessica Neuhart",
+        };
+        if (nameCorrections[name]) {
+          name = nameCorrections[name];
+        }
+
+        const location = row[1]?.toString().trim() || "";
+
+        // Extract specialties for each age group (preserve raw values)
+        const adultsCapabilities: Record<string, string> = {};
+        for (let j = 0; j < adultSpecialties.length; j++) {
+          const val = row[2 + j]?.toString().trim() || "";
+          if (val) adultsCapabilities[adultSpecialties[j]] = val;
+        }
+
+        const adolescentsCapabilities: Record<string, string> = {};
+        for (let j = 0; j < adolescentSpecialties.length; j++) {
+          const val = row[10 + j]?.toString().trim() || "";
+          if (val) adolescentsCapabilities[adolescentSpecialties[j]] = val;
+        }
+
+        const children6to11Capabilities: Record<string, string> = {};
+        for (let j = 0; j < children6to11Specialties.length; j++) {
+          const val = row[17 + j]?.toString().trim() || "";
+          if (val) children6to11Capabilities[children6to11Specialties[j]] = val;
+        }
+
+        const children0to5Capabilities: Record<string, string> = {};
+        for (let j = 0; j < children0to5Specialties.length; j++) {
+          const val = row[24 + j]?.toString().trim() || "";
+          if (val) children0to5Capabilities[children0to5Specialties[j]] = val;
+        }
+
+        const notes = row[29]?.toString().trim() || "";
+
+        // Column 30: Accepted Insurances (comma-separated string)
+        // Example: "BCBS, Presbyterian Commercial, Tricare"
+        const acceptedInsurances = row[30]?.toString().trim() || "";
+
+        providers.push({
+          id: i - 1, // 1-indexed provider ID
+          nameWithCredentials,
+          name,
+          credentials,
+          location,
+          ageGroups: {
+            "Adults (18+)": adultsCapabilities,
+            "Adolescents (12-17)": adolescentsCapabilities,
+            "Children (6-11)": children6to11Capabilities,
+            "Children (0-5)": children0to5Capabilities,
+          },
+          notes,
+          acceptedInsurances,
+        });
+      }
+
+      console.log("[providers] Parsed", providers.length, "providers");
+
+      // Update cache
+      providerDataCache = {
+        providers,
+        timestamp: Date.now(),
+        lastModified: new Date().toISOString(),
+      };
+
+      return res.json({
+        providers,
+        _source: "spreadsheet",
+        lastModified: providerDataCache.lastModified,
+      });
+    } catch (error) {
+      console.error("[providers] Unexpected error:", error);
+      return res.status(500).json({
+        error: "Failed to fetch provider data",
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
     }
   });
 
