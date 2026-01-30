@@ -18,10 +18,10 @@ import { getWaitlistSummary, getWaitlistContacts, addNoteToContact, updateContac
 import { useDataSource } from "@/lib/data-source-context";
 import { useAuth } from "@/lib/auth-context";
 import {
-  isActiveStatus,
   stringStatusToCode,
   safeNumber,
   STATUS_GROUPS,
+  STATUS_UMBRELLAS,
 } from "@/lib/status-config";
 import { generateInsights } from "@/lib/insights";
 import type { WaitlistSummary, WaitlistContact } from "@shared/schema";
@@ -297,16 +297,17 @@ export default function Home() {
       };
     }
 
-    const activeContacts = contacts.filter(c => {
+    // Active Waitlist = only contacts in WL column (100, 101, 102)
+    const waitlistContacts = contacts.filter(c => {
       const statusCode = getContactStatusCode(c);
-      return isActiveStatus(statusCode);
+      return (STATUS_UMBRELLAS.WL.codes as readonly number[]).includes(statusCode);
     });
 
-    const totalActive = activeContacts.length;
+    const totalActive = waitlistContacts.length;
     const avgWaitDays = totalActive > 0
-      ? Math.round(activeContacts.reduce((sum, c) => sum + (c.daysOnWaitlist || 0), 0) / totalActive)
+      ? Math.round(waitlistContacts.reduce((sum, c) => sum + (c.daysOnWaitlist || 0), 0) / totalActive)
       : 0;
-    const over60Days = activeContacts.filter(c => (c.daysOnWaitlist || 0) >= 60).length;
+    const over60Days = waitlistContacts.filter(c => (c.daysOnWaitlist || 0) >= 60).length;
     const readyToSchedule = contacts.filter(c => getContactStatusCode(c) === 200).length;
 
     return { totalActive, avgWaitDays, over60Days, readyToSchedule };
@@ -349,7 +350,8 @@ export default function Home() {
     const over60Days = filteredContacts
       .filter(c => {
         const statusCode = getContactStatusCode(c);
-        return (c.daysOnWaitlist || 0) >= 60 && isActiveStatus(statusCode);
+        // Only include contacts in WL column (100, 101, 102) for Over 60 Days
+        return (c.daysOnWaitlist || 0) >= 60 && (STATUS_UMBRELLAS.WL.codes as readonly number[]).includes(statusCode);
       })
       .sort(sortByUrgency);
 
