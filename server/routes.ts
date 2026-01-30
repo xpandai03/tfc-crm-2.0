@@ -2034,6 +2034,12 @@ export async function registerRoutes(
           name = nameCorrections[name];
         }
 
+        // Skip providers that should be excluded from the list
+        const excludedProviders = ["Vera Molina"];
+        if (excludedProviders.includes(name)) {
+          continue;
+        }
+
         const location = row[1]?.toString().trim() || "";
 
         // Extract specialties for each age group (preserve raw values)
