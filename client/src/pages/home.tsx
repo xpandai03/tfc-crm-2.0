@@ -450,19 +450,19 @@ export default function Home() {
           <MetricCard
             label="Active Waitlist"
             value={safeNumber(metrics.totalActive)}
-            tooltip="Total contacts in active pipeline (excludes declined/inactive)"
+            tooltip="Contacts in Waitlist column (New, Left Voicemail, Response Received)"
           />
           <MetricCard
             label="Avg Wait Time"
             value={metrics.avgWaitDays > 0 ? `${metrics.avgWaitDays}d` : "---"}
             variant="warning"
-            tooltip={`Calculated from ${metrics.totalActive} active contacts`}
+            tooltip={`Average days waiting across ${metrics.totalActive} waitlist contacts`}
           />
           <MetricCard
             label="Over 60 Days"
             value={safeNumber(metrics.over60Days)}
             variant="danger"
-            tooltip="Contacts waiting 60+ days require immediate follow-up"
+            tooltip="Waitlist contacts waiting 60+ days — requires immediate follow-up"
           />
           <MetricCard
             label="Ready to Schedule"
