@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useSearch, useLocation } from "wouter";
 import {
   DndContext,
   DragOverlay,
@@ -79,13 +80,35 @@ export default function Waitlist() {
   const { updateContactsSource, updateSyncTime, lastSyncTime } = useDataSource();
   const [activeCard, setActiveCard] = useState<WaitlistContact | null>(null);
   const [noteModalContact, setNoteModalContact] = useState<{ contactId: number; name: string } | null>(null);
+  const [, setLocation] = useLocation();
+
+  // Parse URL query params for drill-down filtering from Insights
+  const searchString = useSearch();
+  const urlParams = useMemo(() => {
+    const params = new URLSearchParams(searchString);
+    return {
+      insurance: params.get("insurance"),
+      modality: params.get("modality"),
+      status: params.get("status"),
+      umbrella: params.get("umbrella"),
+    };
+  }, [searchString]);
+
+  // Check if any filter params are present (for forcing list view)
+  const hasFilterParams = !!(urlParams.insurance || urlParams.modality || urlParams.status || urlParams.umbrella);
 
   // Derive author initials from authenticated user
   const authorInitials = getAuthorInitials(user?.name);
 
   // View mode state - persisted in localStorage
+  // Force list view when URL filter params are present
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    // If URL has filter params, force list view
     if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("insurance") || params.get("modality") || params.get("status") || params.get("umbrella")) {
+        return "list";
+      }
       const saved = localStorage.getItem(VIEW_MODE_KEY);
       if (saved === "kanban" || saved === "list") {
         return saved;
@@ -94,10 +117,21 @@ export default function Waitlist() {
     return "kanban";
   });
 
-  // Persist view mode to localStorage
+  // Force list view when filter params are added via navigation
+  useEffect(() => {
+    if (hasFilterParams && viewMode !== "list") {
+      setViewMode("list");
+    }
+  }, [hasFilterParams, viewMode]);
+
+  // Persist view mode to localStorage (only when not filter-driven)
   const handleViewModeChange = (mode: ViewMode) => {
     setViewMode(mode);
     localStorage.setItem(VIEW_MODE_KEY, mode);
+    // Clear URL params when switching views manually
+    if (hasFilterParams) {
+      setLocation("/waitlist");
+    }
   };
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -128,10 +162,15 @@ export default function Waitlist() {
   const allContacts = contactsData?.contacts;
 
   // Filter contacts by ownership if toggle is enabled
+  // Normalize both sides: trim whitespace, lowercase, treat empty string as unassigned
   const contacts = useMemo(() => {
     if (!allContacts || allContacts.length === 0) return allContacts;
     if (!showOnlyMine || !user?.email) return allContacts;
-    return allContacts.filter(c => c.assignedTo?.toLowerCase() === user.email?.toLowerCase());
+    const normalizedUserEmail = user.email.trim().toLowerCase();
+    return allContacts.filter(c => {
+      const assigned = c.assignedTo?.trim().toLowerCase();
+      return assigned && assigned === normalizedUserEmail;
+    });
   }, [allContacts, showOnlyMine, user?.email]);
 
   // Waitlist page is authoritative over its own data source
@@ -532,6 +571,7 @@ export default function Waitlist() {
                     color={column.color as "slate" | "amber" | "purple" | "red"}
                     className="h-[calc(100vh-220px)] min-h-[400px]"
                     currentUserEmail={user?.email}
+                    isInactiveColumn={column.id === "INS"}
                   />
                 ))}
                 {unknownContacts.length > 0 && (
@@ -556,7 +596,14 @@ export default function Waitlist() {
             </DragOverlay>
           </DndContext>
         ) : (
-          <WaitlistListView contacts={contacts} currentUserEmail={user?.email} />
+          <WaitlistListView 
+            contacts={contacts} 
+            currentUserEmail={user?.email}
+            initialInsuranceFilter={urlParams.insurance}
+            initialModalityFilter={urlParams.modality}
+            initialStatusFilter={urlParams.status}
+            initialUmbrellaFilter={urlParams.umbrella}
+          />
         )}
       </div>
 

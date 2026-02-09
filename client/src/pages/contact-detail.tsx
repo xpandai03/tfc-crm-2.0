@@ -39,14 +39,15 @@ import {
   Users,
   Bell,
 } from "lucide-react";
-import { getContactSnapshot, updateContactStatus, addNoteToContact, createReminder, type WithSource } from "@/lib/api";
+import { getContactSnapshot, updateContactStatus, addNoteToContact, createReminder, assignContact, type WithSource } from "@/lib/api";
 import { ReminderModal } from "@/components/ui/reminder-modal";
+import { SendEmailModal } from "@/components/ui/send-email-modal";
 import { AssignmentSelector } from "@/components/ui/assignment-selector";
 import { useDataSource } from "@/lib/data-source-context";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
-import type { ContactSnapshot } from "@shared/schema";
-import { buildTimelineEvents } from "@/lib/timeline";
+import type { ContactSnapshot, WaitlistContact } from "@shared/schema";
+import { buildTimelineEvents, formatFullDate } from "@/lib/timeline";
 import { ProviderMatchingModal } from "@/components/ui/provider-matching-modal";
 import {
   STATUS_UMBRELLAS,
@@ -122,8 +123,88 @@ export default function ContactDetail() {
   const [newNote, setNewNote] = useState("");
   const [showProviderMatching, setShowProviderMatching] = useState(false);
   const [showReminderModal, setShowReminderModal] = useState(false);
+  const [showSendEmailModal, setShowSendEmailModal] = useState(false);
   const [isCreatingReminder, setIsCreatingReminder] = useState(false);
   const noteTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Optimistic assignment state - tracks the UI value independently from query cache
+  const [optimisticAssignee, setOptimisticAssignee] = useState<string | null | undefined>(undefined);
+  const [isAssigning, setIsAssigning] = useState(false);
+
+  // Sync optimistic state with server data when it changes (and we're not in the middle of an assignment)
+  useEffect(() => {
+    if (!isAssigning && contact?.assignedTo !== undefined) {
+      setOptimisticAssignee(contact.assignedTo);
+    }
+  }, [contact?.assignedTo, isAssigning]);
+
+  // The displayed assignee value - use optimistic state if set, otherwise fall back to contact data
+  const displayedAssignee = optimisticAssignee !== undefined ? optimisticAssignee : (contact?.assignedTo || null);
+
+  // Assignment handler with optimistic update and rollback
+  const handleAssignmentChange = async (newAssignee: string | null) => {
+    if (!contactId) return;
+
+    const previousAssignee = displayedAssignee;
+
+    // Optimistic update - immediately show the new value
+    setOptimisticAssignee(newAssignee);
+    setIsAssigning(true);
+
+    // Show pending toast
+    const toastRef = toast({
+      title: "Updating assignment...",
+      description: newAssignee ? `Assigning to ${newAssignee}` : "Removing assignment",
+    });
+
+    try {
+      await assignContact(contactId, newAssignee);
+
+      // Success - update toast
+      toastRef.update({
+        id: toastRef.id,
+        title: "Assignment updated",
+        description: newAssignee ? `Assigned to ${newAssignee}` : "Unassigned",
+      });
+      setTimeout(() => toastRef.dismiss(), 2000);
+
+      // Optimistically update board cache so "Assigned to Me" filter reflects
+      // the change immediately, even if n8n hasn't propagated yet
+      const normalizedAssignee = newAssignee?.trim() || undefined;
+      queryClient.setQueryData<{ contacts: WaitlistContact[]; _source?: string }>(
+        ["/api/get-waitlist-board"],
+        (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            contacts: old.contacts.map(c =>
+              c.contactId === contactId ? { ...c, assignedTo: normalizedAssignee } : c
+            ),
+          };
+        }
+      );
+
+      // Invalidate queries to sync with server (will refetch in background)
+      queryClient.invalidateQueries({ queryKey: ["/api/contact", contactId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/staff-list"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/get-waitlist-board"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"] });
+    } catch (error) {
+      // Rollback on error
+      setOptimisticAssignee(previousAssignee);
+
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      toastRef.update({
+        id: toastRef.id,
+        title: "Assignment failed",
+        description: `Could not update record. ${errorMessage}`,
+        variant: "destructive",
+      });
+      setTimeout(() => toastRef.dismiss(), 5000);
+    } finally {
+      setIsAssigning(false);
+    }
+  };
 
   // Quick Action: prefill note and focus textarea
   const prefillNote = (text: string) => {
@@ -363,6 +444,26 @@ export default function ContactDetail() {
     }
   }, [contact, contactData?._source]);
 
+  // Derive "Last Contact" date from most recent note in timeline
+  // Falls back to contact.lastContact if no timeline notes exist
+  const derivedLastContact = useMemo(() => {
+    // First check if contact has an explicit lastContact value
+    if (contact?.lastContact) {
+      return contact.lastContact;
+    }
+
+    // Find the most recent note event (not milestone) from timeline
+    const mostRecentNote = timelineEvents.find(
+      (event) => event.type === "note" && event.timestamp
+    );
+
+    if (mostRecentNote?.timestamp) {
+      return formatFullDate(mostRecentNote.timestamp);
+    }
+
+    return null;
+  }, [contact?.lastContact, timelineEvents]);
+
   // Check if we have enough data for Quick Actions
   const hasEmail = !!contact?.email;
   const hasPhone = !!contact?.phone;
@@ -595,7 +696,7 @@ export default function ContactDetail() {
                     <Skeleton className="h-5 w-24" />
                   ) : (
                     <p className="text-sm font-medium text-foreground" data-testid="text-last-contact">
-                      {contact?.lastContact || "N/A"}
+                      {derivedLastContact || "N/A"}
                     </p>
                   )}
                 </CardContent>
@@ -611,11 +712,9 @@ export default function ContactDetail() {
                   ) : contactId ? (
                     <AssignmentSelector
                       contactId={contactId}
-                      currentAssignee={contact?.assignedTo || null}
-                      onAssignmentChange={() => {
-                        // Refetch contact data to reflect the change
-                        queryClient.invalidateQueries({ queryKey: ["/api/contact", contactId] });
-                      }}
+                      value={displayedAssignee}
+                      onChange={handleAssignmentChange}
+                      isLoading={isAssigning}
                     />
                   ) : (
                     <p className="text-sm font-medium text-foreground" data-testid="text-assigned-to">
@@ -700,7 +799,7 @@ export default function ContactDetail() {
                 </CardHeader>
                 <CardContent className="space-y-4 text-sm">
                   {/* Intake Details Section */}
-                  {(contact?.requestingFor || contact?.reasonForSeeking || contact?.formCompletedBy || contact?.modality) && (
+                  {(contact?.requestingFor || contact?.reasonForSeeking || contact?.reasonForTherapy || contact?.formCompletedBy || contact?.modality) && (
                     <div className="space-y-2">
                       <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Intake Details</h4>
                       {contact.requestingFor && (
@@ -713,6 +812,12 @@ export default function ContactDetail() {
                         <div>
                           <span className="text-muted-foreground text-xs">Reason:</span>
                           <p className="font-medium text-foreground">{contact.reasonForSeeking}</p>
+                        </div>
+                      )}
+                      {contact.reasonForTherapy && (
+                        <div>
+                          <span className="text-muted-foreground text-xs">Reason(s) for Therapy:</span>
+                          <p className="font-medium text-foreground">{contact.reasonForTherapy}</p>
                         </div>
                       )}
                       {contact.modality && (
@@ -904,7 +1009,7 @@ export default function ContactDetail() {
                   )}
 
                   {/* Empty state if no intake fields */}
-                  {!contact?.requestingFor && !contact?.reasonForSeeking && !contact?.formCompletedBy &&
+                  {!contact?.requestingFor && !contact?.reasonForSeeking && !contact?.reasonForTherapy && !contact?.formCompletedBy &&
                    !contact?.modality && !contact?.insurancePayer && !contact?.referralSource &&
                    !contact?.priorServices && !contact?.patientDob && !contact?.gender &&
                    !contact?.streetAddress && !contact?.city && !contact?.preferredContact &&
@@ -929,7 +1034,7 @@ export default function ContactDetail() {
                             className="w-full justify-start"
                             size="sm"
                             disabled={!hasEmail || isLoading}
-                            onClick={() => prefillNote(`Sent an email to ${displayName}.`)}
+                            onClick={() => setShowSendEmailModal(true)}
                             data-testid="button-send-email"
                           >
                             <Mail className="h-4 w-4 mr-2" />
@@ -1027,6 +1132,30 @@ export default function ContactDetail() {
         userEmail={user?.email || ""}
         onSubmit={handleCreateReminder}
         isSubmitting={isCreatingReminder}
+      />
+
+      {/* Send Email Modal */}
+      <SendEmailModal
+        isOpen={showSendEmailModal}
+        onClose={() => setShowSendEmailModal(false)}
+        contact={contact || null}
+        userEmail={user?.email || ""}
+        onSend={(result) => {
+          if (result.success) {
+            toast({
+              title: "Email sent",
+              description: `Email sent successfully to ${contact?.name}`,
+            });
+            // Refetch contact data to update timeline
+            queryClient.invalidateQueries({ queryKey: ["/api/contact", contactId] });
+          } else {
+            toast({
+              title: "Failed to send email",
+              description: result.error || "An error occurred",
+              variant: "destructive",
+            });
+          }
+        }}
       />
     </PageLayout>
   );

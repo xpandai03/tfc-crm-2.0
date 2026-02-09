@@ -564,11 +564,15 @@ export async function registerRoutes(
 
             // Assignment and notes
             // Check multiple sources: n8n snapshot, board data (may have different field names)
-            assignedTo: (detailed.assignedTo as string)
-              || (detailed["Admin Assigned To Contact"] as string)
-              || (contact.assignedTo as string)
-              || (contact["Admin Assigned To Contact"] as string)
-              || null,
+            // Normalize: trim whitespace, convert empty string to null
+            assignedTo: (() => {
+              const raw = (detailed.assignedTo as string)
+                || (detailed["Admin Assigned To Contact"] as string)
+                || (contact.assignedTo as string)
+                || (contact["Admin Assigned To Contact"] as string)
+                || null;
+              return typeof raw === "string" && raw.trim() !== "" ? raw.trim() : null;
+            })(),
             notes: parseNotesFromLastNote(detailed.lastNote as string | undefined),
           };
 
@@ -1287,8 +1291,14 @@ export async function registerRoutes(
                 // Normalize dateAdded from Excel serial to ISO format (YYYY-MM-DD)
                 const dateAdded = normalizeExcelDate(c.dateAdded);
                 
+                // Normalize assignedTo: trim whitespace, convert empty string to null
+                const assignedTo = typeof c.assignedTo === "string" && c.assignedTo.trim() !== ""
+                  ? c.assignedTo.trim()
+                  : null;
+
                 return {
                   ...c,
+                  assignedTo: assignedTo || undefined, // null → undefined for optional field
                   insurancePayer: insurancePayer ? String(insurancePayer).trim() : undefined, // Convert null to undefined for optional field
                   modality: modality ? String(modality).trim() : undefined, // Convert null to undefined for optional field
                   dateAdded: dateAdded || null, // Normalized date (YYYY-MM-DD) or null
@@ -1409,10 +1419,18 @@ export async function registerRoutes(
               console.warn(`[BOARD][DATA_INTEGRITY] ${missingStatusCode.length} contacts missing statusCode:`, missingStatusCode.slice(0, 5).map((c: any) => c.name || c.contactId));
             }
 
+            // Normalize assignedTo: trim whitespace, convert empty string to null
+            data.contacts = data.contacts.map((c: any) => ({
+              ...c,
+              assignedTo: typeof c.assignedTo === "string" && c.assignedTo.trim() !== ""
+                ? c.assignedTo.trim()
+                : null,
+            }));
+
             // Populate server-side cache for contact-snapshot lookups
             // This reduces duplicate n8n calls when navigating from list to detail view
             setBoardCache({ contacts: data.contacts });
-            
+
             console.log("[BOARD] Returning live data with _source:", source, "and", data.contacts.length, "contacts");
           } else {
             console.warn("[BOARD] Contacts field is missing or not an array");
@@ -1779,7 +1797,12 @@ export async function registerRoutes(
   // Updates Excel "Assigned To" column via n8n webhook
   app.post("/api/assign-contact", async (req, res) => {
     try {
-      const { contactId, assignedTo } = req.body;
+      const { contactId, assignedTo: rawAssignedTo } = req.body;
+
+      // Normalize assignedTo: trim whitespace, convert empty string to null
+      const assignedTo = typeof rawAssignedTo === "string" && rawAssignedTo.trim() !== ""
+        ? rawAssignedTo.trim()
+        : null;
 
       // Validate contactId
       if (contactId === undefined || typeof contactId !== "number") {
@@ -1787,13 +1810,10 @@ export async function registerRoutes(
       }
 
       // Validate assignedTo is valid email or null
-      if (assignedTo !== null && assignedTo !== undefined) {
-        if (typeof assignedTo !== "string") {
-          return res.status(400).json({ error: "assignedTo must be a string (email) or null" });
-        }
+      if (assignedTo !== null) {
         // Basic email validation
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (assignedTo.trim() !== "" && !emailRegex.test(assignedTo)) {
+        if (!emailRegex.test(assignedTo)) {
           return res.status(400).json({ error: "assignedTo must be a valid email address" });
         }
       }
@@ -2109,6 +2129,264 @@ export async function registerRoutes(
       return res.status(500).json({
         error: "Failed to fetch provider data",
         message: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  });
+
+  // ============================================================================
+  // Email Automation API (v1 - Admin-Triggered Only)
+  // ============================================================================
+  // Manual email sending with templated messages.
+  // - NO auto-sending: all emails require explicit admin action
+  // - ECC soft-gate: warns if consent missing but doesn't block
+  // - Full audit logging in Activity Timeline
+  // ============================================================================
+
+  // Import email service functions
+  const {
+    getTemplateList,
+    renderTemplate,
+    sendTemplatedEmail,
+    getEccStatus,
+    validateEmailServiceConfig,
+  } = await import("./email/service");
+
+  // Log email service configuration status at startup
+  const emailConfig = validateEmailServiceConfig();
+  if (emailConfig.warnings.length > 0) {
+    console.warn("[email-api] Email service warnings:");
+    emailConfig.warnings.forEach((w) => console.warn(`  - ${w}`));
+  } else {
+    console.log("[email-api] Email service configured correctly");
+  }
+
+  // GET /api/email-templates - List available templates for dropdown
+  app.get("/api/email-templates", (_req, res) => {
+    try {
+      const templates = getTemplateList();
+      console.log(`[email-api] Returning ${templates.length} templates`);
+      return res.json({ templates });
+    } catch (error) {
+      console.error("[email-api] Error fetching templates:", error);
+      return res.status(500).json({ error: "Failed to fetch email templates" });
+    }
+  });
+
+  // POST /api/email-preview - Render template preview with contact data
+  app.post("/api/email-preview", async (req, res) => {
+    try {
+      const { contactId, templateId } = req.body;
+
+      // Validate required fields
+      if (!contactId || typeof contactId !== "number") {
+        return res.status(400).json({ error: "contactId (number) is required" });
+      }
+      if (!templateId || typeof templateId !== "string") {
+        return res.status(400).json({ error: "templateId (string) is required" });
+      }
+
+      // Fetch FULL contact snapshot (not board cache - board doesn't have email)
+      let contact: Record<string, unknown> | null = null;
+
+      if (DATA_MODE === "live") {
+        // Always fetch full snapshot for email - board cache doesn't include email field
+        try {
+          const snapshotResponse = await fetch(N8N_ENDPOINTS.contactSnapshot, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ contactId }),
+          });
+          if (snapshotResponse.ok) {
+            const rawData = await snapshotResponse.json();
+            // CRITICAL: n8n response wraps contact data in "contact" object
+            contact = rawData.contact || rawData || null;
+            console.log(`[email-preview] Fetched contact ${contactId}, email: ${contact?.email || "MISSING"}`);
+          }
+        } catch (err) {
+          console.warn("[email-preview] Failed to fetch contact:", err);
+        }
+      } else {
+        // Mock mode - use full mock contact data (includes email)
+        contact = mockContacts.find((_, index) => index + 1 === contactId) || null;
+        if (contact) {
+          // Add contactId to mock data for consistency
+          contact = { ...contact, contactId };
+        }
+      }
+
+      if (!contact) {
+        return res.status(404).json({ error: "Contact not found" });
+      }
+
+      // Build contact for email rendering
+      const contactForEmail = {
+        contactId: contactId,
+        name: String(contact.name || ""),
+        email: contact.email as string | null,
+        modality: contact.modality as string | null,
+        city: contact.city as string | null,
+        serviceRequested: String(contact.serviceRequested || ""),
+        eccConsent: contact.eccConsent as boolean | null,
+      };
+
+      console.log(`[email-preview] Built contactForEmail: email=${contactForEmail.email}, name=${contactForEmail.name}`);
+
+      // Render preview
+      const rendered = renderTemplate(templateId, contactForEmail);
+      if (!rendered) {
+        return res.status(400).json({ error: `Template not found: ${templateId}` });
+      }
+
+      // Include ECC status in response
+      const eccStatus = getEccStatus(contactForEmail);
+
+      console.log(`[email-preview] Rendered "${templateId}" for contact ${contactId} (ECC: ${eccStatus})`);
+
+      return res.json({
+        ...rendered,
+        eccStatus,
+      });
+    } catch (error) {
+      console.error("[email-preview] Error:", error);
+      return res.status(500).json({ error: "Failed to generate email preview" });
+    }
+  });
+
+  // POST /api/send-email - Send email and log to timeline
+  app.post("/api/send-email", async (req, res) => {
+    try {
+      const { contactId, templateId, eccStatus } = req.body;
+
+      // Validate required fields
+      if (!contactId || typeof contactId !== "number") {
+        return res.status(400).json({ error: "contactId (number) is required" });
+      }
+      if (!templateId || typeof templateId !== "string") {
+        return res.status(400).json({ error: "templateId (string) is required" });
+      }
+      if (!eccStatus || (eccStatus !== "present" && eccStatus !== "missing")) {
+        return res.status(400).json({ error: "eccStatus ('present' | 'missing') is required" });
+      }
+
+      // Get authenticated user's email
+      const userEmail = (req as unknown as { user?: { email?: string } }).user?.email || "unknown";
+
+      // Fetch FULL contact snapshot (not board cache - board doesn't have email)
+      let contact: Record<string, unknown> | null = null;
+
+      if (DATA_MODE === "live") {
+        // Always fetch full snapshot for email - board cache doesn't include email field
+        try {
+          const snapshotResponse = await fetch(N8N_ENDPOINTS.contactSnapshot, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ contactId }),
+          });
+          if (snapshotResponse.ok) {
+            const rawData = await snapshotResponse.json();
+            // CRITICAL: n8n response wraps contact data in "contact" object
+            contact = rawData.contact || rawData || null;
+            console.log(`[send-email] Fetched contact ${contactId}, email: ${contact?.email || "MISSING"}`);
+          }
+        } catch (err) {
+          console.warn("[send-email] Failed to fetch contact:", err);
+        }
+      } else {
+        // Mock mode - use full mock contact data (includes email)
+        contact = mockContacts.find((_, index) => index + 1 === contactId) || null;
+        if (contact) {
+          // Add contactId to mock data for consistency
+          contact = { ...contact, contactId };
+        }
+      }
+
+      if (!contact) {
+        return res.status(404).json({ error: "Contact not found" });
+      }
+
+      // Build contact for email sending
+      const contactForEmail = {
+        contactId: contactId,
+        name: String(contact.name || ""),
+        email: contact.email as string | null,
+        modality: contact.modality as string | null,
+        city: contact.city as string | null,
+        serviceRequested: String(contact.serviceRequested || ""),
+        eccConsent: contact.eccConsent as boolean | null,
+      };
+
+      // Defensive logging before validation
+      console.log(`[send-email] Preparing to send:`, {
+        contactId,
+        recipientEmail: contactForEmail.email,
+        recipientName: contactForEmail.name,
+        adminEmail: userEmail,
+        eccStatus,
+      });
+
+      // Check if contact has email - ONLY hard block
+      if (!contactForEmail.email) {
+        console.error(`[send-email] BLOCKED: Contact ${contactId} has no email address`);
+        return res.status(400).json({ error: "Contact has no email address" });
+      }
+
+      // Send the email
+      const sendResult = await sendTemplatedEmail({
+        templateId,
+        contact: contactForEmail,
+        sentByEmail: userEmail,
+        eccStatus,
+      });
+
+      // Log to Activity Timeline via n8n add-note endpoint
+      // Format: "[Email] Template Name sent (ECC: status)"
+      const templates = getTemplateList();
+      const templateName = templates.find((t) => t.id === templateId)?.name || templateId;
+      const noteContent = `[Email] ${templateName} sent${eccStatus === "missing" ? " (ECC missing)" : ""}`;
+
+      if (DATA_MODE === "live" && sendResult.success) {
+        try {
+          const timestamp = new Date().toISOString();
+          const author = userEmail.split("@")[0].substring(0, 3).toUpperCase();
+
+          await fetch(N8N_ENDPOINTS.addNote, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contactId,
+              note: noteContent,
+              author,
+              timestamp,
+            }),
+          });
+          console.log(`[send-email] Timeline note logged for contact ${contactId}`);
+        } catch (noteError) {
+          // Log error but don't fail the response - email was sent successfully
+          console.error("[send-email] Failed to log timeline note:", noteError);
+        }
+      }
+
+      console.log(
+        `[send-email] ${sendResult.success ? "SUCCESS" : "FAILED"}: ` +
+        `"${templateName}" to ${contactForEmail.email} by ${userEmail} (ECC: ${eccStatus})`
+      );
+
+      if (!sendResult.success) {
+        return res.status(502).json({
+          success: false,
+          error: sendResult.error || "Failed to send email",
+        });
+      }
+
+      return res.json({
+        success: true,
+        emailId: sendResult.emailId,
+      });
+    } catch (error) {
+      console.error("[send-email] Error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : "Failed to send email",
       });
     }
   });
