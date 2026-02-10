@@ -105,6 +105,7 @@ const N8N_ENDPOINTS = {
   updateStatus: process.env.N8N_UPDATE_CONTACT_STATUS_URL || "https://n8n-familyconnection.agentglu.agency/webhook/update-contact-status",
   addNote: process.env.N8N_ADD_CONTACT_NOTE_URL || "https://n8n-familyconnection.agentglu.agency/webhook/add-contact-note",
   assignContact: process.env.N8N_ASSIGN_CONTACT_URL || "https://n8n-familyconnection.agentglu.agency/webhook/assign-contact",
+  unassignContact: process.env.N8N_UNASSIGN_CONTACT_URL || "https://n8n-familyconnection.agentglu.agency/webhook/f4414c29-2ae4-4ca3-b400-d6da62ff7812",
 } as const;
 
 // Mock data for development
@@ -1827,9 +1828,14 @@ export async function registerRoutes(
             assignedTo: assignedTo || null,
           };
 
-          console.log(`[assign-contact] Calling n8n with payload:`, payload);
+          // Use dedicated unassign webhook when clearing assignment
+          const webhookUrl = assignedTo === null
+            ? N8N_ENDPOINTS.unassignContact
+            : N8N_ENDPOINTS.assignContact;
 
-          const response = await fetch(N8N_ENDPOINTS.assignContact, {
+          console.log(`[assign-contact] Calling n8n ${assignedTo === null ? "unassign" : "assign"} with payload:`, payload);
+
+          const response = await fetch(webhookUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
