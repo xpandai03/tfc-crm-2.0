@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useAuth } from "@/lib/auth-context";
 import {
   STATUS_UMBRELLAS,
   STATUS_LABELS,
@@ -45,11 +44,7 @@ interface StatusLegendModalProps {
 }
 
 export function StatusLegendModal({ trigger }: StatusLegendModalProps) {
-  const { user } = useAuth();
-  const isPM = user?.email?.toLowerCase() === "chantelle@tfc.health";
-  const umbrellaOrder: UmbrellaId[] = isPM
-    ? ["WL", "PS", "PMR", "INS"]
-    : ["WL", "PS", "INS"];
+  const umbrellaOrder: UmbrellaId[] = ["WL", "PS", "PMR", "INS"];
 
   return (
     <Dialog>
