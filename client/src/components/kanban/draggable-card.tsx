@@ -6,8 +6,27 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { OwnerBadge } from "@/components/ui/owner-badge";
 import { cn } from "@/lib/utils";
-import { Plus, Clock } from "lucide-react";
+import { normalizeInsurance } from "@/lib/insurance-utils";
+import { Plus, Clock, Shield, Video, FileText, Brain } from "lucide-react";
 import type { WaitlistContact } from "@shared/schema";
+
+/** Normalize modality/location for display (same logic as priority-card) */
+function formatModality(rawModality: string | null | undefined): string {
+  if (!rawModality) return "Unknown";
+  const trimmed = rawModality.trim();
+  if (!trimmed) return "Unknown";
+  const lower = trimmed.toLowerCase();
+  if (lower.includes("telehealth") || lower === "th") return "Telehealth";
+  if (lower.includes("hybrid")) return "Hybrid";
+  if (lower.includes("in person") || lower.includes("in-person")) {
+    if (lower.includes("abq") || lower.includes("albuquerque")) return "In Person - ABQ";
+    if (lower.includes("rr") || lower.includes("rio rancho")) return "In Person - Rio Rancho";
+    if (lower.includes("los lunas")) return "In Person - Los Lunas";
+    return "In Person";
+  }
+  if (lower.includes("flex")) return "Flexible";
+  return trimmed;
+}
 
 interface DraggableCardProps {
   contact: WaitlistContact;
@@ -25,6 +44,30 @@ export function DraggableCard({ contact, onAddNote, isDragging = false, currentU
 
   const isUrgent = contact.daysOnWaitlist > 60;
   const isWarning = contact.daysOnWaitlist > 30 && contact.daysOnWaitlist <= 60;
+
+  // Hover expansion data
+  const insurance = normalizeInsurance(contact?.insurancePayer);
+  const modality = formatModality(contact?.modality);
+  const service = contact?.serviceRequested || "Unknown";
+
+  // Reason display — always show, with explicit legacy fallback
+  // Cast to unknown for runtime safety: n8n may send string instead of array
+  const reasonDisplay = (() => {
+    const raw: unknown = contact?.reasonForTherapy;
+    if (Array.isArray(raw) && raw.length > 0) {
+      const valid = (raw as string[]).map(r => r?.trim()).filter(Boolean);
+      if (valid.length === 0) return null;
+      if (valid.length <= 2) return valid.join(", ");
+      return `${valid[0]}, ${valid[1]} +${valid.length - 2} more`;
+    }
+    if (typeof raw === "string" && raw.trim()) {
+      const parts = raw.split(",").map(s => s.trim()).filter(Boolean);
+      if (parts.length === 0) return null;
+      if (parts.length <= 2) return parts.join(", ");
+      return `${parts[0]}, ${parts[1]} +${parts.length - 2} more`;
+    }
+    return null;
+  })();
 
   const style = transform
     ? {
@@ -107,6 +150,60 @@ export function DraggableCard({ contact, onAddNote, isDragging = false, currentU
               )}
             </div>
           </div>
+
+          {/* Hover context: Intake decision data (hidden during drag) */}
+          {!isDragging && (
+            <div className="grid grid-rows-[0fr] group-hover:grid-rows-[1fr] transition-[grid-template-rows] duration-150">
+              <div className="overflow-hidden">
+                <div className="pt-2 mt-2 border-t border-border/50 space-y-1">
+                  {/* Insurance */}
+                  <div className="flex items-center gap-1.5 text-[10px]">
+                    <Shield className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                    <span className="text-muted-foreground">Insurance:</span>
+                    <span className={cn(
+                      "font-medium truncate",
+                      insurance === "Unknown" ? "text-muted-foreground italic" : "text-foreground"
+                    )}>
+                      {insurance}
+                    </span>
+                  </div>
+                  {/* Modality */}
+                  <div className="flex items-center gap-1.5 text-[10px]">
+                    <Video className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                    <span className="text-muted-foreground">Modality:</span>
+                    <span className={cn(
+                      "font-medium truncate",
+                      modality === "Unknown" ? "text-muted-foreground italic" : "text-foreground"
+                    )}>
+                      {modality}
+                    </span>
+                  </div>
+                  {/* Service */}
+                  <div className="flex items-center gap-1.5 text-[10px]">
+                    <FileText className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                    <span className="text-muted-foreground">Service:</span>
+                    <span className={cn(
+                      "font-medium truncate",
+                      service === "Unknown" ? "text-muted-foreground italic" : "text-foreground"
+                    )}>
+                      {service}
+                    </span>
+                  </div>
+                  {/* Reason for Seeking Services — always shown */}
+                  <div className="flex items-center gap-1.5 text-[10px]">
+                    <Brain className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                    <span className="text-muted-foreground">Reason:</span>
+                    <span className={cn(
+                      "font-medium truncate",
+                      !reasonDisplay ? "text-muted-foreground italic" : "text-foreground"
+                    )}>
+                      {reasonDisplay || "Not collected (legacy intake)"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
