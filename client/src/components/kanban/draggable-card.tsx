@@ -1,5 +1,6 @@
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -7,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { OwnerBadge } from "@/components/ui/owner-badge";
 import { cn } from "@/lib/utils";
 import { normalizeInsurance } from "@/lib/insurance-utils";
-import { Plus, Clock, Shield, Video, FileText, Brain } from "lucide-react";
+import { getAttentionFlags } from "@/lib/api";
+import { Plus, Clock, Shield, Video, FileText, Brain, AlertTriangle } from "lucide-react";
 import type { WaitlistContact } from "@shared/schema";
 
 /** Normalize modality/location for display (same logic as priority-card) */
@@ -41,6 +43,14 @@ export function DraggableCard({ contact, onAddNote, isDragging = false, currentU
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
     id: contact.contactId.toString(), // contactId is now required - use it as the drag ID
   });
+
+  // Attention flag check (TanStack Query deduplicates — zero extra network cost)
+  const { data: flagsData } = useQuery({
+    queryKey: ["/api/attention-flags"],
+    queryFn: getAttentionFlags,
+    staleTime: 30_000,
+  });
+  const isFlagged = flagsData?.flags?.some(f => f.contactId === contact.contactId) ?? false;
 
   const isUrgent = contact.daysOnWaitlist > 60;
   const isWarning = contact.daysOnWaitlist > 30 && contact.daysOnWaitlist <= 60;
@@ -108,9 +118,14 @@ export function DraggableCard({ contact, onAddNote, isDragging = false, currentU
               className="flex-1 min-w-0"
               data-testid={`link-contact-${contact.name.toLowerCase().replace(/\s+/g, '-')}`}
             >
-              <p className="font-medium text-sm text-foreground truncate hover:underline">
-                {contact.name}
-              </p>
+              <div className="flex items-center gap-1">
+                <p className="font-medium text-sm text-foreground truncate hover:underline">
+                  {contact.name}
+                </p>
+                {isFlagged && (
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-500 flex-shrink-0" />
+                )}
+              </div>
             </Link>
             <Button
               size="icon"

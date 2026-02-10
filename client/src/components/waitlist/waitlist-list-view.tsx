@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
   Table,
@@ -21,7 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { ArrowUpDown, ArrowUp, ArrowDown, Search, X, EyeOff, Shield } from "lucide-react";
+import { ArrowUpDown, ArrowUp, ArrowDown, Search, X, EyeOff, Shield, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   STATUS_UMBRELLAS,
@@ -32,6 +33,7 @@ import {
   type UmbrellaId,
 } from "@/lib/status-config";
 import { normalizeInsurance } from "@/lib/insurance-utils";
+import { getAttentionFlags } from "@/lib/api";
 import type { WaitlistContact } from "@shared/schema";
 
 interface WaitlistListViewProps {
@@ -155,6 +157,17 @@ export function WaitlistListView({
   initialStatusFilter,
   initialUmbrellaFilter,
 }: WaitlistListViewProps) {
+  // Attention flags (TanStack Query deduplicates — zero extra network cost)
+  const { data: flagsData } = useQuery({
+    queryKey: ["/api/attention-flags"],
+    queryFn: getAttentionFlags,
+    staleTime: 30_000,
+  });
+  const flaggedIds = useMemo(() => {
+    if (!flagsData?.flags) return new Set<number>();
+    return new Set(flagsData.flags.map(f => f.contactId));
+  }, [flagsData]);
+
   // Filter state
   const [umbrellaFilter, setUmbrellaFilter] = useState<UmbrellaId | "all">(
     (initialUmbrellaFilter as UmbrellaId) || "all"
@@ -513,8 +526,14 @@ export function WaitlistListView({
                           {contact.name}
                         </span>
                       </Link>
+                      {flaggedIds.has(contact.contactId) && (
+                        <Badge variant="outline" className="ml-1.5 text-[10px] px-1 py-0 h-4 text-amber-600 border-amber-400/50 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-600/30">
+                          <AlertTriangle className="h-2.5 w-2.5 mr-0.5" />
+                          Attn
+                        </Badge>
+                      )}
                       {isInactive && (
-                        <Badge variant="outline" className="ml-2 text-[10px] px-1 py-0 h-4 text-muted-foreground border-muted-foreground/30">
+                        <Badge variant="outline" className="ml-1.5 text-[10px] px-1 py-0 h-4 text-muted-foreground border-muted-foreground/30">
                           Inactive
                         </Badge>
                       )}

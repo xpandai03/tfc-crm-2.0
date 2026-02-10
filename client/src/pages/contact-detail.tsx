@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import { FallbackBanner } from "@/components/ui/fallback-banner";
 import {
   Select,
@@ -35,11 +36,14 @@ import {
   Clock,
   Activity,
   AlertCircle,
+  AlertTriangle,
   FileText,
   Users,
   Bell,
+  MessageSquareWarning,
+  CheckCircle2,
 } from "lucide-react";
-import { getContactSnapshot, updateContactStatus, addNoteToContact, createReminder, assignContact, type WithSource } from "@/lib/api";
+import { getContactSnapshot, updateContactStatus, addNoteToContact, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, type WithSource, type IntakeComment } from "@/lib/api";
 import { ReminderModal } from "@/components/ui/reminder-modal";
 import { SendEmailModal } from "@/components/ui/send-email-modal";
 import { AssignmentSelector } from "@/components/ui/assignment-selector";
@@ -49,6 +53,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { ContactSnapshot, WaitlistContact } from "@shared/schema";
 import { buildTimelineEvents, formatFullDate } from "@/lib/timeline";
 import { ProviderMatchingModal } from "@/components/ui/provider-matching-modal";
+import { cn } from "@/lib/utils";
 import {
   STATUS_UMBRELLAS,
   STATUS_LABELS,
@@ -358,6 +363,71 @@ export default function ContactDetail() {
       }
     },
   });
+
+  // ============================================================================
+  // Intake Comments & Attention Flags
+  // ============================================================================
+  const [intakeComment, setIntakeComment] = useState("");
+
+  const { data: commentsData } = useQuery({
+    queryKey: ["/api/intake-comments", contactId],
+    queryFn: () => getIntakeComments(contactId!),
+    enabled: isValidId,
+  });
+
+  const { data: flagsData } = useQuery({
+    queryKey: ["/api/attention-flags"],
+    queryFn: getAttentionFlags,
+  });
+
+  const isContactFlagged = useMemo(() => {
+    if (!flagsData?.flags || !contactId) return false;
+    return flagsData.flags.some(f => f.contactId === contactId);
+  }, [flagsData, contactId]);
+
+  const intakeComments = commentsData?.comments || [];
+
+  const addIntakeCommentMutation = useMutation({
+    mutationFn: (params: { contactId: number; contactName: string; authorEmail: string; authorInitials: string; commentText: string }) =>
+      createIntakeComment(params),
+    onSuccess: () => {
+      toast({ title: "Comment added", description: "Intake comment saved and contact flagged for attention." });
+      setIntakeComment("");
+      queryClient.invalidateQueries({ queryKey: ["/api/intake-comments", contactId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/attention-flags"] });
+    },
+    onError: (error) => {
+      toast({ title: "Failed to add comment", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" });
+    },
+  });
+
+  const clearFlagMutation = useMutation({
+    mutationFn: (params: { contactId: number; clearedByEmail: string }) =>
+      clearAttentionFlag(params.contactId, params.clearedByEmail),
+    onSuccess: () => {
+      toast({ title: "Flag cleared", description: "Attention flag has been resolved." });
+      queryClient.invalidateQueries({ queryKey: ["/api/attention-flags"] });
+    },
+    onError: (error) => {
+      toast({ title: "Failed to clear flag", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" });
+    },
+  });
+
+  const handleAddIntakeComment = () => {
+    if (!contactId || !intakeComment.trim() || !user?.email) return;
+    addIntakeCommentMutation.mutate({
+      contactId,
+      contactName: contact?.name || "Unknown",
+      authorEmail: user.email,
+      authorInitials: authorInitials,
+      commentText: intakeComment.trim(),
+    });
+  };
+
+  const handleClearFlag = () => {
+    if (!contactId || !user?.email) return;
+    clearFlagMutation.mutate({ contactId, clearedByEmail: user.email });
+  };
 
   // Handle status change from dropdown
   const handleStatusChange = (statusCode: number) => {
@@ -787,7 +857,26 @@ export default function ContactDetail() {
               />
 
               {/* Intake Summary - Read-only intake state from Excel row (Phase 6.2) */}
-              <Card className="overflow-visible">
+              <Card className={cn("overflow-visible", isContactFlagged && "ring-2 ring-amber-400/50 dark:ring-amber-500/40")}>
+                {/* Attention Required banner */}
+                {isContactFlagged && (
+                  <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-800/50 rounded-t-lg">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                      <span className="text-sm font-medium text-amber-800 dark:text-amber-300">Attention Required</span>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                      onClick={handleClearFlag}
+                      disabled={clearFlagMutation.isPending}
+                    >
+                      <CheckCircle2 className="h-3 w-3 mr-1" />
+                      Mark Resolved
+                    </Button>
+                  </div>
+                )}
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-medium flex items-center gap-2">
                     <FileText className="h-4 w-4" />
@@ -1015,6 +1104,66 @@ export default function ContactDetail() {
                    !contact?.streetAddress && !contact?.city && !contact?.preferredContact &&
                    !contact?.rfsLink && !contact?.custody && (
                     <p className="text-muted-foreground text-xs italic">No intake data available</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Intake Comments — CRM-only coordination notes */}
+              <Card className="overflow-visible">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <MessageSquareWarning className="h-4 w-4" />
+                    Intake Comments
+                  </CardTitle>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    Flag issues for Excel correction
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {/* Comment input */}
+                  <div className="space-y-2">
+                    <Textarea
+                      placeholder="Describe what needs correction in Excel..."
+                      value={intakeComment}
+                      onChange={(e) => setIntakeComment(e.target.value)}
+                      className="min-h-[60px] resize-none text-sm"
+                    />
+                    <Button
+                      size="sm"
+                      variant="default"
+                      className="bg-amber-600 hover:bg-amber-700 text-white"
+                      disabled={!intakeComment.trim() || addIntakeCommentMutation.isPending}
+                      onClick={handleAddIntakeComment}
+                    >
+                      <AlertTriangle className="h-3 w-3 mr-1.5" />
+                      Flag & Comment
+                    </Button>
+                  </div>
+
+                  {/* Comment list */}
+                  {intakeComments.length > 0 && (
+                    <div className="space-y-2 pt-2 border-t border-border">
+                      {intakeComments.map((comment) => (
+                        <div key={comment.id} className="text-xs space-y-0.5 bg-muted/40 rounded-md p-2">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-foreground">{comment.authorInitials}</span>
+                            <span className="text-muted-foreground">
+                              {new Date(comment.createdAt + "Z").toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                hour: "numeric",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                          </div>
+                          <p className="text-foreground">{comment.commentText}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {intakeComments.length === 0 && (
+                    <p className="text-xs text-muted-foreground italic">No comments yet</p>
                   )}
                 </CardContent>
               </Card>
