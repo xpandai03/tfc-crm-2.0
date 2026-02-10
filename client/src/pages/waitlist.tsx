@@ -138,6 +138,9 @@ export default function Waitlist() {
   // Task ownership filter state
   const [showOnlyMine, setShowOnlyMine] = useState(false);
 
+  // PM Review column is only visible to Chantelle
+  const isPM = user?.email?.toLowerCase() === "chantelle@tfc.health";
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -161,17 +164,30 @@ export default function Waitlist() {
 
   const allContacts = contactsData?.contacts;
 
-  // Filter contacts by ownership if toggle is enabled
-  // Normalize both sides: trim whitespace, lowercase, treat empty string as unassigned
+  // Filter contacts: hide PMR-status contacts for non-PM users, then apply ownership filter
   const contacts = useMemo(() => {
     if (!allContacts || allContacts.length === 0) return allContacts;
-    if (!showOnlyMine || !user?.email) return allContacts;
-    const normalizedUserEmail = user.email.trim().toLowerCase();
-    return allContacts.filter(c => {
-      const assigned = c.assignedTo?.trim().toLowerCase();
-      return assigned && assigned === normalizedUserEmail;
-    });
-  }, [allContacts, showOnlyMine, user?.email]);
+    let filtered = allContacts;
+
+    // Hide PM Review contacts from non-PM users (visibility only — data untouched)
+    if (!isPM) {
+      filtered = filtered.filter(c => {
+        const code = c.statusCode ?? 0;
+        return !(code >= 300 && code < 400); // PMR status codes
+      });
+    }
+
+    // "Assigned to Me" filter — normalize both sides
+    if (showOnlyMine && user?.email) {
+      const normalizedUserEmail = user.email.trim().toLowerCase();
+      filtered = filtered.filter(c => {
+        const assigned = c.assignedTo?.trim().toLowerCase();
+        return assigned && assigned === normalizedUserEmail;
+      });
+    }
+
+    return filtered;
+  }, [allContacts, showOnlyMine, user?.email, isPM]);
 
   // Waitlist page is authoritative over its own data source
   // Use board response _source directly - ignore context state
@@ -561,7 +577,7 @@ export default function Waitlist() {
           >
             <ScrollArea className="w-full">
               <div className="flex gap-4 pb-4 min-w-max">
-                {PIPELINE_COLUMNS.map((column) => (
+                {PIPELINE_COLUMNS.filter(col => col.id !== "PMR" || isPM).map((column) => (
                   <DroppableColumn
                     key={column.id}
                     columnId={column.id}

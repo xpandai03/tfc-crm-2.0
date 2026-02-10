@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Link } from "wouter";
 import {
   Table,
@@ -19,20 +19,122 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowUpDown, ArrowUp, ArrowDown, Search, X } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { ArrowUpDown, ArrowUp, ArrowDown, Search, X, EyeOff, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   STATUS_UMBRELLAS,
   STATUS_LABELS,
   getUmbrellaForStatus,
   stringStatusToCode,
+  isActiveStatus,
   type UmbrellaId,
 } from "@/lib/status-config";
+import { normalizeInsurance } from "@/lib/insurance-utils";
 import type { WaitlistContact } from "@shared/schema";
 
 interface WaitlistListViewProps {
   contacts: WaitlistContact[];
   currentUserEmail?: string;
+  // Optional props for URL-driven filtering (drill-down from Insights)
+  initialInsuranceFilter?: string | null;
+  initialModalityFilter?: string | null;
+  initialStatusFilter?: string | null;
+  initialUmbrellaFilter?: string | null;
+}
+
+/**
+ * Modality normalization mapping (copied from insights.tsx for consistency)
+ * Maps form options and historical values to display categories
+ */
+const MODALITY_NORMALIZATION_MAP: Record<string, string> = {
+  // Hybrid
+  "hybrid": "Hybrid",
+  // In Person - Albuquerque (ABQ)
+  "in person - albuquerque": "In Person ABQ",
+  "in person-abq": "In Person ABQ",
+  "in person abq": "In Person ABQ",
+  "abq": "In Person ABQ",
+  "albuquerque": "In Person ABQ",
+  // In Person - Rio Rancho (RR)
+  "in person - rio rancho": "In Person RR",
+  "in person-rio rancho": "In Person RR",
+  "in person rr": "In Person RR",
+  "rio rancho": "In Person RR",
+  // In Person (generic)
+  "in person": "In Person",
+  "in person - los lunas": "In Person",
+  "in person - albuquerque or rio rancho": "In Person",
+  "in-person": "In Person",
+  "in person los lunas": "In Person",
+  // Telehealth
+  "telehealth": "Telehealth",
+  "th": "Telehealth",
+  "tele-health": "Telehealth",
+  "tele health": "Telehealth",
+  // Flexible/Flex
+  "flexible (open to any option)": "Flex",
+  "flexible": "Flex",
+  "flex": "Flex",
+  "open to any option": "Flex",
+};
+
+/**
+ * Normalize modality to canonical category (consistent with Insights aggregation)
+ */
+function normalizeModality(rawValue: string | null | undefined): string {
+  if (!rawValue) return "Unknown";
+  const trimmed = rawValue.trim();
+  if (!trimmed) return "Unknown";
+  const normalized = trimmed.toLowerCase();
+  return MODALITY_NORMALIZATION_MAP[normalized] || "Unknown";
+}
+
+// Format date for display: converts YYYY-MM-DD or Excel serial to MM/DD/YYYY
+function formatDateForDisplay(dateValue: string | number | null | undefined): string {
+  if (!dateValue) return "—";
+  
+  let dateStr: string | null = null;
+  
+  // Handle Excel serial numbers (like 45917, 45945)
+  if (typeof dateValue === "number" && dateValue > 15000 && dateValue < 80000) {
+    // Excel epoch is Dec 30, 1899
+    const excelEpoch = new Date(1899, 11, 30);
+    const date = new Date(excelEpoch.getTime() + dateValue * 24 * 60 * 60 * 1000);
+    dateStr = date.toISOString().split("T")[0]; // Convert to YYYY-MM-DD
+  } else if (typeof dateValue === "string") {
+    dateStr = dateValue;
+  } else {
+    return String(dateValue);
+  }
+  
+  // Parse YYYY-MM-DD format and convert to MM/DD/YYYY
+  const parts = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (parts) {
+    const [, year, month, day] = parts;
+    return `${month}/${day}/${year}`;
+  }
+  
+  // If already in MM/DD/YYYY format, return as-is
+  if (dateStr.match(/^\d{1,2}\/\d{1,2}\/\d{2,4}$/)) {
+    return dateStr;
+  }
+  
+  // Fallback: try to parse and format
+  try {
+    const date = new Date(dateStr);
+    if (!isNaN(date.getTime())) {
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      const year = date.getFullYear();
+      return `${month}/${day}/${year}`;
+    }
+  } catch {
+    // If parsing fails, return original
+  }
+  
+  return dateStr || "—";
 }
 
 type SortField = "daysOnWaitlist" | "dateAdded" | "name";
@@ -45,11 +147,31 @@ const umbrellaColors: Record<UmbrellaId, string> = {
   INS: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
 };
 
-export function WaitlistListView({ contacts, currentUserEmail }: WaitlistListViewProps) {
+export function WaitlistListView({ 
+  contacts, 
+  currentUserEmail,
+  initialInsuranceFilter,
+  initialModalityFilter,
+  initialStatusFilter,
+  initialUmbrellaFilter,
+}: WaitlistListViewProps) {
   // Filter state
-  const [umbrellaFilter, setUmbrellaFilter] = useState<UmbrellaId | "all">("all");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [umbrellaFilter, setUmbrellaFilter] = useState<UmbrellaId | "all">(
+    (initialUmbrellaFilter as UmbrellaId) || "all"
+  );
+  const [statusFilter, setStatusFilter] = useState<string>(initialStatusFilter || "all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [hideInactive, setHideInactive] = useState(true);
+  const [insuranceFilter, setInsuranceFilter] = useState<string>(initialInsuranceFilter || "all");
+  const [modalityFilter, setModalityFilter] = useState<string>(initialModalityFilter || "all");
+
+  // Update filters when initial props change (e.g., from URL navigation)
+  useEffect(() => {
+    if (initialInsuranceFilter) setInsuranceFilter(initialInsuranceFilter);
+    if (initialModalityFilter) setModalityFilter(initialModalityFilter);
+    if (initialStatusFilter) setStatusFilter(initialStatusFilter);
+    if (initialUmbrellaFilter) setUmbrellaFilter(initialUmbrellaFilter as UmbrellaId);
+  }, [initialInsuranceFilter, initialModalityFilter, initialStatusFilter, initialUmbrellaFilter]);
 
   // Sort state
   const [sortField, setSortField] = useState<SortField>("daysOnWaitlist");
@@ -73,11 +195,36 @@ export function WaitlistListView({ contacts, currentUserEmail }: WaitlistListVie
     return [...STATUS_UMBRELLAS[umbrellaFilter].codes];
   }, [umbrellaFilter]);
 
+  // Compute unique insurance options from contacts (normalized)
+  const availableInsurances = useMemo(() => {
+    const insuranceSet = new Set<string>();
+    for (const contact of contacts) {
+      const normalized = normalizeInsurance(contact.insurancePayer);
+      insuranceSet.add(normalized);
+    }
+    return Array.from(insuranceSet).sort();
+  }, [contacts]);
+
+  // Compute unique modality options from contacts (normalized for consistency with Insights)
+  const availableModalities = useMemo(() => {
+    const modalitySet = new Set<string>();
+    for (const contact of contacts) {
+      const normalized = normalizeModality(contact.modality);
+      modalitySet.add(normalized);
+    }
+    return Array.from(modalitySet).sort();
+  }, [contacts]);
+
   // Filter contacts
   const filteredContacts = useMemo(() => {
     return contacts.filter((contact) => {
       const umbrella = getUmbrella(contact);
       const statusCode = getStatusCode(contact);
+
+      // Hide inactive filter
+      if (hideInactive && !isActiveStatus(statusCode)) {
+        return false;
+      }
 
       // Umbrella filter
       if (umbrellaFilter !== "all" && umbrella !== umbrellaFilter) {
@@ -87,6 +234,22 @@ export function WaitlistListView({ contacts, currentUserEmail }: WaitlistListVie
       // Status code filter
       if (statusFilter !== "all" && statusCode !== parseInt(statusFilter)) {
         return false;
+      }
+
+      // Insurance filter (use normalized comparison for consistency with Insights)
+      if (insuranceFilter !== "all") {
+        const contactInsurance = normalizeInsurance(contact.insurancePayer);
+        if (contactInsurance !== insuranceFilter) {
+          return false;
+        }
+      }
+
+      // Modality filter (use normalized comparison for consistency with Insights)
+      if (modalityFilter !== "all") {
+        const contactModality = normalizeModality(contact.modality);
+        if (contactModality !== modalityFilter) {
+          return false;
+        }
       }
 
       // Search filter (case-insensitive substring match)
@@ -100,7 +263,7 @@ export function WaitlistListView({ contacts, currentUserEmail }: WaitlistListVie
 
       return true;
     });
-  }, [contacts, umbrellaFilter, statusFilter, searchQuery]);
+  }, [contacts, umbrellaFilter, statusFilter, searchQuery, hideInactive, insuranceFilter, modalityFilter]);
 
   // Sort contacts
   const sortedContacts = useMemo(() => {
@@ -165,7 +328,9 @@ export function WaitlistListView({ contacts, currentUserEmail }: WaitlistListVie
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Umbrellas</SelectItem>
-              {(Object.keys(STATUS_UMBRELLAS) as UmbrellaId[]).map((id) => (
+              {(Object.keys(STATUS_UMBRELLAS) as UmbrellaId[])
+                .filter(id => id !== "PMR" || currentUserEmail?.toLowerCase() === "chantelle@tfc.health")
+                .map((id) => (
                 <SelectItem key={id} value={id}>
                   {STATUS_UMBRELLAS[id].label}
                 </SelectItem>
@@ -185,6 +350,42 @@ export function WaitlistListView({ contacts, currentUserEmail }: WaitlistListVie
               {availableStatusCodes.map((code) => (
                 <SelectItem key={code} value={code.toString()}>
                   {code} - {STATUS_LABELS[code] || `Status ${code}`}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Insurance Filter */}
+        <div className="flex items-center gap-2">
+          <Shield className="h-4 w-4 text-muted-foreground" />
+          <Select value={insuranceFilter} onValueChange={setInsuranceFilter}>
+            <SelectTrigger className="w-[200px]">
+              <SelectValue placeholder="All Insurances" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Insurances</SelectItem>
+              {availableInsurances.map((insurance) => (
+                <SelectItem key={insurance} value={insurance}>
+                  {insurance}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Modality Filter */}
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">Modality:</span>
+          <Select value={modalityFilter} onValueChange={setModalityFilter}>
+            <SelectTrigger className="w-[160px]">
+              <SelectValue placeholder="All Modalities" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Modalities</SelectItem>
+              {availableModalities.map((modality) => (
+                <SelectItem key={modality} value={modality}>
+                  {modality}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -213,8 +414,26 @@ export function WaitlistListView({ contacts, currentUserEmail }: WaitlistListVie
           </div>
         </div>
 
+        {/* Hide Inactive Toggle */}
+        <div className="flex items-center gap-2 bg-white/60 dark:bg-gray-900/60 backdrop-blur-sm rounded-lg px-3 py-2 border border-white/20 dark:border-gray-700/30">
+          <EyeOff className="h-4 w-4 text-muted-foreground" />
+          <Switch
+            id="list-hide-inactive"
+            checked={hideInactive}
+            onCheckedChange={setHideInactive}
+          />
+          <Label htmlFor="list-hide-inactive" className="text-sm cursor-pointer">
+            Hide Inactive
+          </Label>
+        </div>
+
         <div className="ml-auto text-sm text-muted-foreground">
           {sortedContacts.length} contact{sortedContacts.length !== 1 ? "s" : ""}
+          {!hideInactive && (() => {
+            const inactiveCount = sortedContacts.filter(c => !isActiveStatus(getStatusCode(c))).length;
+            const activeCount = sortedContacts.length - inactiveCount;
+            return inactiveCount > 0 ? ` (${activeCount} active, ${inactiveCount} inactive)` : "";
+          })()}
         </div>
       </div>
 
@@ -275,6 +494,7 @@ export function WaitlistListView({ contacts, currentUserEmail }: WaitlistListVie
                 const umbrella = getUmbrella(contact);
                 const umbrellaLabel = umbrella ? STATUS_UMBRELLAS[umbrella].label : "Unknown";
                 const statusLabel = STATUS_LABELS[statusCode] || `Status ${statusCode}`;
+                const isInactive = !isActiveStatus(statusCode);
 
                 return (
                   <TableRow
@@ -282,13 +502,24 @@ export function WaitlistListView({ contacts, currentUserEmail }: WaitlistListVie
                     className={cn(
                       "cursor-pointer transition-all duration-200",
                       "bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm",
-                      "hover:bg-white/90 dark:hover:bg-gray-800/90 hover:backdrop-blur-md hover:shadow-md hover:-translate-y-0.5"
+                      "hover:bg-white/90 dark:hover:bg-gray-800/90 hover:backdrop-blur-md hover:shadow-md hover:-translate-y-0.5",
+                      isInactive && "opacity-60"
                     )}
                   >
                     <TableCell className="font-medium">
                       <Link href={`/contact/${contact.contactId}`}>
-                        <span className="text-primary hover:underline">{contact.name}</span>
+                        <span className={cn(
+                          "hover:underline",
+                          isInactive ? "text-muted-foreground italic" : "text-primary"
+                        )}>
+                          {contact.name}
+                        </span>
                       </Link>
+                      {isInactive && (
+                        <Badge variant="outline" className="ml-2 text-[10px] px-1 py-0 h-4 text-muted-foreground border-muted-foreground/30">
+                          Inactive
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell>
                       {umbrella && (
@@ -300,15 +531,15 @@ export function WaitlistListView({ contacts, currentUserEmail }: WaitlistListVie
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-xs text-muted-foreground">{statusCode}</span>
-                        <span className="text-sm">{statusLabel}</span>
+                        <span className={cn("text-sm", isInactive && "italic")}>{statusLabel}</span>
                       </div>
                     </TableCell>
                     <TableCell>
                       <span
                         className={cn(
                           "font-medium",
-                          (contact.daysOnWaitlist || 0) >= 60 && "text-red-600 dark:text-red-400",
-                          (contact.daysOnWaitlist || 0) >= 30 &&
+                          !isInactive && (contact.daysOnWaitlist || 0) >= 60 && "text-red-600 dark:text-red-400",
+                          !isInactive && (contact.daysOnWaitlist || 0) >= 30 &&
                             (contact.daysOnWaitlist || 0) < 60 &&
                             "text-amber-600 dark:text-amber-400"
                         )}
@@ -320,7 +551,7 @@ export function WaitlistListView({ contacts, currentUserEmail }: WaitlistListVie
                       {contact.serviceRequested || "—"}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {contact.dateAdded || "—"}
+                      {formatDateForDisplay(contact.dateAdded)}
                     </TableCell>
                     <TableCell>
                       <OwnerBadge
