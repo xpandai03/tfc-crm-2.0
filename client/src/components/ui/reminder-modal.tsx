@@ -37,6 +37,13 @@ interface ReminderModalProps {
   isSubmitting?: boolean;
 }
 
+// Get the user's browser timezone abbreviation (e.g. "PST", "MST")
+function getUserTimezone(): string {
+  return new Intl.DateTimeFormat("en-US", { timeZoneName: "short" })
+    .formatToParts(new Date())
+    .find((p) => p.type === "timeZoneName")?.value || "local time";
+}
+
 // Format date for datetime-local input (must use LOCAL time components, not UTC)
 function getMinDateTime(): string {
   const now = new Date();
@@ -138,7 +145,7 @@ export function ReminderModal({
 
           {/* Date & Time */}
           <div className="space-y-2">
-            <Label htmlFor="reminder-datetime">When should we remind you? <span className="text-muted-foreground font-normal">(MST)</span></Label>
+            <Label htmlFor="reminder-datetime">When should we remind you? <span className="text-muted-foreground font-normal">({getUserTimezone()})</span></Label>
             <Input
               id="reminder-datetime"
               type="datetime-local"
