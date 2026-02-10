@@ -1,6 +1,13 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { createReminder as createReminderInDb, getReminderStats } from "./reminders";
+import {
+  createReminder as createReminderInDb,
+  getReminderStats,
+  getIntakeComments,
+  createIntakeComment,
+  getActiveAttentionFlags,
+  clearAttentionFlag,
+} from "./reminders";
 import * as XLSX from "xlsx";
 import * as path from "path";
 
@@ -2394,6 +2401,98 @@ export async function registerRoutes(
         success: false,
         error: error instanceof Error ? error.message : "Failed to send email",
       });
+    }
+  });
+
+  // ============================================================================
+  // Intake Comments & Attention Flags API
+  // ============================================================================
+
+  // Get all comments for a contact
+  app.get("/api/intake-comments/:contactId", async (req, res) => {
+    try {
+      const contactId = parseInt(req.params.contactId, 10);
+      if (isNaN(contactId)) {
+        return res.status(400).json({ error: "contactId must be a number" });
+      }
+
+      const comments = getIntakeComments(contactId);
+      return res.json({ comments });
+    } catch (error) {
+      console.error("Error getting intake comments:", error);
+      return res.status(500).json({ error: "Failed to get intake comments" });
+    }
+  });
+
+  // Add a comment (auto-creates attention flag)
+  app.post("/api/intake-comments", async (req, res) => {
+    try {
+      const { contactId, contactName, authorEmail, authorInitials, commentText } = req.body;
+
+      if (contactId === undefined || typeof contactId !== "number") {
+        return res.status(400).json({ error: "contactId (number) is required" });
+      }
+      if (!contactName || typeof contactName !== "string" || contactName.trim() === "") {
+        return res.status(400).json({ error: "contactName is required" });
+      }
+      if (!authorEmail || typeof authorEmail !== "string" || !authorEmail.includes("@")) {
+        return res.status(400).json({ error: "valid authorEmail is required" });
+      }
+      if (!authorInitials || typeof authorInitials !== "string") {
+        return res.status(400).json({ error: "authorInitials is required" });
+      }
+      if (!commentText || typeof commentText !== "string" || commentText.trim() === "") {
+        return res.status(400).json({ error: "commentText is required" });
+      }
+
+      const result = createIntakeComment({
+        contactId,
+        contactName: contactName.trim(),
+        authorEmail: authorEmail.trim(),
+        authorInitials: authorInitials.trim(),
+        commentText: commentText.trim(),
+      });
+
+      return res.json({
+        success: true,
+        commentId: result.commentId,
+        flagCreated: result.flagCreated,
+      });
+    } catch (error) {
+      console.error("Error creating intake comment:", error);
+      return res.status(500).json({ error: "Failed to create intake comment" });
+    }
+  });
+
+  // Get all active attention flags (bulk endpoint for list/kanban views)
+  app.get("/api/attention-flags", async (_req, res) => {
+    try {
+      const flags = getActiveAttentionFlags();
+      return res.json({ flags });
+    } catch (error) {
+      console.error("Error getting attention flags:", error);
+      return res.status(500).json({ error: "Failed to get attention flags" });
+    }
+  });
+
+  // Clear an attention flag
+  app.post("/api/attention-flags/:contactId/clear", async (req, res) => {
+    try {
+      const contactId = parseInt(req.params.contactId, 10);
+      if (isNaN(contactId)) {
+        return res.status(400).json({ error: "contactId must be a number" });
+      }
+
+      const clearedByEmail = req.body.clearedByEmail;
+      if (!clearedByEmail || typeof clearedByEmail !== "string" || !clearedByEmail.includes("@")) {
+        return res.status(400).json({ error: "valid clearedByEmail is required" });
+      }
+
+      const cleared = clearAttentionFlag(contactId, clearedByEmail.trim());
+      return res.json({ success: true, cleared });
+    } catch (error) {
+      console.error("Error clearing attention flag:", error);
+      return res.status(500).json({ error: "Failed to clear attention flag" });
     }
   });
 

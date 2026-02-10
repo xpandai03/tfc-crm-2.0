@@ -28,7 +28,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { AlertCircle, LayoutGrid, List, User } from "lucide-react";
 import { StatusLegendModal } from "@/components/ui/status-legend-modal";
-import { getWaitlistBoard, updateContactStatus, addNoteToContact } from "@/lib/api";
+import { getWaitlistBoard, updateContactStatus, addNoteToContact, getAttentionFlags } from "@/lib/api";
 import { useDataSource } from "@/lib/data-source-context";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -161,6 +161,17 @@ export default function Waitlist() {
     queryKey: ["/api/get-waitlist-board"],
     queryFn: getWaitlistBoard,
   });
+
+  // Attention flags — for badges on kanban cards and list view
+  const { data: flagsData } = useQuery({
+    queryKey: ["/api/attention-flags"],
+    queryFn: getAttentionFlags,
+  });
+
+  const flaggedContactIds = useMemo(() => {
+    if (!flagsData?.flags) return new Set<number>();
+    return new Set(flagsData.flags.map(f => f.contactId));
+  }, [flagsData]);
 
   const allContacts = contactsData?.contacts;
 

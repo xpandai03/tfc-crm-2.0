@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useState, useEffect, useMemo, useCallback } from "react";
+import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { PageLayout } from "@/components/layout/page-layout";
 import { MetricCard } from "@/components/ui/metric-card";
@@ -14,7 +15,7 @@ import { FallbackBanner } from "@/components/ui/fallback-banner";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { AlertTriangle, Clock, CalendarCheck, AlertCircle, CheckCircle2, Inbox, User } from "lucide-react";
-import { getWaitlistSummary, getWaitlistContacts, addNoteToContact, updateContactStatus, type WithSource } from "@/lib/api";
+import { getWaitlistSummary, getWaitlistContacts, addNoteToContact, updateContactStatus, getAttentionFlags, type WithSource } from "@/lib/api";
 import { useDataSource } from "@/lib/data-source-context";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -24,6 +25,7 @@ import {
   STATUS_UMBRELLAS,
 } from "@/lib/status-config";
 import { generateInsights } from "@/lib/insights";
+import { cn } from "@/lib/utils";
 import type { WaitlistSummary, WaitlistContact } from "@shared/schema";
 
 /**
@@ -115,6 +117,21 @@ export default function Home() {
   } = useQuery<{ contacts: WaitlistContact[]; _source?: string }>({
     queryKey: ["/api/waitlist-contacts"],
     queryFn: getWaitlistContacts,
+  });
+
+  // Attention flags — only fetched for allowed users
+  const ATTENTION_ALLOWED_EMAILS = [
+    "raunek@tfc.health",
+    "dawn@tfc.health",
+    "chantel@tfc.health",
+    "amanda@tfc.health",
+  ];
+  const canSeeAttention = !!user?.email && ATTENTION_ALLOWED_EMAILS.includes(user.email.toLowerCase());
+
+  const { data: flagsData } = useQuery({
+    queryKey: ["/api/attention-flags"],
+    queryFn: getAttentionFlags,
+    enabled: canSeeAttention,
   });
 
   const isLoading = summaryLoading || contactsLoading;
@@ -374,6 +391,13 @@ export default function Home() {
     return { over60Days, readyToSchedule, needsFollowUp };
   }, [filteredContacts]);
 
+  // Attention Required contacts — join flags with contacts list
+  const attentionContacts = useMemo(() => {
+    if (!flagsData?.flags || !contacts.length) return [];
+    const flaggedIds = new Set(flagsData.flags.map(f => f.contactId));
+    return contacts.filter(c => flaggedIds.has(c.contactId));
+  }, [flagsData, contacts]);
+
   // Generate dynamic insights from contacts and metrics
   const insights = useMemo(() => {
     return generateInsights(contacts, computedMetrics);
@@ -472,7 +496,50 @@ export default function Home() {
           />
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+        <div className={cn("grid grid-cols-1 gap-6", canSeeAttention && attentionContacts.length > 0 ? "xl:grid-cols-5" : "xl:grid-cols-4")}>
+          {/* Attention Required column — only for allowed users with active flags */}
+          {canSeeAttention && attentionContacts.length > 0 && (
+            <div className="xl:col-span-1">
+              <Card className="flex flex-col h-[calc(100vh-320px)] overflow-visible bg-white/60 dark:bg-gray-900/60 backdrop-blur-xl border-white/20 dark:border-gray-700/30 shadow-lg shadow-amber-500/10 bg-gradient-to-b from-amber-500/8 to-transparent ring-1 ring-amber-400/30">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base font-medium">
+                    <AlertTriangle className="h-4 w-4 text-amber-500" />
+                    Attention Required
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">{attentionContacts.length} flagged</p>
+                </CardHeader>
+                <CardContent className="flex-1 flex flex-col min-h-0 pt-0">
+                  <ScrollArea className="flex-1 pr-2">
+                    <div className="space-y-2">
+                      {attentionContacts.map((contact) => (
+                        <Link key={contact.contactId} href={`/contact/${contact.contactId}`}>
+                          <Card className="hover-elevate cursor-pointer transition-all duration-300 hover:translate-y-[-2px] hover:shadow-lg overflow-visible bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm relative rounded-l-none before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1 before:bg-gradient-to-b before:from-amber-500 before:via-amber-400 before:to-amber-600 before:rounded-l-lg">
+                            <CardContent className="p-3">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-sm font-medium text-foreground truncate">
+                                    {contact.name}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground truncate mt-0.5">
+                                    {contact.serviceRequested || "—"}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <span className="text-amber-500 text-sm">⚠️</span>
+                                  <span className="text-xs font-bold tabular-nums text-muted-foreground">{contact.daysOnWaitlist}d</span>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        </Link>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
           {/* Priority Queues */}
           <div className="xl:col-span-3 grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Over 60 Days */}

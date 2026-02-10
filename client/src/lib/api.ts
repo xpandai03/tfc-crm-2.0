@@ -15,7 +15,10 @@ export async function getWaitlistSummary(): Promise<WithSource<WaitlistSummary>>
 }
 
 export async function getWaitlistContacts(): Promise<{ contacts: WaitlistContact[]; _source?: DataSource }> {
-  const response = await fetch("/api/waitlist-contacts");
+  const response = await fetch("/api/waitlist-contacts", {
+    cache: "no-store", // CRITICAL: Prevent browser caching
+    credentials: "include",
+  });
   if (!response.ok) {
     throw new Error("Failed to fetch waitlist contacts");
   }
@@ -28,7 +31,10 @@ export async function getWaitlistBoard(): Promise<{ contacts: WaitlistContact[];
 }
 
 export async function getConfig(): Promise<{ dataMode: DataMode }> {
-  const response = await fetch("/api/config");
+  const response = await fetch("/api/config", {
+    cache: "no-store",
+    credentials: "include",
+  });
   if (!response.ok) {
     throw new Error("Failed to fetch config");
   }
@@ -158,9 +164,78 @@ export async function assignContact(
 }
 
 export async function getStaffList(): Promise<{ staff: string[] }> {
-  const response = await fetch("/api/staff-list");
+  const response = await fetch("/api/staff-list", {
+    cache: "no-store",
+    credentials: "include",
+  });
   if (!response.ok) {
     throw new Error("Failed to fetch staff list");
   }
+  return response.json();
+}
+
+// ============================================================================
+// Intake Comments & Attention Flags API
+// ============================================================================
+
+export interface IntakeComment {
+  id: number;
+  contactId: number;
+  contactName: string;
+  authorEmail: string;
+  authorInitials: string;
+  commentText: string;
+  createdAt: string;
+}
+
+export interface AttentionFlag {
+  id: number;
+  contactId: number;
+  flaggedByEmail: string;
+  flaggedAt: string;
+  clearedByEmail: string | null;
+  clearedAt: string | null;
+}
+
+export async function getIntakeComments(contactId: number): Promise<{ comments: IntakeComment[] }> {
+  const response = await fetch(`/api/intake-comments/${contactId}`, {
+    cache: "no-store",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw new Error("Failed to fetch intake comments");
+  }
+  return response.json();
+}
+
+export async function createIntakeComment(params: {
+  contactId: number;
+  contactName: string;
+  authorEmail: string;
+  authorInitials: string;
+  commentText: string;
+}): Promise<{ success: boolean; commentId: number; flagCreated: boolean }> {
+  const response = await apiRequest("POST", "/api/intake-comments", params);
+  return response.json();
+}
+
+export async function getAttentionFlags(): Promise<{ flags: AttentionFlag[] }> {
+  const response = await fetch("/api/attention-flags", {
+    cache: "no-store",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw new Error("Failed to fetch attention flags");
+  }
+  return response.json();
+}
+
+export async function clearAttentionFlag(
+  contactId: number,
+  clearedByEmail: string
+): Promise<{ success: boolean; cleared: boolean }> {
+  const response = await apiRequest("POST", `/api/attention-flags/${contactId}/clear`, {
+    clearedByEmail,
+  });
   return response.json();
 }
