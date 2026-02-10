@@ -164,30 +164,17 @@ export default function Waitlist() {
 
   const allContacts = contactsData?.contacts;
 
-  // Filter contacts: hide PMR-status contacts for non-PM users, then apply ownership filter
+  // Filter contacts by ownership if toggle is enabled
+  // Normalize both sides: trim whitespace, lowercase, treat empty string as unassigned
   const contacts = useMemo(() => {
     if (!allContacts || allContacts.length === 0) return allContacts;
-    let filtered = allContacts;
-
-    // Hide PM Review contacts from non-PM users (visibility only — data untouched)
-    if (!isPM) {
-      filtered = filtered.filter(c => {
-        const code = c.statusCode ?? 0;
-        return !(code >= 300 && code < 400); // PMR status codes
-      });
-    }
-
-    // "Assigned to Me" filter — normalize both sides
-    if (showOnlyMine && user?.email) {
-      const normalizedUserEmail = user.email.trim().toLowerCase();
-      filtered = filtered.filter(c => {
-        const assigned = c.assignedTo?.trim().toLowerCase();
-        return assigned && assigned === normalizedUserEmail;
-      });
-    }
-
-    return filtered;
-  }, [allContacts, showOnlyMine, user?.email, isPM]);
+    if (!showOnlyMine || !user?.email) return allContacts;
+    const normalizedUserEmail = user.email.trim().toLowerCase();
+    return allContacts.filter(c => {
+      const assigned = c.assignedTo?.trim().toLowerCase();
+      return assigned && assigned === normalizedUserEmail;
+    });
+  }, [allContacts, showOnlyMine, user?.email]);
 
   // Waitlist page is authoritative over its own data source
   // Use board response _source directly - ignore context state

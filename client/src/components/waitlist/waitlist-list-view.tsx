@@ -328,9 +328,7 @@ export function WaitlistListView({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Umbrellas</SelectItem>
-              {(Object.keys(STATUS_UMBRELLAS) as UmbrellaId[])
-                .filter(id => id !== "PMR" || currentUserEmail?.toLowerCase() === "chantelle@tfc.health")
-                .map((id) => (
+              {(Object.keys(STATUS_UMBRELLAS) as UmbrellaId[]).map((id) => (
                 <SelectItem key={id} value={id}>
                   {STATUS_UMBRELLAS[id].label}
                 </SelectItem>
