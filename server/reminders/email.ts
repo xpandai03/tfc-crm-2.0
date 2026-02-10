@@ -20,6 +20,7 @@ const FROM_NAME = "TFC CRM Reminders";
  */
 function formatDate(isoDate: string): string {
   return new Date(isoDate).toLocaleString("en-US", {
+    timeZone: "America/Denver",
     weekday: "long",
     year: "numeric",
     month: "long",
@@ -27,6 +28,7 @@ function formatDate(isoDate: string): string {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
+    timeZoneName: "short",
   });
 }
 
