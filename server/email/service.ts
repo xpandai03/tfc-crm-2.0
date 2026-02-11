@@ -63,10 +63,13 @@ export interface SendResult {
 }
 
 /**
- * Build variable map from contact data
+ * Build variable map from contact data and optional admin-provided dynamic fields
  */
-function buildVariableMap(contact: ContactForEmail): Record<string, string> {
-  return {
+function buildVariableMap(
+  contact: ContactForEmail,
+  dynamicFields?: Record<string, string>
+): Record<string, string> {
+  const map: Record<string, string> = {
     firstName: extractFirstName(contact.name) || "there",
     name: contact.name || "",
     modality: contact.modality || "your preferred modality",
@@ -79,6 +82,17 @@ function buildVariableMap(contact: ContactForEmail): Record<string, string> {
     // Survey variable
     surveyLink: "[Survey Link]",
   };
+
+  // Override defaults with admin-provided values
+  if (dynamicFields) {
+    for (const [key, value] of Object.entries(dynamicFields)) {
+      if (key in map && value && value.trim()) {
+        map[key] = value.trim();
+      }
+    }
+  }
+
+  return map;
 }
 
 /**
@@ -99,11 +113,12 @@ function substituteVariables(
 }
 
 /**
- * Render a template with contact data
+ * Render a template with contact data and optional admin-provided dynamic fields
  */
 export function renderTemplate(
   templateId: string,
-  contact: ContactForEmail
+  contact: ContactForEmail,
+  dynamicFields?: Record<string, string>
 ): RenderedEmail | null {
   const template = getTemplateById(templateId);
   if (!template) {
@@ -111,7 +126,7 @@ export function renderTemplate(
     return null;
   }
 
-  const variables = buildVariableMap(contact);
+  const variables = buildVariableMap(contact, dynamicFields);
 
   return {
     templateId: template.id,
@@ -148,8 +163,9 @@ export async function sendTemplatedEmail(params: {
   contact: ContactForEmail;
   sentByEmail: string;
   eccStatus: "present" | "missing";
+  dynamicFields?: Record<string, string>;
 }): Promise<SendResult> {
-  const { templateId, contact, sentByEmail, eccStatus } = params;
+  const { templateId, contact, sentByEmail, eccStatus, dynamicFields } = params;
 
   // Validate contact has email
   if (!contact.email) {
@@ -159,8 +175,8 @@ export async function sendTemplatedEmail(params: {
     return { success: false, error: "Contact has no email address" };
   }
 
-  // Render template
-  const rendered = renderTemplate(templateId, contact);
+  // Render template with admin-provided dynamic fields
+  const rendered = renderTemplate(templateId, contact, dynamicFields);
   if (!rendered) {
     return { success: false, error: `Template not found: ${templateId}` };
   }

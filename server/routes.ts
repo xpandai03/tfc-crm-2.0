@@ -2188,7 +2188,7 @@ export async function registerRoutes(
   // POST /api/email-preview - Render template preview with contact data
   app.post("/api/email-preview", async (req, res) => {
     try {
-      const { contactId, templateId } = req.body;
+      const { contactId, templateId, dynamicFields } = req.body;
 
       // Validate required fields
       if (!contactId || typeof contactId !== "number") {
@@ -2244,8 +2244,19 @@ export async function registerRoutes(
 
       console.log(`[email-preview] Built contactForEmail: email=${contactForEmail.email}, name=${contactForEmail.name}`);
 
-      // Render preview
-      const rendered = renderTemplate(templateId, contactForEmail);
+      // Sanitize dynamicFields: only allow string values, strip HTML
+      const sanitizedFields: Record<string, string> = {};
+      if (dynamicFields && typeof dynamicFields === "object") {
+        for (const [key, value] of Object.entries(dynamicFields)) {
+          if (typeof value === "string") {
+            // Strip any HTML tags for safety
+            sanitizedFields[key] = value.replace(/<[^>]*>/g, "");
+          }
+        }
+      }
+
+      // Render preview with admin-provided dynamic fields
+      const rendered = renderTemplate(templateId, contactForEmail, sanitizedFields);
       if (!rendered) {
         return res.status(400).json({ error: `Template not found: ${templateId}` });
       }
@@ -2268,7 +2279,7 @@ export async function registerRoutes(
   // POST /api/send-email - Send email and log to timeline
   app.post("/api/send-email", async (req, res) => {
     try {
-      const { contactId, templateId, eccStatus } = req.body;
+      const { contactId, templateId, eccStatus, dynamicFields } = req.body;
 
       // Validate required fields
       if (!contactId || typeof contactId !== "number") {
@@ -2343,19 +2354,35 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Contact has no email address" });
       }
 
-      // Send the email
+      // Sanitize dynamicFields: only allow string values, strip HTML
+      const sanitizedFields: Record<string, string> = {};
+      if (dynamicFields && typeof dynamicFields === "object") {
+        for (const [key, value] of Object.entries(dynamicFields)) {
+          if (typeof value === "string") {
+            sanitizedFields[key] = value.replace(/<[^>]*>/g, "");
+          }
+        }
+      }
+
+      // Send the email with admin-provided dynamic fields
       const sendResult = await sendTemplatedEmail({
         templateId,
         contact: contactForEmail,
         sentByEmail: userEmail,
         eccStatus,
+        dynamicFields: sanitizedFields,
       });
 
       // Log to Activity Timeline via n8n add-note endpoint
-      // Format: "[Email] Template Name sent (ECC: status)"
+      // Include dynamic field values for audit trail
       const templates = getTemplateList();
       const templateName = templates.find((t) => t.id === templateId)?.name || templateId;
-      const noteContent = `[Email] ${templateName} sent${eccStatus === "missing" ? " (ECC missing)" : ""}`;
+      const dynamicFieldDetails: string[] = [];
+      if (sanitizedFields.therapistName) dynamicFieldDetails.push(`Provider: ${sanitizedFields.therapistName}`);
+      if (sanitizedFields.appointmentDatetime) dynamicFieldDetails.push(`Appt: ${sanitizedFields.appointmentDatetime}`);
+      if (sanitizedFields.surveyLink) dynamicFieldDetails.push(`Survey: ${sanitizedFields.surveyLink}`);
+      const fieldsSuffix = dynamicFieldDetails.length > 0 ? ` | ${dynamicFieldDetails.join(", ")}` : "";
+      const noteContent = `[Email] ${templateName} sent${eccStatus === "missing" ? " (ECC missing)" : ""}${fieldsSuffix}`;
 
       if (DATA_MODE === "live" && sendResult.success) {
         try {

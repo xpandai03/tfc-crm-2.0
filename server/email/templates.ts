@@ -7,6 +7,13 @@
  * Variables use {{variableName}} pattern and are substituted server-side.
  */
 
+export interface RequiredField {
+  key: string;          // Variable name in template (e.g., "therapistName")
+  label: string;        // Display label for admin input (e.g., "Provider Name")
+  type: "text" | "datetime"; // Input type: "text" = free text, "datetime" = datetime picker
+  defaultText: string;  // Placeholder text shown in preview when unfilled (e.g., "[Provider Name]")
+}
+
 export interface EmailTemplate {
   id: string;
   name: string;
@@ -15,12 +22,14 @@ export interface EmailTemplate {
   bodyHtml: string;
   bodyText: string;
   variables: string[]; // List of variable names used in this template
+  requiredFields: RequiredField[]; // Admin-filled fields (empty = fully auto-populated)
 }
 
 export interface TemplateMetadata {
   id: string;
   name: string;
   description: string;
+  requiredFields: RequiredField[];
 }
 
 /**
@@ -161,6 +170,7 @@ The Family Connection
 Albuquerque, New Mexico
     `.trim(),
     variables: ["firstName", "serviceRequested", "modality"],
+    requiredFields: [],
   },
   {
     id: "scheduling-followup",
@@ -212,6 +222,7 @@ The Family Connection
 Albuquerque, New Mexico
     `.trim(),
     variables: ["firstName", "serviceRequested", "modality"],
+    requiredFields: [],
   },
   {
     id: "portal-enrollment",
@@ -263,6 +274,7 @@ The Family Connection
 Albuquerque, New Mexico
     `.trim(),
     variables: ["firstName"],
+    requiredFields: [],
   },
   {
     id: "appointment-confirmation",
@@ -328,6 +340,10 @@ The Family Connection
 Albuquerque, New Mexico
     `.trim(),
     variables: ["firstName", "therapistName", "appointmentDatetime", "appointmentLocationOrModality"],
+    requiredFields: [
+      { key: "therapistName", label: "Provider Name", type: "text", defaultText: "[Provider Name]" },
+      { key: "appointmentDatetime", label: "Appointment Date & Time", type: "datetime", defaultText: "[Appointment Date & Time]" },
+    ],
   },
   {
     id: "post-appointment-survey",
@@ -347,11 +363,17 @@ Albuquerque, New Mexico
         Please take a moment to tell us about your experience by completing our brief survey. It should take about 1&ndash;2 minutes.
       </p>
 
-      <p style="margin: 0 0 20px 0;">
-        <a href="{{surveyLink}}" style="display: inline-block; padding: 12px 24px; background-color: #1e3a5f; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600;">
-          Take the Survey
-        </a>
-      </p>
+      <!-- Outlook-safe button: table wrapper + anchor with inline styles -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 20px 0;">
+        <tr>
+          <td align="center" bgcolor="#1e3a5f" style="border-radius: 6px;">
+            <a href="https://customer-feedback-tfc.replit.app" target="_blank"
+               style="display: inline-block; padding: 12px 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 15px; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600;">
+              Take the Survey
+            </a>
+          </td>
+        </tr>
+      </table>
 
       <p style="margin: 0 0 20px 0;">
         Thank you so much for your time.
@@ -369,7 +391,7 @@ Your feedback matters to us!
 
 Please take a moment to tell us about your experience by completing our brief survey. It should take about 1-2 minutes.
 
-{{surveyLink}}
+Take the Survey: https://customer-feedback-tfc.replit.app
 
 Thank you so much for your time.
 
@@ -380,7 +402,8 @@ The Family Connection Team
 The Family Connection
 Albuquerque, New Mexico
     `.trim(),
-    variables: ["firstName", "surveyLink"],
+    variables: ["firstName"],
+    requiredFields: [],
   },
   {
     id: "intake-form-reminder",
@@ -426,6 +449,7 @@ The Family Connection
 Albuquerque, New Mexico
     `.trim(),
     variables: ["firstName"],
+    requiredFields: [],
   },
 ];
 
@@ -444,5 +468,6 @@ export function getTemplateMetadataList(): TemplateMetadata[] {
     id: t.id,
     name: t.name,
     description: t.description,
+    requiredFields: t.requiredFields,
   }));
 }
