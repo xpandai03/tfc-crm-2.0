@@ -139,7 +139,7 @@ export default function Waitlist() {
   const [showOnlyMine, setShowOnlyMine] = useState(false);
 
   // PM Review column is only visible to Chantelle
-  const isPM = user?.email?.toLowerCase() === "chantelle@tfc.health";
+  const isPM = user?.email?.toLowerCase() === "chantel@tfc.health";
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
