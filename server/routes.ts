@@ -1315,12 +1315,24 @@ export async function registerRoutes(
 
             console.log("[WAITLIST-CONTACTS] Valid contacts after filtering:", validContacts.length, "out of", data.contacts.length);
 
+            // Deduplicate by contactId (keep first occurrence)
+            // Protects against n8n returning the same contact multiple times
+            const seenIds = new Map<number, boolean>();
+            const dedupedContacts = validContacts.filter((c: any) => {
+              if (seenIds.has(c.contactId)) return false;
+              seenIds.set(c.contactId, true);
+              return true;
+            });
+            if (dedupedContacts.length < validContacts.length) {
+              console.warn(`[WAITLIST-CONTACTS] Deduplicated ${validContacts.length - dedupedContacts.length} duplicate contacts by contactId`);
+            }
+
             // Populate server-side cache for contact-snapshot lookups
             // This reduces duplicate n8n calls when navigating from Today to Contact Detail
-            setBoardCache({ contacts: validContacts });
+            setBoardCache({ contacts: dedupedContacts });
 
-            console.log("[WAITLIST-CONTACTS] Returning live data with _source:", source, "and", validContacts.length, "contacts");
-            return res.json({ contacts: validContacts, _source: source });
+            console.log("[WAITLIST-CONTACTS] Returning live data with _source:", source, "and", dedupedContacts.length, "contacts");
+            return res.json({ contacts: dedupedContacts, _source: source });
           } else {
             console.error("[WAITLIST-CONTACTS] Invalid data structure - contacts is not an array");
             console.error("[WAITLIST-CONTACTS] data.contacts type:", typeof data.contacts, "value:", data.contacts);
@@ -1434,6 +1446,20 @@ export async function registerRoutes(
                 ? c.assignedTo.trim()
                 : null,
             }));
+
+            // Deduplicate by contactId (keep first occurrence)
+            // Protects against n8n returning the same contact multiple times
+            const beforeCount = data.contacts.length;
+            const seenBoardIds = new Map<number, boolean>();
+            data.contacts = data.contacts.filter((c: any) => {
+              if (c.contactId === undefined || c.contactId === null) return true; // keep contacts without id (logged above)
+              if (seenBoardIds.has(c.contactId)) return false;
+              seenBoardIds.set(c.contactId, true);
+              return true;
+            });
+            if (data.contacts.length < beforeCount) {
+              console.warn(`[BOARD] Deduplicated ${beforeCount - data.contacts.length} duplicate contacts by contactId`);
+            }
 
             // Populate server-side cache for contact-snapshot lookups
             // This reduces duplicate n8n calls when navigating from list to detail view
@@ -2373,8 +2399,7 @@ export async function registerRoutes(
         dynamicFields: sanitizedFields,
       });
 
-      // Log to Activity Timeline via n8n add-note endpoint
-      // Include dynamic field values for audit trail
+      // Build audit note content (used for timeline logging after response is sent)
       const templates = getTemplateList();
       const templateName = templates.find((t) => t.id === templateId)?.name || templateId;
       const dynamicFieldDetails: string[] = [];
@@ -2384,33 +2409,15 @@ export async function registerRoutes(
       const fieldsSuffix = dynamicFieldDetails.length > 0 ? ` | ${dynamicFieldDetails.join(", ")}` : "";
       const noteContent = `[Email] ${templateName} sent${eccStatus === "missing" ? " (ECC missing)" : ""}${fieldsSuffix}`;
 
-      if (DATA_MODE === "live" && sendResult.success) {
-        try {
-          const timestamp = new Date().toISOString();
-          const author = userEmail.split("@")[0].substring(0, 3).toUpperCase();
-
-          await fetch(N8N_ENDPOINTS.addNote, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contactId,
-              note: noteContent,
-              author,
-              timestamp,
-            }),
-          });
-          console.log(`[send-email] Timeline note logged for contact ${contactId}`);
-        } catch (noteError) {
-          // Log error but don't fail the response - email was sent successfully
-          console.error("[send-email] Failed to log timeline note:", noteError);
-        }
-      }
-
       console.log(
         `[send-email] ${sendResult.success ? "SUCCESS" : "FAILED"}: ` +
         `"${templateName}" to ${contactForEmail.email} by ${userEmail} (ECC: ${eccStatus})`
       );
 
+      // IMPORTANT: Return response IMMEDIATELY — don't block on timeline logging.
+      // The n8n addNote fetch can take 10-30s, and combined with the contact snapshot
+      // fetch earlier, the total request time can exceed Fly's 60s proxy timeout,
+      // causing the client to receive an empty response body.
       if (!sendResult.success) {
         return res.status(502).json({
           success: false,
@@ -2418,10 +2425,32 @@ export async function registerRoutes(
         });
       }
 
-      return res.json({
+      // Send success response to client immediately
+      res.json({
         success: true,
         emailId: sendResult.emailId,
       });
+
+      // Fire-and-forget: log timeline note AFTER response is sent
+      if (DATA_MODE === "live" && sendResult.success) {
+        const timestamp = new Date().toISOString();
+        const author = userEmail.split("@")[0].substring(0, 3).toUpperCase();
+
+        fetch(N8N_ENDPOINTS.addNote, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contactId,
+            note: noteContent,
+            author,
+            timestamp,
+          }),
+        })
+          .then(() => console.log(`[send-email] Timeline note logged for contact ${contactId}`))
+          .catch((noteError) => console.error("[send-email] Failed to log timeline note:", noteError));
+      }
+
+      return;
     } catch (error) {
       console.error("[send-email] Error:", error);
       return res.status(500).json({
