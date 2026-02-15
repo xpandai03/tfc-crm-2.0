@@ -42,8 +42,10 @@ import {
   Bell,
   MessageSquareWarning,
   CheckCircle2,
+  ExternalLink,
+  Loader2,
 } from "lucide-react";
-import { getContactSnapshot, updateContactStatus, addNoteToContact, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, type WithSource, type IntakeComment } from "@/lib/api";
+import { getContactSnapshot, updateContactStatus, addNoteToContact, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, type WithSource, type IntakeComment } from "@/lib/api";
 import { ReminderModal } from "@/components/ui/reminder-modal";
 import { SendEmailModal } from "@/components/ui/send-email-modal";
 import { AssignmentSelector } from "@/components/ui/assignment-selector";
@@ -53,6 +55,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { ContactSnapshot, WaitlistContact } from "@shared/schema";
 import { buildTimelineEvents, formatFullDate } from "@/lib/timeline";
 import { ProviderMatchingModal } from "@/components/ui/provider-matching-modal";
+import { CreateTnModal } from "@/components/ui/create-tn-modal";
 import { cn } from "@/lib/utils";
 import {
   STATUS_UMBRELLAS,
@@ -129,8 +132,42 @@ export default function ContactDetail() {
   const [showProviderMatching, setShowProviderMatching] = useState(false);
   const [showReminderModal, setShowReminderModal] = useState(false);
   const [showSendEmailModal, setShowSendEmailModal] = useState(false);
+  const [showCreateTnModal, setShowCreateTnModal] = useState(false);
   const [isCreatingReminder, setIsCreatingReminder] = useState(false);
   const noteTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // TherapyNotes integration
+  const TN_ALLOWED_EMAILS = ["raunek@tfc.health", "dawn@tfc.health", "amanda@tfc.health", "chantel@tfc.health"];
+  const canUseTn = !!user?.email && TN_ALLOWED_EMAILS.includes(user.email.toLowerCase());
+
+  const { data: tnData, refetch: refetchTn } = useQuery({
+    queryKey: ["/api/therapy-notes", contactId],
+    queryFn: () => getTherapyNotesStatus(Number(contactId)),
+    enabled: !!contactId && canUseTn,
+    refetchInterval: (query) => {
+      return query.state.data?.record?.tnStatus === "in_progress" ? 3000 : false;
+    },
+  });
+  const tnRecord = tnData?.record ?? null;
+
+  const createTnMutation = useMutation({
+    mutationFn: () => createTherapyNotesPatient(Number(contactId), contact?.name),
+    onSuccess: () => {
+      toast({ title: "TherapyNotes creation started", description: "This may take 30-40 seconds..." });
+      setShowCreateTnModal(false);
+      refetchTn();
+    },
+    onError: (err: Error) => {
+      const is409 = err.message.startsWith("409");
+      if (is409) {
+        toast({ title: "Already in progress", description: "TherapyNotes patient creation is already running." });
+        setShowCreateTnModal(false);
+        refetchTn();
+      } else {
+        toast({ title: "Failed to start TherapyNotes creation", description: err.message, variant: "destructive" });
+      }
+    },
+  });
 
   // Optimistic assignment state - tracks the UI value independently from query cache
   const [optimisticAssignee, setOptimisticAssignee] = useState<string | null | undefined>(undefined);
@@ -1259,6 +1296,51 @@ export default function ContactDetail() {
                     <Users className="h-4 w-4 mr-2" />
                     Find Provider Matches
                   </Button>
+
+                  {canUseTn && (
+                    tnRecord?.tnStatus === "created" ? (
+                      <Button
+                        variant="outline"
+                        className="w-full justify-start border-green-300 text-green-700 hover:bg-green-50"
+                        size="sm"
+                        onClick={() => window.open(tnRecord.tnPatientUrl || "", "_blank")}
+                      >
+                        <ExternalLink className="h-4 w-4 mr-2" />
+                        Open in TherapyNotes
+                      </Button>
+                    ) : tnRecord?.tnStatus === "in_progress" ? (
+                      <Button
+                        variant="outline"
+                        className="w-full justify-start"
+                        size="sm"
+                        disabled
+                      >
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Creating in TherapyNotes...
+                      </Button>
+                    ) : tnRecord?.tnStatus === "failed" ? (
+                      <Button
+                        variant="outline"
+                        className="w-full justify-start border-red-300 text-red-700 hover:bg-red-50"
+                        size="sm"
+                        onClick={() => setShowCreateTnModal(true)}
+                      >
+                        <AlertCircle className="h-4 w-4 mr-2" />
+                        Retry TherapyNotes
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        className="w-full justify-start"
+                        size="sm"
+                        disabled={isLoading}
+                        onClick={() => setShowCreateTnModal(true)}
+                      >
+                        <FileText className="h-4 w-4 mr-2" />
+                        Add to TherapyNotes EHR
+                      </Button>
+                    )
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -1282,6 +1364,17 @@ export default function ContactDetail() {
         onSubmit={handleCreateReminder}
         isSubmitting={isCreatingReminder}
       />
+
+      {/* TherapyNotes Modal */}
+      {canUseTn && (
+        <CreateTnModal
+          isOpen={showCreateTnModal}
+          onClose={() => setShowCreateTnModal(false)}
+          contact={contact || null}
+          onConfirm={() => createTnMutation.mutate()}
+          isSubmitting={createTnMutation.isPending}
+        />
+      )}
 
       {/* Send Email Modal */}
       <SendEmailModal

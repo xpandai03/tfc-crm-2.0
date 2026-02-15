@@ -4,9 +4,15 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { configureAuth, authMiddleware } from "./auth";
+import { initDatabase, startReminderCron } from "./reminders";
+import { initTherapyNotesTable } from "./therapy-notes";
 
 const app = express();
 const httpServer = createServer(app);
+
+// CRITICAL: Disable ETag for all routes to prevent 304 responses
+// This ensures fresh data is always returned, never cached fallback
+app.set("etag", false);
 
 declare module "http" {
   interface IncomingMessage {
@@ -23,6 +29,16 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+
+// CRITICAL: Prevent ALL caching for API routes
+// This prevents 304 responses that could serve stale fallback data
+app.use("/api", (_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("Surrogate-Control", "no-store");
+  next();
+});
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -69,6 +85,16 @@ app.use((req, res, next) => {
   app.use(authMiddleware);
 
   await registerRoutes(httpServer, app);
+
+  // Initialize reminder system (SQLite + cron)
+  try {
+    initDatabase();
+    initTherapyNotesTable();
+    startReminderCron();
+    log("Reminder system initialized");
+  } catch (err) {
+    log(`Warning: Reminder system failed to initialize: ${err}`, "reminders");
+  }
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
