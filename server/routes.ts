@@ -2645,18 +2645,33 @@ export async function registerRoutes(
           console.log(`[therapy-notes] Starting TN creation for contact ${contactId}`);
 
           // Fetch contact snapshot from n8n
+          console.log(`[TN DEBUG] Fetching snapshot from n8n for contactId: ${contactId}`);
           const snapshotResponse = await fetch(N8N_ENDPOINTS.contactSnapshot, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ contactId }),
           });
 
+          console.log(`[TN DEBUG] n8n snapshot HTTP status: ${snapshotResponse.status}`);
           if (!snapshotResponse.ok) {
             throw new Error(`n8n snapshot returned ${snapshotResponse.status}`);
           }
 
-          const rawData = await snapshotResponse.json();
+          const rawSnapshotText = await snapshotResponse.text();
+          console.log(`[TN DEBUG] n8n snapshot raw response (first 500 chars):`, rawSnapshotText.substring(0, 500));
+
+          let rawData: Record<string, unknown>;
+          try {
+            rawData = JSON.parse(rawSnapshotText);
+          } catch (parseErr) {
+            console.error(`[TN DEBUG] n8n snapshot JSON parse failed:`, parseErr);
+            console.error(`[TN DEBUG] n8n snapshot raw body:`, rawSnapshotText.substring(0, 1000));
+            throw new Error(`n8n snapshot returned invalid JSON`);
+          }
+
           const snapshot = (rawData.contact || rawData || {}) as Record<string, unknown>;
+          console.log(`[TN DEBUG] Snapshot keys:`, Object.keys(snapshot));
+          console.log(`[TN DEBUG] Snapshot name: "${snapshot.name}", patientDob: "${snapshot.patientDob}", phone: "${snapshot.phone}"`);
 
           // Map fields to TN agent payload
           const fullName = (snapshot.name as string) || "";
@@ -2674,22 +2689,47 @@ export async function registerRoutes(
             rfs_url: (snapshot.rfsLink as string) || "",
           };
 
-          console.log(`[therapy-notes] Calling TN agent for ${firstName} ${lastName} (contact ${contactId})`);
+          console.log(`[TN DEBUG] TN_AGENT_URL:`, TN_AGENT_URL);
+          console.log(`[TN DEBUG] API key present:`, !!process.env.TN_API_KEY);
+          console.log(`[TN DEBUG] API key length:`, process.env.TN_API_KEY?.length ?? 0);
+          console.log(`[TN DEBUG] Payload:`, JSON.stringify(payload));
 
           // Call TN agent
-          const tnResponse = await fetch(TN_AGENT_URL, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-API-Key": process.env.TN_API_KEY!,
-            },
-            body: JSON.stringify(payload),
-          });
+          let tnResponse: Response;
+          try {
+            tnResponse = await fetch(TN_AGENT_URL, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-API-Key": process.env.TN_API_KEY!,
+              },
+              body: JSON.stringify(payload),
+            });
+          } catch (fetchErr) {
+            console.error(`[TN DEBUG] Fetch to TN agent threw:`, fetchErr);
+            console.error(`[TN DEBUG] Fetch error stack:`, fetchErr instanceof Error ? fetchErr.stack : "no stack");
+            throw fetchErr;
+          }
 
-          const tnResult = (await tnResponse.json()) as TnAgentResponse;
-          console.log(`[therapy-notes] TN agent response for contact ${contactId}:`, tnResult.status);
+          console.log(`[TN DEBUG] TN agent HTTP status: ${tnResponse.status}`);
+          console.log(`[TN DEBUG] TN agent response headers content-type:`, tnResponse.headers.get("content-type"));
+
+          const rawTnText = await tnResponse.text();
+          console.log(`[TN DEBUG] TN agent raw response (first 1000 chars):`, rawTnText.substring(0, 1000));
+
+          let tnResult: TnAgentResponse;
+          try {
+            tnResult = JSON.parse(rawTnText) as TnAgentResponse;
+          } catch (parseErr) {
+            console.error(`[TN DEBUG] TN agent JSON parse failed:`, parseErr);
+            console.error(`[TN DEBUG] TN agent raw body:`, rawTnText.substring(0, 2000));
+            throw new Error(`TN agent returned invalid JSON (HTTP ${tnResponse.status})`);
+          }
+
+          console.log(`[TN DEBUG] TN agent parsed result:`, JSON.stringify(tnResult));
 
           if (tnResult.status === "success") {
+            console.log(`[TN DEBUG] Writing status=created, url=${tnResult.tn_patient_url}, id=${tnResult.tn_patient_id}`);
             updateTnStatus(contactId, "created", {
               url: tnResult.tn_patient_url,
               id: tnResult.tn_patient_id,
@@ -2709,6 +2749,7 @@ export async function registerRoutes(
             }).catch((err) => console.error("[therapy-notes] Timeline log failed:", err));
           } else {
             const reason = tnResult.failure_reason || "TN agent returned error";
+            console.log(`[TN DEBUG] Writing status=failed, reason="${reason}", tnResult.status="${tnResult.status}"`);
             updateTnStatus(contactId, "failed", { failureReason: reason });
 
             // Fire-and-forget timeline log
@@ -2726,9 +2767,15 @@ export async function registerRoutes(
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          console.error(`[therapy-notes] Error creating TN patient for contact ${contactId}:`, message);
+          const stack = err instanceof Error ? err.stack : "no stack";
+          console.error(`[TN DEBUG] Outer catch for contact ${contactId}:`, message);
+          console.error(`[TN DEBUG] Outer catch stack:`, stack);
+          console.log(`[TN DEBUG] Writing status=failed from outer catch, reason="${message}"`);
           updateTnStatus(contactId, "failed", { failureReason: message });
         }
+
+        // Final state check
+        console.log(`[TN DEBUG] Final TN record state:`, JSON.stringify(getTnRecord(contactId)));
       })();
     } catch (error) {
       console.error("[therapy-notes] Error in create endpoint:", error);
