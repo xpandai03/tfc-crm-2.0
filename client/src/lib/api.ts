@@ -239,3 +239,42 @@ export async function clearAttentionFlag(
   });
   return response.json();
 }
+
+// ============================================================================
+// TherapyNotes API
+// ============================================================================
+
+export interface TherapyNotesRecord {
+  id: number;
+  contactId: number;
+  contactName: string;
+  createdByEmail: string;
+  tnStatus: "pending" | "in_progress" | "created" | "failed";
+  tnPatientUrl: string | null;
+  tnPatientId: string | null;
+  failureReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getTherapyNotesStatus(
+  contactId: number
+): Promise<{ record: TherapyNotesRecord | null }> {
+  const response = await fetch(`/api/therapy-notes/${contactId}`, {
+    cache: "no-store",
+    credentials: "include",
+  });
+  if (!response.ok) throw new Error("Failed to fetch TherapyNotes status");
+  return response.json();
+}
+
+export async function createTherapyNotesPatient(
+  contactId: number,
+  contactName?: string
+): Promise<{ status: string; record: TherapyNotesRecord }> {
+  const response = await apiRequest("POST", "/api/therapy-notes/create", {
+    contactId,
+    contactName,
+  });
+  return response.json();
+}

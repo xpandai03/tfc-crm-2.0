@@ -8,6 +8,14 @@ import {
   getActiveAttentionFlags,
   clearAttentionFlag,
 } from "./reminders";
+import {
+  getTnRecord,
+  createTnRecord,
+  updateTnStatus,
+  resetTnRecordForRetry,
+  isStaleInProgress,
+} from "./therapy-notes";
+import type { TnAgentPayload, TnAgentResponse } from "./therapy-notes";
 import * as XLSX from "xlsx";
 import * as path from "path";
 
@@ -114,6 +122,24 @@ const N8N_ENDPOINTS = {
   assignContact: process.env.N8N_ASSIGN_CONTACT_URL || "https://n8n-familyconnection.agentglu.agency/webhook/assign-contact",
   unassignContact: process.env.N8N_UNASSIGN_CONTACT_URL || "https://n8n-familyconnection.agentglu.agency/webhook/f4414c29-2ae4-4ca3-b400-d6da62ff7812",
 } as const;
+
+// TherapyNotes integration constants
+const TN_ALLOWED_EMAILS = [
+  "raunek@tfc.health",
+  "dawn@tfc.health",
+  "amanda@tfc.health",
+  "chantel@tfc.health",
+];
+const TN_AGENT_URL =
+  "https://axiom-browser-agent-clone-production.up.railway.app/api/tn/create-patient";
+
+function parseName(fullName: string): { firstName: string; lastName: string } {
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length <= 1) return { firstName: parts[0] || "", lastName: "" };
+  const lastName = parts[parts.length - 1];
+  const firstName = parts.slice(0, -1).join(" ");
+  return { firstName, lastName };
+}
 
 // Mock data for development
 type MockContact = {
@@ -2549,6 +2575,164 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error clearing attention flag:", error);
       return res.status(500).json({ error: "Failed to clear attention flag" });
+    }
+  });
+
+  // ============================================================================
+  // TherapyNotes EHR Integration
+  // ============================================================================
+
+  // Get TN record status for a contact
+  app.get("/api/therapy-notes/:contactId", async (req, res) => {
+    try {
+      const contactId = parseInt(req.params.contactId, 10);
+      if (isNaN(contactId)) {
+        return res.status(400).json({ error: "contactId must be a number" });
+      }
+
+      const record = getTnRecord(contactId);
+      return res.json({ record });
+    } catch (error) {
+      console.error("[therapy-notes] Error getting record:", error);
+      return res.status(500).json({ error: "Failed to get TherapyNotes status" });
+    }
+  });
+
+  // Create TN patient — returns 202 immediately, TN agent runs async
+  app.post("/api/therapy-notes/create", async (req, res) => {
+    try {
+      // Auth check
+      const userEmail = (req as unknown as { user?: { email?: string } }).user?.email || "";
+      if (!userEmail || !TN_ALLOWED_EMAILS.includes(userEmail.toLowerCase())) {
+        return res.status(403).json({ error: "Not authorized for TherapyNotes integration" });
+      }
+
+      const { contactId } = req.body;
+      if (!contactId || typeof contactId !== "number") {
+        return res.status(400).json({ error: "contactId (number) is required" });
+      }
+
+      // Check existing record
+      const existing = getTnRecord(contactId);
+      if (existing) {
+        if (existing.tnStatus === "created") {
+          return res.status(200).json({ status: "created", record: existing });
+        }
+        if (existing.tnStatus === "in_progress" && !isStaleInProgress(existing)) {
+          return res.status(409).json({ status: "in_progress", record: existing });
+        }
+        // Stale in_progress or failed → reset for retry
+        resetTnRecordForRetry(contactId);
+      } else {
+        // New record
+        const contactName = req.body.contactName || "Unknown";
+        createTnRecord({ contactId, contactName, createdByEmail: userEmail });
+      }
+
+      // Validate TN_API_KEY
+      if (!process.env.TN_API_KEY) {
+        updateTnStatus(contactId, "failed", { failureReason: "TN_API_KEY not configured on server" });
+        return res.status(500).json({ error: "TherapyNotes API key not configured" });
+      }
+
+      // Return 202 immediately
+      const record = getTnRecord(contactId);
+      res.status(202).json({ status: "in_progress", record });
+
+      // Detached async: fetch snapshot → call TN agent → update record
+      (async () => {
+        try {
+          console.log(`[therapy-notes] Starting TN creation for contact ${contactId}`);
+
+          // Fetch contact snapshot from n8n
+          const snapshotResponse = await fetch(N8N_ENDPOINTS.contactSnapshot, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ contactId }),
+          });
+
+          if (!snapshotResponse.ok) {
+            throw new Error(`n8n snapshot returned ${snapshotResponse.status}`);
+          }
+
+          const rawData = await snapshotResponse.json();
+          const snapshot = (rawData.contact || rawData || {}) as Record<string, unknown>;
+
+          // Map fields to TN agent payload
+          const fullName = (snapshot.name as string) || "";
+          const { firstName, lastName } = parseName(fullName);
+
+          const payload: TnAgentPayload = {
+            first_name: firstName,
+            last_name: lastName,
+            dob: (snapshot.patientDob as string) || "",
+            address: (snapshot.streetAddress as string) || "",
+            zip: (snapshot.zipCode as string) || "",
+            sex: (snapshot.gender as string) || "",
+            eil: (snapshot.insuranceId as string) || "",
+            phone: (snapshot.phone as string) || "",
+            rfs_url: (snapshot.rfsLink as string) || "",
+          };
+
+          console.log(`[therapy-notes] Calling TN agent for ${firstName} ${lastName} (contact ${contactId})`);
+
+          // Call TN agent
+          const tnResponse = await fetch(TN_AGENT_URL, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-API-Key": process.env.TN_API_KEY!,
+            },
+            body: JSON.stringify(payload),
+          });
+
+          const tnResult = (await tnResponse.json()) as TnAgentResponse;
+          console.log(`[therapy-notes] TN agent response for contact ${contactId}:`, tnResult.status);
+
+          if (tnResult.status === "success") {
+            updateTnStatus(contactId, "created", {
+              url: tnResult.tn_patient_url,
+              id: tnResult.tn_patient_id,
+            });
+
+            // Fire-and-forget timeline log
+            const author = userEmail.split("@")[0].substring(0, 3).toUpperCase();
+            fetch(N8N_ENDPOINTS.addNote, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contactId,
+                note: `[TherapyNotes] Patient created successfully: ${tnResult.tn_patient_url || "N/A"}`,
+                author,
+                timestamp: new Date().toISOString(),
+              }),
+            }).catch((err) => console.error("[therapy-notes] Timeline log failed:", err));
+          } else {
+            const reason = tnResult.failure_reason || "TN agent returned error";
+            updateTnStatus(contactId, "failed", { failureReason: reason });
+
+            // Fire-and-forget timeline log
+            const author = userEmail.split("@")[0].substring(0, 3).toUpperCase();
+            fetch(N8N_ENDPOINTS.addNote, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contactId,
+                note: `[TherapyNotes] Patient creation failed: ${reason}`,
+                author,
+                timestamp: new Date().toISOString(),
+              }),
+            }).catch((err) => console.error("[therapy-notes] Timeline log failed:", err));
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`[therapy-notes] Error creating TN patient for contact ${contactId}:`, message);
+          updateTnStatus(contactId, "failed", { failureReason: message });
+        }
+      })();
+    } catch (error) {
+      console.error("[therapy-notes] Error in create endpoint:", error);
+      return res.status(500).json({ error: "Failed to start TherapyNotes creation" });
     }
   });
 
