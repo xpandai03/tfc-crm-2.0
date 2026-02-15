@@ -278,3 +278,12 @@ export async function createTherapyNotesPatient(
   });
   return response.json();
 }
+
+export async function resetTherapyNotesLink(
+  contactId: number
+): Promise<{ success: boolean; record: TherapyNotesRecord }> {
+  const response = await apiRequest("POST", "/api/therapy-notes/reset", {
+    contactId,
+  });
+  return response.json();
+}

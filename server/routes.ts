@@ -12,6 +12,7 @@ import {
   getTnRecord,
   createTnRecord,
   updateTnStatus,
+  resetTnLink,
   resetTnRecordForRetry,
   isStaleInProgress,
 } from "./therapy-notes";
@@ -2604,6 +2605,47 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[therapy-notes] Error getting record:", error);
       return res.status(500).json({ error: "Failed to get TherapyNotes status" });
+    }
+  });
+
+  // Manually reset a TN link (e.g. patient deleted in TherapyNotes)
+  app.post("/api/therapy-notes/reset", async (req, res) => {
+    try {
+      const userEmail = (req as unknown as { user?: { email?: string } }).user?.email || "";
+      if (!userEmail || !TN_ALLOWED_EMAILS.includes(userEmail.toLowerCase())) {
+        return res.status(403).json({ error: "Not authorized for TherapyNotes integration" });
+      }
+
+      const { contactId } = req.body;
+      if (!contactId || typeof contactId !== "number") {
+        return res.status(400).json({ error: "contactId (number) is required" });
+      }
+
+      const existing = getTnRecord(contactId);
+      if (!existing) {
+        return res.status(404).json({ error: "No TherapyNotes record for this contact" });
+      }
+
+      resetTnLink(contactId);
+
+      // Fire-and-forget timeline log
+      const author = userEmail.split("@")[0].substring(0, 3).toUpperCase();
+      fetch(N8N_ENDPOINTS.addNote, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contactId,
+          note: `[TherapyNotes] Link manually reset by ${userEmail}`,
+          author,
+          timestamp: new Date().toISOString(),
+        }),
+      }).catch((err) => console.error("[therapy-notes] Timeline log failed:", err));
+
+      const record = getTnRecord(contactId);
+      return res.json({ success: true, record });
+    } catch (error) {
+      console.error("[therapy-notes] Error in reset endpoint:", error);
+      return res.status(500).json({ error: "Failed to reset TherapyNotes link" });
     }
   });
 
