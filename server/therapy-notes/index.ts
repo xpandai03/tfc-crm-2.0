@@ -9,6 +9,7 @@ export {
   getTnRecord,
   createTnRecord,
   updateTnStatus,
+  resetTnLink,
   resetTnRecordForRetry,
   isStaleInProgress,
 } from "./db";

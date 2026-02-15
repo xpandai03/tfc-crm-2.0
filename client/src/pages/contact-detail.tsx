@@ -44,8 +44,9 @@ import {
   CheckCircle2,
   ExternalLink,
   Loader2,
+  RotateCcw,
 } from "lucide-react";
-import { getContactSnapshot, updateContactStatus, addNoteToContact, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, type WithSource, type IntakeComment } from "@/lib/api";
+import { getContactSnapshot, updateContactStatus, addNoteToContact, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, type WithSource, type IntakeComment } from "@/lib/api";
 import { ReminderModal } from "@/components/ui/reminder-modal";
 import { SendEmailModal } from "@/components/ui/send-email-modal";
 import { AssignmentSelector } from "@/components/ui/assignment-selector";
@@ -166,6 +167,17 @@ export default function ContactDetail() {
       } else {
         toast({ title: "Failed to start TherapyNotes creation", description: err.message, variant: "destructive" });
       }
+    },
+  });
+
+  const resetTnMutation = useMutation({
+    mutationFn: () => resetTherapyNotesLink(Number(contactId)),
+    onSuccess: () => {
+      toast({ title: "TherapyNotes link reset", description: "You can now re-create the patient." });
+      refetchTn();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to reset TherapyNotes link", description: err.message, variant: "destructive" });
     },
   });
 
@@ -1299,15 +1311,31 @@ export default function ContactDetail() {
 
                   {canUseTn && (
                     tnRecord?.tnStatus === "created" ? (
-                      <Button
-                        variant="outline"
-                        className="w-full justify-start border-green-300 text-green-700 hover:bg-green-50"
-                        size="sm"
-                        onClick={() => window.open(tnRecord.tnPatientUrl || "", "_blank")}
-                      >
-                        <ExternalLink className="h-4 w-4 mr-2" />
-                        Open in TherapyNotes
-                      </Button>
+                      <>
+                        <Button
+                          variant="outline"
+                          className="w-full justify-start border-green-300 text-green-700 hover:bg-green-50"
+                          size="sm"
+                          onClick={() => window.open(tnRecord.tnPatientUrl || "", "_blank")}
+                        >
+                          <ExternalLink className="h-4 w-4 mr-2" />
+                          Open in TherapyNotes
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          className="w-full justify-start text-muted-foreground text-xs h-7"
+                          size="sm"
+                          disabled={resetTnMutation.isPending}
+                          onClick={() => {
+                            if (window.confirm("Reset TherapyNotes link? This will allow re-creating the patient.")) {
+                              resetTnMutation.mutate();
+                            }
+                          }}
+                        >
+                          <RotateCcw className="h-3 w-3 mr-2" />
+                          {resetTnMutation.isPending ? "Resetting..." : "Reset TherapyNotes Link"}
+                        </Button>
+                      </>
                     ) : tnRecord?.tnStatus === "in_progress" ? (
                       <Button
                         variant="outline"

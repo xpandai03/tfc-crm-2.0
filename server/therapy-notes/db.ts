@@ -106,6 +106,25 @@ export function updateTnStatus(
 }
 
 /**
+ * Manually reset a "created" link (e.g. patient deleted in TherapyNotes)
+ */
+export function resetTnLink(contactId: number): void {
+  const db = getDatabase();
+
+  db.prepare(`
+    UPDATE therapy_notes_records
+    SET tn_status = 'failed',
+        tn_patient_url = NULL,
+        tn_patient_id = NULL,
+        failure_reason = 'Manually reset',
+        updated_at = datetime('now')
+    WHERE contact_id = ?
+  `).run(contactId);
+
+  console.log(`[therapy-notes-db] Manually reset link for contact ${contactId}`);
+}
+
+/**
  * Reset a failed or stale record for retry (UPDATE, never DELETE)
  */
 export function resetTnRecordForRetry(contactId: number): void {
