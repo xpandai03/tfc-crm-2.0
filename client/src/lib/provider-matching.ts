@@ -3,10 +3,11 @@
  *
  * Computes compatibility scores between a contact and providers.
  * All matching is deterministic and rule-based.
+ *
+ * v1.1: Added insurance matching with fallback logic
  */
 
 import {
-  PROVIDERS,
   Provider,
   AgeGroup,
   Specialty,
@@ -16,6 +17,13 @@ import {
   SPECIALTY_LABELS,
   LOCATION_LABELS,
 } from "./providers";
+import {
+  normalizeInsurance,
+  providerAcceptsInsurance,
+  isInsuranceAcceptedByTFC,
+  type InsuranceCategory,
+} from "./insurance-utils";
+import type { ProviderWithInsurance } from "./provider-api";
 import type { ContactSnapshot } from "@shared/schema";
 
 // Match result for a single provider
@@ -41,6 +49,7 @@ export interface MatchingContext {
   secondaryKeywords: string[];
   location: string | null;
   modality: string | null;
+  insurance: InsuranceCategory; // NEW: Contact's normalized insurance
 }
 
 // Scoring constants
@@ -50,6 +59,7 @@ const SCORES = {
   SECONDARY_SPECIALTY_MATCH: 15,
   LOCATION_MATCH: 20,
   MODALITY_MATCH: 10,
+  INSURANCE_MATCH: 25, // NEW: Bonus for accepting contact's insurance
   SLOW_PENALTY: -10,
   NO_SPECIALTY_PENALTY: -20,
   MINIMUM_VIABLE: 30,
@@ -183,7 +193,7 @@ function getAgeGroup(age: number | null): AgeGroup | null {
 /**
  * Parse requesting_for field to infer age group
  */
-function inferAgeGroupFromRequestingFor(requestingFor: string | null | undefined): AgeGroup | null {
+export function inferAgeGroupFromRequestingFor(requestingFor: string | null | undefined): AgeGroup | null {
   if (!requestingFor) return null;
   const lower = requestingFor.toLowerCase();
 
@@ -207,7 +217,7 @@ function inferAgeGroupFromRequestingFor(requestingFor: string | null | undefined
 /**
  * Extract primary specialty from reason for seeking
  */
-function extractPrimarySpecialty(reason: string | null | undefined): Specialty | null {
+export function extractPrimarySpecialty(reason: string | null | undefined): Specialty | null {
   if (!reason) return null;
   const lower = reason.toLowerCase();
 
@@ -223,7 +233,7 @@ function extractPrimarySpecialty(reason: string | null | undefined): Specialty |
 /**
  * Extract secondary keywords from reason
  */
-function extractSecondaryKeywords(reason: string | null | undefined): string[] {
+export function extractSecondaryKeywords(reason: string | null | undefined): string[] {
   if (!reason) return [];
 
   const keywords: string[] = [];
@@ -280,9 +290,15 @@ export function buildMatchingContext(contact: ContactSnapshot): MatchingContext 
     ageGroup = inferAgeGroupFromRequestingFor(contact.requestingFor);
   }
 
-  // Precedence: detailedReason → reasonForSeeking → serviceRequested
-  // detailedReason is the primary clinical narrative (INTERNAL - not displayed in UI)
-  let primarySpecialty = extractPrimarySpecialty(contact.detailedReason);
+  // Precedence for specialty extraction:
+  // 1. reasonForTherapy - MCQ field from intake form (e.g., "Anxiety, Stress")
+  // 2. detailedReason - clinical narrative (INTERNAL - not displayed in UI)
+  // 3. reasonForSeeking - free text reason
+  // 4. serviceRequested - legacy field
+  let primarySpecialty = extractPrimarySpecialty(contact.reasonForTherapy);
+  if (!primarySpecialty) {
+    primarySpecialty = extractPrimarySpecialty(contact.detailedReason);
+  }
   if (!primarySpecialty) {
     primarySpecialty = extractPrimarySpecialty(contact.reasonForSeeking);
   }
@@ -290,12 +306,16 @@ export function buildMatchingContext(contact: ContactSnapshot): MatchingContext 
     primarySpecialty = extractPrimarySpecialty(contact.serviceRequested);
   }
 
-  // Combine keywords from detailedReason and reasonForSeeking (deduplicated)
+  // Combine keywords from all reason fields (deduplicated)
   const secondaryKeywords = [
+    ...extractSecondaryKeywords(contact.reasonForTherapy),
     ...extractSecondaryKeywords(contact.detailedReason),
     ...extractSecondaryKeywords(contact.reasonForSeeking),
   ].filter((v, i, a) => a.indexOf(v) === i);
   const location = mapCityToLocation(contact.city);
+
+  // Normalize contact's insurance payer
+  const insurance = normalizeInsurance(contact.insurancePayer);
 
   return {
     ageGroup,
@@ -304,6 +324,7 @@ export function buildMatchingContext(contact: ContactSnapshot): MatchingContext 
     secondaryKeywords,
     location: contact.city || null,
     modality: contact.modality || null,
+    insurance,
   };
 }
 
@@ -348,10 +369,14 @@ function hasAdditionalSpecialty(provider: Provider, keywords: string[]): boolean
 
 /**
  * Compute match score for a single provider
+ * @param provider - Provider to score (may include acceptedInsurances)
+ * @param context - Matching context derived from contact
+ * @param strictInsurance - If true, filter out providers that don't accept insurance
  */
-function computeProviderScore(
-  provider: Provider,
-  context: MatchingContext
+export function computeProviderScore(
+  provider: Provider | ProviderWithInsurance,
+  context: MatchingContext,
+  strictInsurance: boolean = false
 ): ProviderMatch | null {
   const reasons: MatchReason[] = [];
   const warnings: string[] = [];
@@ -374,6 +399,42 @@ function computeProviderScore(
     });
   } else {
     warnings.push("Age unknown - showing all providers");
+  }
+
+  // Insurance matching (v1.1)
+  // Check if provider has insurance data (only ProviderWithInsurance has this field)
+  const providerWithIns = provider as ProviderWithInsurance;
+  const hasInsuranceData = providerWithIns.acceptedInsurances && providerWithIns.acceptedInsurances.length > 0;
+
+  if (context.insurance !== "Unknown" && hasInsuranceData) {
+    const accepts = providerAcceptsInsurance(providerWithIns.acceptedInsurances, context.insurance);
+
+    if (strictInsurance && !accepts) {
+      // In strict mode, filter out providers that don't accept the insurance
+      return null;
+    }
+
+    if (accepts) {
+      score += SCORES.INSURANCE_MATCH;
+      reasons.push({
+        type: "positive",
+        text: `Accepts ${context.insurance}`,
+      });
+    } else {
+      // Non-strict mode: show warning but don't filter
+      reasons.push({
+        type: "warning",
+        text: `May not accept ${context.insurance}`,
+      });
+    }
+  } else if (context.insurance !== "Unknown" && !hasInsuranceData) {
+    // Provider has no insurance data — can't confirm or deny coverage
+    reasons.push({
+      type: "warning",
+      text: `Insurance data missing — verify ${context.insurance} coverage`,
+    });
+  } else if (context.insurance === "Unknown") {
+    warnings.push("Insurance unknown - verify coverage before scheduling");
   }
 
   // Primary specialty match
@@ -446,11 +507,11 @@ function computeProviderScore(
     });
   }
 
-  // Determine tier based on score
+  // Determine tier based on score (updated thresholds for insurance)
   let tier: ProviderMatch["tier"];
-  if (score >= 90) {
+  if (score >= 100) {
     tier = "excellent";
-  } else if (score >= 70) {
+  } else if (score >= 75) {
     tier = "good";
   } else if (score >= 50) {
     tier = "fair";
@@ -469,14 +530,46 @@ function computeProviderScore(
 
 /**
  * Compute provider matches for a contact
+ * @param contact - Contact snapshot from the waitlist
+ * @param providers - Array of providers (from API via useProviders hook)
  */
-export function computeProviderMatches(contact: ContactSnapshot): {
+export function computeProviderMatches(
+  contact: ContactSnapshot,
+  providers: (Provider | ProviderWithInsurance)[]
+): {
   matches: ProviderMatch[];
   context: MatchingContext;
   warnings: string[];
 } {
   const context = buildMatchingContext(contact);
   const globalWarnings: string[] = [];
+
+  // Guard: providers must be a valid, non-empty array.
+  // No silent fallback to stale hardcoded data — surface the problem.
+  if (!Array.isArray(providers) || providers.length === 0) {
+    return {
+      matches: [],
+      context,
+      warnings: ["Provider data unavailable — please refresh and try again"],
+    };
+  }
+
+  // HARD CONSTRAINT: If contact has a known insurance that TFC doesn't accept,
+  // return no matches immediately. This is a clinic-level constraint.
+  if (context.insurance !== "Unknown" && !isInsuranceAcceptedByTFC(context.insurance)) {
+    return {
+      matches: [],
+      context,
+      warnings: [`Insurance "${context.insurance}" is not accepted by TFC`],
+    };
+  }
+
+  const providerList = providers;
+
+  // Check if any providers have insurance data
+  const anyProviderHasInsurance = providerList.some(
+    (p) => (p as ProviderWithInsurance).acceptedInsurances?.length > 0
+  );
 
   // Add context-level warnings
   if (!context.ageGroup) {
@@ -490,10 +583,12 @@ export function computeProviderMatches(contact: ContactSnapshot): {
   }
 
   // Score all providers
-  const scoredProviders: ProviderMatch[] = [];
+  // First pass: strict insurance matching (if contact has known insurance and providers have data)
+  const useStrictInsurance = context.insurance !== "Unknown" && anyProviderHasInsurance;
+  let scoredProviders: ProviderMatch[] = [];
 
-  for (const provider of PROVIDERS) {
-    const match = computeProviderScore(provider, context);
+  for (const provider of providerList) {
+    const match = computeProviderScore(provider, context, useStrictInsurance);
     if (match) {
       // Collect warnings from individual matches
       if (match.warnings.length > 0) {
@@ -507,18 +602,38 @@ export function computeProviderMatches(contact: ContactSnapshot): {
     }
   }
 
-  // Sort by score (descending), then by presence of slow markers, then alphabetically
+  // Fallback: If strict insurance matching yielded no results, try without insurance filter
+  if (scoredProviders.length === 0 && useStrictInsurance) {
+    globalWarnings.push(`No providers accept ${context.insurance} - showing best matches`);
+
+    for (const provider of providerList) {
+      const match = computeProviderScore(provider, context, false);
+      if (match) {
+        // Collect warnings from individual matches
+        if (match.warnings.length > 0) {
+          for (const warning of match.warnings) {
+            if (!globalWarnings.includes(warning)) {
+              globalWarnings.push(warning);
+            }
+          }
+        }
+        scoredProviders.push(match);
+      }
+    }
+  }
+
+  // Sort by score (descending), then by presence of slow/warning markers, then alphabetically
   scoredProviders.sort((a, b) => {
     // First by score
     if (b.score !== a.score) {
       return b.score - a.score;
     }
 
-    // Then prefer non-slow providers
-    const aHasSlow = a.reasons.some((r) => r.type === "warning");
-    const bHasSlow = b.reasons.some((r) => r.type === "warning");
-    if (aHasSlow !== bHasSlow) {
-      return aHasSlow ? 1 : -1;
+    // Then prefer providers without warnings (slow markers, insurance issues)
+    const aHasWarning = a.reasons.some((r) => r.type === "warning");
+    const bHasWarning = b.reasons.some((r) => r.type === "warning");
+    if (aHasWarning !== bHasWarning) {
+      return aHasWarning ? 1 : -1;
     }
 
     // Finally alphabetically

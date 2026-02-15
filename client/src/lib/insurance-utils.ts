@@ -40,6 +40,7 @@ export const TFC_ACCEPTED_INSURANCES_RAW = [
   "Optum Health",
   "Partners Direct Health",
   "United Health Shared Services (UHC GEHA)",
+  "UHC Centennial",
   "ComPsych",
 ] as const;
 
@@ -118,18 +119,27 @@ export const INSURANCE_NORMALIZATION_MAP: Record<string, string> = {
   "bcbs centenial": "BlueCross BlueShield Turquoise Care", // typo handling
   "bcbs turquioise": "BlueCross BlueShield Turquoise Care", // typo handling
 
-  // 7. United Healthcare / United Behavioral Health / Optum
-  "united healthcare": "United Healthcare",
-  "united health care": "United Healthcare",
-  "uhc": "United Healthcare",
-  "united healrhcare": "United Healthcare", // typo handling
-  "united behavioral health": "United Healthcare",
-  "ubh": "United Healthcare",
-  "optum": "United Healthcare",
-  "optum health": "United Healthcare",
-  "united health shared services": "United Healthcare",
-  "uhc geha": "United Healthcare",
-  "united health shared services (uhc geha)": "United Healthcare",
+  // 7. UHC Commercial (United Healthcare / UBH / Optum / UMR)
+  "united healthcare": "UHC Commercial",
+  "united health care": "UHC Commercial",
+  "uhc": "UHC Commercial",
+  "uhc commercial": "UHC Commercial",
+  "united healrhcare": "UHC Commercial", // typo handling
+  "united behavioral health": "UHC Commercial",
+  "ubh": "UHC Commercial",
+  "optum": "UHC Commercial",
+  "optum health": "UHC Commercial",
+  "united health shared services": "UHC Commercial",
+  "uhc geha": "UHC Commercial",
+  "united health shared services (uhc geha)": "UHC Commercial",
+
+  // 7b. UHC Centennial (Medicaid managed care via UHC)
+  "uhc centennial": "UHC Centennial",
+  "uhc cent": "UHC Centennial",
+  "uhc/umr centennial": "UHC Centennial",
+  "uhc/umr ce": "UHC Centennial",
+  "united healthcare centennial": "UHC Centennial",
+  "uhc medicaid": "UHC Centennial",
 
   // 8. Aetna / Meritain Health (Aetna subsidiary)
   "atena": "Aetna", // typo handling
@@ -143,9 +153,9 @@ export const INSURANCE_NORMALIZATION_MAP: Record<string, string> = {
   "uhc medicare": "Medicare",
   "bcbs medicare advantage": "Medicare",
 
-  // 10. UMR
-  "umr": "UMR",
-  "umr - secondy medicaid -": "UMR",
+  // 10. UMR (merged into UHC Commercial)
+  "umr": "UHC Commercial",
+  "umr - secondy medicaid -": "UHC Commercial",
 
   // 11. Molina
   "molina": "Molina",
@@ -199,10 +209,10 @@ export const ACCEPTED_INSURANCES = [
   "Tricare",
   "Presbyterian Turquoise Care",
   "BlueCross BlueShield Turquoise Care",
-  "United Healthcare",
+  "UHC Commercial",
+  "UHC Centennial",
   "Aetna",
   "Medicare",
-  "UMR",
   "Molina",
   "Medicaid",
   "Self-Pay",
@@ -254,15 +264,16 @@ export function normalizeInsurance(rawValue: string | null | undefined): Insuran
       ["turquoise care", "Presbyterian Turquoise Care"], // Check before Presbyterian
       ["presbyterian", "Presbyterian Commercial"],
       ["magellan", "Presbyterian Commercial"],
-      ["united health", "United Healthcare"],
-      ["uhc", "United Healthcare"],
-      ["optum", "United Healthcare"],
+      ["uhc cent", "UHC Centennial"],
+      ["united health", "UHC Commercial"],
+      ["uhc", "UHC Commercial"],
+      ["optum", "UHC Commercial"],
+      ["umr", "UHC Commercial"],
       ["aetna", "Aetna"],
       ["meritain", "Aetna"],
       ["medicare", "Medicare"],
       ["medicaid", "Medicaid"],
       ["molina", "Molina"],
-      ["umr", "UMR"],
       ["self-pay", "Self-Pay"],
       ["self pay", "Self-Pay"],
       ["compsych", "ComPsych"],
@@ -332,9 +343,9 @@ export function providerAcceptsInsurance(
     return true;
   }
 
-  // If provider has no insurance data, assume they accept all
+  // If provider has no insurance data, we cannot confirm a match
   if (!providerInsurances || providerInsurances.length === 0) {
-    return true;
+    return false;
   }
 
   return providerInsurances.includes(contactInsurance);

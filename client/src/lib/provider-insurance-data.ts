@@ -95,7 +95,8 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
     "Medicare",
     "Molina",
     "Carelon",
-    "United Healthcare",
+    "UHC Commercial",
+    "UHC Centennial",
     "ChampVA",
   ],
 
@@ -113,7 +114,8 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
     "Medicare",
     "Molina",
     "Carelon",
-    "United Healthcare",
+    "UHC Commercial",
+    "UHC Centennial",
     "ChampVA",
   ],
 
@@ -125,7 +127,8 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
     "Partners Direct Health",
     "ComPsych",
     "Molina",
-    "United Healthcare",
+    "UHC Commercial",
+    "UHC Centennial",
   ],
 
   // Row 4: Amber M - RR - Full credentials
@@ -142,7 +145,8 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
     "Medicare",
     "Molina",
     "Carelon",
-    "United Healthcare",
+    "UHC Commercial",
+    "UHC Centennial",
     "ChampVA",
   ],
 
@@ -160,7 +164,8 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
     "Medicare",
     "Molina",
     "Carelon",
-    "United Healthcare",
+    "UHC Commercial",
+    "UHC Centennial",
   ],
 
   // Row 6: Angelica V - RR - Full credentials
@@ -177,7 +182,8 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
     "Medicare",
     "Molina",
     "Carelon",
-    "United Healthcare",
+    "UHC Commercial",
+    "UHC Centennial",
     "ChampVA",
   ],
 
@@ -194,7 +200,8 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
     "Medicare",
     "Molina",
     "Carelon",
-    "United Healthcare",
+    "UHC Commercial",
+    "UHC Centennial",
   ],
 
   // Row 8: Bentley - ABQ - Supervisor status (limited insurances)
@@ -205,7 +212,8 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
     "Partners Direct Health",
     "ComPsych",
     "Molina",
-    "United Healthcare",
+    "UHC Commercial",
+    "UHC Centennial",
   ],
 
   // Row 9: Carrie - LL - Full credentials (no Carelon, no Tricare, no ChampVA)
@@ -220,7 +228,8 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
     "Aetna",
     "Medicare",
     "Molina",
-    "United Healthcare",
+    "UHC Commercial",
+    "UHC Centennial",
   ],
 
   // Row 10: Danielle - RR - Full credentials
@@ -237,7 +246,8 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
     "Medicare",
     "Molina",
     "Carelon",
-    "United Healthcare",
+    "UHC Commercial",
+    "UHC Centennial",
     "ChampVA",
   ],
 
@@ -255,7 +265,8 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
     "Medicare",
     "Molina",
     "Carelon",
-    "United Healthcare",
+    "UHC Commercial",
+    "UHC Centennial",
     "ChampVA",
   ],
 
@@ -273,7 +284,8 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
     "Medicare",
     "Molina",
     "Carelon",
-    "United Healthcare",
+    "UHC Commercial",
+    "UHC Centennial",
     "ChampVA",
   ],
 
@@ -287,7 +299,8 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
     "ComPsych",
     "Molina",
     "Tricare",
-    "United Healthcare",
+    "UHC Commercial",
+    "UHC Centennial",
   ],
 
   // Row 15: Kennedy - ABQ - Full credentials (no Tricare from snapshot)
@@ -303,7 +316,8 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
     "Medicare",
     "Molina",
     "Carelon",
-    "United Healthcare",
+    "UHC Commercial",
+    "UHC Centennial",
     "ChampVA",
   ],
 
@@ -321,7 +335,8 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
     "Medicare",
     "Molina",
     "Carelon",
-    "United Healthcare",
+    "UHC Commercial",
+    "UHC Centennial",
     "ChampVA",
   ],
 
@@ -339,7 +354,8 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
     "Medicare",
     "Molina",
     "Carelon",
-    "United Healthcare",
+    "UHC Commercial",
+    "UHC Centennial",
     "ChampVA",
   ],
 
@@ -357,7 +373,8 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
     "Medicare",
     "Molina",
     "Carelon",
-    "United Healthcare",
+    "UHC Commercial",
+    "UHC Centennial",
     "ChampVA",
   ],
 };
