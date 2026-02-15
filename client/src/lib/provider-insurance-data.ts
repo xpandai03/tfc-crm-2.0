@@ -2,16 +2,18 @@
  * Provider Insurance Snapshot Data
  *
  * Hardcoded provider-level insurance acceptance data from the
- * Provider Insurance Snapshot spreadsheet (Jan 21, 2026).
+ * Provider Insurance Snapshot spreadsheet (Feb 9, 2026).
  *
- * Data source: Provider snapshot 1.21.26 1.pdf
+ * Data source: Provider Snapshot 2.9.26.pdf
  *
  * Interpretation rules:
  * - Date value (e.g., "8.1.23") → Accepted (credentialed/recredentialed)
  * - "U7" → Accepted (credentialing code)
  * - "Approved" → Accepted
  * - Blank → Not accepted
- * - "Sup" → Supervisor designation (not insurance data)
+ * - "Sup" in Pres Com column → No Presbyterian Commercial, but other
+ *   insurances with real dates ARE included (supervised billing only
+ *   affects Pres Com; does not exclude from other payers)
  *
  * Excluded columns (per Dawn's guidance):
  * - Aetna (EAP), Compsych (EAP), Anthem EAP → EAPs not accepted
@@ -37,42 +39,40 @@ export const PROVIDER_NAME_MAPPING: Record<string, string> = {
   "Anna": "Anna Aldridge",
   "Bentley": "Bentley Carbone",
   "Carrie": "Carrie Savedra",
+  "Cindy": "Cindy Ketchum",
   "Danielle": "Danielle Burke",
   "Debra": "Debra Dederich-Elsner",
+  "Janet": "Janet Fackrell",
   "Jennifer B": "Jennifer Bogart",
+  "Jessica": "Jessica Neuhart",
   "Jill": "Jill Nantze",
   "Kennedy": "Kennedy Hull",
+  "Krista": "Krista luna",
+  "Kristi": "Kristi Simmons",
+  "Laura": "Laura Garcia-Rosecrans",
+  "Laurel": "Laurel Muehlmeyer",
   "Paula": "Paula Raley",
   "Renee": "Renee Singletary",
   "Sandra": "Sandra Rivera",
 };
 
 /**
- * Providers in snapshot that are NOT in the current PROVIDERS list.
- * These are likely supervisors, interns, or inactive providers.
- * Logged for visibility but not matched.
+ * Providers in snapshot that are NOT in the Current sheet of the
+ * Provider Skills Spreadsheet. These are inactive or non-patient-facing.
  */
 export const UNMATCHED_SNAPSHOT_PROVIDERS = [
-  "Cindy",      // Supervisor
-  "Elizabeth",  // Not in current list
-  "Ginger",     // Supervisor
-  "Janet",      // Supervisor
-  "Jessica",    // Supervisor
-  "Krista",     // Supervisor
-  "Kristi",     // Supervisor
-  "Laura",      // Supervisor
-  "Laurel",     // Supervisor
-  "Tyra",       // Supervisor
+  "Elizabeth",  // Not in Current sheet
+  "Ginger",    // Not in Current sheet
+  "Ivory",     // Not in Current sheet (new in 2.9.26 PDF)
+  "Tyra",      // Not in Current sheet
 ];
 
 /**
- * Providers in PROVIDERS list that are NOT in the insurance snapshot.
- * These providers will fall back to clinic-level insurance assumptions.
+ * Providers in the Current sheet that are NOT in the insurance snapshot PDF.
+ * These providers have no per-provider insurance data and will show a warning.
  */
 export const PROVIDERS_WITHOUT_INSURANCE_DATA = [
   "Liz Lopez",
-  "Kylah Guerra",
-  "Jennifer Freer",
 ];
 
 /**
@@ -376,6 +376,92 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
     "UHC Commercial",
     "UHC Centennial",
     "ChampVA",
+  ],
+
+  // ================================================================
+  // Supervised providers — "Sup" in Pres Com column only.
+  // All other columns with real dates/U7 are included.
+  // Source: Provider Snapshot 2.9.26 PDF
+  // ================================================================
+
+  // Row 23: Cindy - RR - Supervised (intern)
+  // Supervisor: Renee | Pres Com: Sup
+  "Cindy Ketchum": [
+    "Presbyterian Turquoise Care",
+    "BlueCross BlueShield Commercial",
+    "BlueCross BlueShield Turquoise Care",
+    "Molina",
+    "UHC Commercial",
+    "UHC Centennial",
+  ],
+
+  // Row 20: Janet - RR - Supervised (intern)
+  // Supervisor: Angelica V | Pres Com: Sup
+  "Janet Fackrell": [
+    "Presbyterian Turquoise Care",
+    "BlueCross BlueShield Commercial",
+    "BlueCross BlueShield Turquoise Care",
+    "Molina",
+    "UHC Commercial",
+    "UHC Centennial",
+  ],
+
+  // Row 23: Jessica - ABQ - Supervised (intern)
+  // Supervisor: Debra | Pres Com: Sup
+  "Jessica Neuhart": [
+    "Presbyterian Turquoise Care",
+    "BlueCross BlueShield Commercial",
+    "BlueCross BlueShield Turquoise Care",
+    "Molina",
+    "UHC Commercial",
+    "UHC Centennial",
+  ],
+
+  // Row 23: Krista - ABQ - Supervised (LMHC)
+  // Supervisor: Sandra | Pres Com: Sup | Molina: U7
+  "Krista luna": [
+    "Presbyterian Turquoise Care",
+    "BlueCross BlueShield Commercial",
+    "BlueCross BlueShield Turquoise Care",
+    "Molina",
+    "UHC Commercial",
+    "UHC Centennial",
+  ],
+
+  // Row 23: Kristi - LL - Supervised (intern)
+  // Supervisor: Debra | Pres Com: Sup | Molina: U7
+  "Kristi Simmons": [
+    "Presbyterian Turquoise Care",
+    "BlueCross BlueShield Commercial",
+    "BlueCross BlueShield Turquoise Care",
+    "Molina",
+    "UHC Commercial",
+    "UHC Centennial",
+  ],
+
+  // Row 21: Laura - LL - Supervised (LMHC)
+  // Supervisor: Paula | Pres Com: Sup
+  // Has VACCN + Tricare dates (1.15.26) unlike most supervised providers
+  "Laura Garcia-Rosecrans": [
+    "Presbyterian Turquoise Care",
+    "BlueCross BlueShield Commercial",
+    "BlueCross BlueShield Turquoise Care",
+    "VACCN",
+    "Tricare",
+    "Molina",
+    "UHC Commercial",
+    "UHC Centennial",
+  ],
+
+  // Row 22: Laurel - RR - Supervised (intern)
+  // Supervisor: Renee | Pres Com: Sup
+  "Laurel Muehlmeyer": [
+    "Presbyterian Turquoise Care",
+    "BlueCross BlueShield Commercial",
+    "BlueCross BlueShield Turquoise Care",
+    "Molina",
+    "UHC Commercial",
+    "UHC Centennial",
   ],
 };
 
