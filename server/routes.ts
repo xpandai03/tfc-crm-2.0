@@ -106,6 +106,15 @@ function excelSerialToIso(serial: number): string {
   return date.toISOString().split("T")[0];
 }
 
+function excelSerialToMMDDYYYY(serial: number): string {
+  const excelEpoch = new Date(1899, 11, 30);
+  const jsDate = new Date(excelEpoch.getTime() + serial * 86400000);
+  const mm = String(jsDate.getMonth() + 1).padStart(2, "0");
+  const dd = String(jsDate.getDate()).padStart(2, "0");
+  const yyyy = jsDate.getFullYear();
+  return `${mm}/${dd}/${yyyy}`;
+}
+
 // ============================================================================
 // HARD-LOCKED n8n URLs - NO ENV VARS FOR CRITICAL ENDPOINTS
 // ============================================================================
@@ -2677,10 +2686,28 @@ export async function registerRoutes(
           const fullName = (snapshot.name as string) || "";
           const { firstName, lastName } = parseName(fullName);
 
+          // Convert DOB: Excel serial → MM/DD/YYYY, ISO string → MM/DD/YYYY
+          let dob = "";
+          const rawDob = snapshot.patientDob;
+          if (typeof rawDob === "number" && rawDob > 15000 && rawDob < 80000) {
+            dob = excelSerialToMMDDYYYY(rawDob);
+          } else if (typeof rawDob === "string" && rawDob.length > 0) {
+            // Handle YYYY-MM-DD → MM/DD/YYYY
+            const isoMatch = rawDob.match(/^(\d{4})-(\d{2})-(\d{2})/);
+            if (isoMatch) {
+              dob = `${isoMatch[2]}/${isoMatch[3]}/${isoMatch[1]}`;
+            } else {
+              // Already MM/DD/YYYY or other format — pass through
+              dob = rawDob;
+            }
+          }
+          console.log(`[TN DEBUG] DOB conversion: raw=${JSON.stringify(rawDob)} → "${dob}"`);
+
           const payload: TnAgentPayload = {
             first_name: firstName,
             last_name: lastName,
-            dob: (snapshot.patientDob as string) || "",
+            dob,
+            email: (snapshot.email as string) || "",
             address: (snapshot.streetAddress as string) || "",
             zip: (snapshot.zipCode as string) || "",
             sex: (snapshot.gender as string) || "",
@@ -2692,7 +2719,7 @@ export async function registerRoutes(
           console.log(`[TN DEBUG] TN_AGENT_URL:`, TN_AGENT_URL);
           console.log(`[TN DEBUG] API key present:`, !!process.env.TN_API_KEY);
           console.log(`[TN DEBUG] API key length:`, process.env.TN_API_KEY?.length ?? 0);
-          console.log(`[TN DEBUG] Payload:`, JSON.stringify(payload));
+          console.log(`[TN PAYLOAD]`, JSON.stringify(payload));
 
           // Call TN agent
           let tnResponse: Response;

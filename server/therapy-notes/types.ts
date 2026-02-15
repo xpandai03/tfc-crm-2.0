@@ -23,6 +23,7 @@ export interface TnAgentPayload {
   first_name: string;
   last_name: string;
   dob: string;
+  email: string;
   address: string;
   zip: string;
   sex: string;
