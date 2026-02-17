@@ -9,7 +9,7 @@ import { OwnerBadge } from "@/components/ui/owner-badge";
 import { cn } from "@/lib/utils";
 import { normalizeInsurance } from "@/lib/insurance-utils";
 import { getAttentionFlags } from "@/lib/api";
-import { Plus, Clock, Shield, Video, FileText, Brain, AlertTriangle } from "lucide-react";
+import { Plus, Clock, Shield, Video, FileText, Brain, AlertTriangle, Cake } from "lucide-react";
 import type { WaitlistContact } from "@shared/schema";
 
 /** Normalize modality/location for display (same logic as priority-card) */
@@ -54,6 +54,15 @@ export function DraggableCard({ contact, onAddNote, isDragging = false, currentU
 
   const isUrgent = contact.daysOnWaitlist > 60;
   const isWarning = contact.daysOnWaitlist > 30 && contact.daysOnWaitlist <= 60;
+
+  // Format DOB for display (YYYY-MM-DD → MM/DD/YYYY)
+  const dobDisplay = (() => {
+    const raw = contact?.patientDob;
+    if (!raw) return null;
+    const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) return `${isoMatch[2]}/${isoMatch[3]}/${isoMatch[1]}`;
+    return raw;
+  })();
 
   // Hover expansion data
   const insurance = normalizeInsurance(contact?.insurancePayer);
@@ -171,6 +180,17 @@ export function DraggableCard({ contact, onAddNote, isDragging = false, currentU
             <div className="grid grid-rows-[0fr] group-hover:grid-rows-[1fr] transition-[grid-template-rows] duration-150">
               <div className="overflow-hidden">
                 <div className="pt-2 mt-2 border-t border-border/50 space-y-1">
+                  {/* DOB */}
+                  <div className="flex items-center gap-1.5 text-[10px]">
+                    <Cake className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                    <span className="text-muted-foreground">DOB:</span>
+                    <span className={cn(
+                      "font-medium truncate",
+                      !dobDisplay ? "text-muted-foreground italic" : "text-foreground"
+                    )}>
+                      {dobDisplay || "---"}
+                    </span>
+                  </div>
                   {/* Insurance */}
                   <div className="flex items-center gap-1.5 text-[10px]">
                     <Shield className="h-3 w-3 text-muted-foreground flex-shrink-0" />
