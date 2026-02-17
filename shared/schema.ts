@@ -29,6 +29,7 @@ export const contactSnapshotSchema = z.object({
   // Intake info (from n8n detailed response)
   requestingFor: z.string().nullable().optional(),
   reasonForSeeking: z.string().nullable().optional(),
+  reasonForTherapy: z.string().nullable().optional(), // Excel column BD: Reason for Therapy MCQ (comma-separated)
   // Provider Matching signal (INTERNAL - not displayed in UI)
   detailedReason: z.string().nullable().optional(),
   formCompletedBy: z.string().nullable().optional(),
@@ -63,6 +64,9 @@ export const contactSnapshotSchema = z.object({
 
   // Contact preferences (Phase 6.2)
   preferredContact: z.string().nullable().optional(), // Preferred contact method
+
+  // Consent (Email Automation v1)
+  eccConsent: z.boolean().nullable().optional(),      // Electronic Communication Consent
 
   // Admin / Flags (Phase 6.3)
   custody: z.string().nullable().optional(),         // Custody status
@@ -125,6 +129,10 @@ export const waitlistContactSchema = z.object({
   daysOnWaitlist: z.number(),
   dateAdded: z.string().nullable(),
   assignedTo: z.string().nullable().optional(), // Staff email address (e.g., "jsmith@tfc.help")
+  insurancePayer: z.string().nullable().optional(), // Insurance company name (for insights aggregation)
+  modality: z.string().nullable().optional(), // Desired modality/location (for insights aggregation)
+  reasonForTherapy: z.array(z.string()).optional(), // Reason(s) for seeking services (for insights aggregation)
+  patientDob: z.string().nullable().optional(), // Patient date of birth (YYYY-MM-DD or MM/DD/YYYY)
 });
 
 export type WaitlistContact = z.infer<typeof waitlistContactSchema>;

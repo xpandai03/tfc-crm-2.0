@@ -416,6 +416,7 @@ function getMockWaitlistContacts() {
     serviceRequested: c.serviceRequested,
     daysOnWaitlist: c.daysOnWaitlist,
     dateAdded: c.dateAdded,
+    patientDob: c.patientDob || undefined,
   }));
 }
 
@@ -1334,11 +1335,14 @@ export async function registerRoutes(
                 
                 // Normalize dateAdded from Excel serial to ISO format (YYYY-MM-DD)
                 const dateAdded = normalizeExcelDate(c.dateAdded);
-                
+
                 // Normalize assignedTo: trim whitespace, convert empty string to null
                 const assignedTo = typeof c.assignedTo === "string" && c.assignedTo.trim() !== ""
                   ? c.assignedTo.trim()
                   : null;
+
+                // Normalize patientDob from Excel serial if needed
+                const patientDob = normalizeExcelDate(c.patientDob || c.dob || c.dateOfBirth) || undefined;
 
                 return {
                   ...c,
@@ -1346,6 +1350,7 @@ export async function registerRoutes(
                   insurancePayer: insurancePayer ? String(insurancePayer).trim() : undefined, // Convert null to undefined for optional field
                   modality: modality ? String(modality).trim() : undefined, // Convert null to undefined for optional field
                   dateAdded: dateAdded || null, // Normalized date (YYYY-MM-DD) or null
+                  patientDob, // Normalized DOB (YYYY-MM-DD) or undefined
                 };
               });
 
