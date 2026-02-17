@@ -209,7 +209,7 @@ export const PROVIDERS: Provider[] = [
   },
   {
     name: "Anna Aldridge",
-    credentials: "T-LMHC",
+    credentials: "LMHC",
     location: "ABQ",
     acceptingNewPatients: true,
     ageGroups: [
