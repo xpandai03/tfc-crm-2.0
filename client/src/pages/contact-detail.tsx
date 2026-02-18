@@ -138,7 +138,7 @@ export default function ContactDetail() {
   const noteTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   // TherapyNotes integration
-  const TN_ALLOWED_EMAILS = ["raunek@tfc.health", "dawn@tfc.health", "amanda@tfc.health", "chantel@tfc.health"];
+  const TN_ALLOWED_EMAILS = ["raunek@tfc.health", "dawn@tfc.health", "amanda@tfc.health", "chantel@tfc.health", "jmontano@tfc.health"];
   const canUseTn = !!user?.email && TN_ALLOWED_EMAILS.includes(user.email.toLowerCase());
 
   const { data: tnData, refetch: refetchTn } = useQuery({
