@@ -265,7 +265,7 @@ export function extractSecondaryKeywords(reason: string | null | undefined): str
 /**
  * Map city to provider location
  */
-function mapCityToLocation(city: string | null | undefined): ProviderLocation | null {
+export function mapCityToLocation(city: string | null | undefined): ProviderLocation | null {
   if (!city) return null;
   const lower = city.toLowerCase().trim();
 
