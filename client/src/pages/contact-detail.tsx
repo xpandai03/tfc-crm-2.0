@@ -54,7 +54,7 @@ import { useDataSource } from "@/lib/data-source-context";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import type { ContactSnapshot, WaitlistContact } from "@shared/schema";
-import { buildTimelineEvents, formatFullDate } from "@/lib/timeline";
+import { buildTimelineEvents, formatFullDate, type EmailSnapshotMeta } from "@/lib/timeline";
 import { ProviderMatchingModal } from "@/components/ui/provider-matching-modal";
 import { CreateTnModal } from "@/components/ui/create-tn-modal";
 import { cn } from "@/lib/utils";
@@ -429,6 +429,16 @@ export default function ContactDetail() {
     queryFn: getAttentionFlags,
   });
 
+  const { data: snapshotsData } = useQuery<{ snapshots: EmailSnapshotMeta[] }>({
+    queryKey: ["/api/email-snapshots", contactId],
+    queryFn: async () => {
+      const res = await fetch(`/api/email-snapshots/${contactId}`);
+      if (!res.ok) throw new Error("Failed to fetch email snapshots");
+      return res.json();
+    },
+    enabled: isValidId,
+  });
+
   const isContactFlagged = useMemo(() => {
     if (!flagsData?.flags || !contactId) return false;
     return flagsData.flags.some(f => f.contactId === contactId);
@@ -553,15 +563,18 @@ export default function ContactDetail() {
         dateAdded: contact.dateAdded,
         source: contactData?._source,
       });
-      return buildTimelineEvents({
-        ...contact,
-        _source: contactData?._source as "live" | "mock" | undefined,
-      });
+      return buildTimelineEvents(
+        {
+          ...contact,
+          _source: contactData?._source as "live" | "mock" | undefined,
+        },
+        snapshotsData?.snapshots,
+      );
     } catch (e) {
       console.error("[contact-detail] Error building timeline events:", e);
       return [];
     }
-  }, [contact, contactData?._source]);
+  }, [contact, contactData?._source, snapshotsData?.snapshots]);
 
   // Derive "Last Contact" date from most recent note in timeline
   // Falls back to contact.lastContact if no timeline notes exist

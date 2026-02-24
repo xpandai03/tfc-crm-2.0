@@ -6,6 +6,7 @@ import { createServer } from "http";
 import { configureAuth, authMiddleware } from "./auth";
 import { initDatabase, startReminderCron } from "./reminders";
 import { initTherapyNotesTable } from "./therapy-notes";
+import { initEmailSnapshotsTable } from "./email-snapshots";
 
 const app = express();
 const httpServer = createServer(app);
@@ -90,6 +91,7 @@ app.use((req, res, next) => {
   try {
     initDatabase();
     initTherapyNotesTable();
+    initEmailSnapshotsTable();
     startReminderCron();
     log("Reminder system initialized");
   } catch (err) {

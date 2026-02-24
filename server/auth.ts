@@ -300,6 +300,19 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     "/api/me", // This handles its own auth check
   ];
 
+  // Public assets that must be accessible without auth (e.g., for email templates)
+  // These are served to external clients like email apps
+  const publicAssets = [
+    "/tfc-logo.jpg",      // Logo used in email templates
+    "/favicon.png",
+    "/favicon.svg",
+  ];
+
+  // Check if path is a public asset (exact match)
+  if (publicAssets.includes(req.path)) {
+    return next();
+  }
+
   // Check if path starts with any public path
   const isPublicPath = publicPaths.some(
     (path) => req.path === path || req.path.startsWith(path + "?")

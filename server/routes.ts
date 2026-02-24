@@ -17,6 +17,7 @@ import {
   isStaleInProgress,
 } from "./therapy-notes";
 import type { TnAgentPayload, TnAgentResponse } from "./therapy-notes";
+import { saveEmailSnapshot, getEmailSnapshot, getSnapshotsForContact } from "./email-snapshots";
 import * as XLSX from "xlsx";
 import * as path from "path";
 
@@ -2473,6 +2474,22 @@ export async function registerRoutes(
         emailId: sendResult.emailId,
       });
 
+      // Save email snapshot for qualifying templates (fire-and-forget)
+      const QUALIFYING_TEMPLATES = ["appointment-confirmation", "post-appointment-survey", "intake-form-reminder"];
+      if (QUALIFYING_TEMPLATES.includes(templateId) && sendResult.renderedHtml) {
+        try {
+          saveEmailSnapshot({
+            contactId,
+            templateId,
+            subject: sendResult.renderedSubject || templateName,
+            bodyHtml: sendResult.renderedHtml,
+            sentByEmail: userEmail,
+          });
+        } catch (snapshotErr) {
+          console.error("[send-email] Failed to save email snapshot (non-blocking):", snapshotErr);
+        }
+      }
+
       // Fire-and-forget: log timeline note AFTER response is sent
       if (DATA_MODE === "live" && sendResult.success) {
         const timestamp = new Date().toISOString();
@@ -2855,6 +2872,43 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[therapy-notes] Error in create endpoint:", error);
       return res.status(500).json({ error: "Failed to start TherapyNotes creation" });
+    }
+  });
+
+  // ============================================================================
+  // Email Snapshots API
+  // ============================================================================
+
+  // Get snapshot metadata for a contact (no HTML body)
+  app.get("/api/email-snapshots/:contactId", async (req, res) => {
+    try {
+      const contactId = parseInt(req.params.contactId, 10);
+      if (isNaN(contactId)) {
+        return res.status(400).json({ error: "contactId must be a number" });
+      }
+      const snapshots = getSnapshotsForContact(contactId);
+      return res.json({ snapshots });
+    } catch (error) {
+      console.error("[email-snapshots] Error fetching snapshots:", error);
+      return res.status(500).json({ error: "Failed to fetch email snapshots" });
+    }
+  });
+
+  // Get a single snapshot with full HTML body (for download)
+  app.get("/api/email-snapshot/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) {
+        return res.status(400).json({ error: "id must be a number" });
+      }
+      const snapshot = getEmailSnapshot(id);
+      if (!snapshot) {
+        return res.status(404).json({ error: "Snapshot not found" });
+      }
+      return res.json(snapshot);
+    } catch (error) {
+      console.error("[email-snapshots] Error fetching snapshot:", error);
+      return res.status(500).json({ error: "Failed to fetch email snapshot" });
     }
   });
 

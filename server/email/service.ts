@@ -60,6 +60,8 @@ export interface SendResult {
   success: boolean;
   error?: string;
   emailId?: string;
+  renderedHtml?: string;
+  renderedSubject?: string;
 }
 
 /**
@@ -194,6 +196,7 @@ export async function sendTemplatedEmail(params: {
     console.log(`[email-service] FROM: ${sender}`);
     console.log(`[email-service] TO: ${contact.email}`);
     console.log(`[email-service] REPLY-TO: ${REPLY_TO_EMAIL}`);
+    console.log(`[email-service] CC: ${REPLY_TO_EMAIL}`);
     console.log(`[email-service] Template: ${rendered.templateName}`);
     console.log(`[email-service] Admin (audit only): ${sentByEmail}`);
     console.log(`[email-service] ECC Status: ${eccStatus}`);
@@ -202,6 +205,7 @@ export async function sendTemplatedEmail(params: {
       from: sender,
       to: contact.email,
       replyTo: REPLY_TO_EMAIL, // All replies routed to admin inbox (camelCase required by Resend SDK v6+)
+      cc: [REPLY_TO_EMAIL],    // Admin dept receives a copy of every templated email
       subject: rendered.subject,
       html: rendered.bodyHtml,
       text: rendered.bodyText,
@@ -219,6 +223,8 @@ export async function sendTemplatedEmail(params: {
     return {
       success: true,
       emailId: result.data?.id,
+      renderedHtml: rendered.bodyHtml,
+      renderedSubject: rendered.subject,
     };
   } catch (error) {
     const errorMessage =

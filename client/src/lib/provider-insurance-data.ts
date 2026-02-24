@@ -42,6 +42,7 @@ export const PROVIDER_NAME_MAPPING: Record<string, string> = {
   "Cindy": "Cindy Ketchum",
   "Danielle": "Danielle Burke",
   "Debra": "Debra Dederich-Elsner",
+  "Elizabeth": "Liz Lopez",
   "Janet": "Janet Fackrell",
   "Jennifer B": "Jennifer Bogart",
   "Jessica": "Jessica Neuhart",
@@ -61,7 +62,6 @@ export const PROVIDER_NAME_MAPPING: Record<string, string> = {
  * Provider Skills Spreadsheet. These are inactive or non-patient-facing.
  */
 export const UNMATCHED_SNAPSHOT_PROVIDERS = [
-  "Elizabeth",  // Not in Current sheet
   "Ginger",    // Not in Current sheet
   "Ivory",     // Not in Current sheet (new in 2.9.26 PDF)
   "Tyra",      // Not in Current sheet
@@ -71,8 +71,7 @@ export const UNMATCHED_SNAPSHOT_PROVIDERS = [
  * Providers in the Current sheet that are NOT in the insurance snapshot PDF.
  * These providers have no per-provider insurance data and will show a warning.
  */
-export const PROVIDERS_WITHOUT_INSURANCE_DATA = [
-  "Liz Lopez",
+export const PROVIDERS_WITHOUT_INSURANCE_DATA: string[] = [
 ];
 
 /**
@@ -253,6 +252,25 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
 
   // Row 11: Debra - LL - Full credentials
   "Debra Dederich-Elsner": [
+    "Presbyterian Commercial",
+    "Presbyterian Turquoise Care",
+    "BlueCross BlueShield Commercial",
+    "BlueCross BlueShield Turquoise Care",
+    "Partners Direct Health",
+    "VACCN",
+    "Tricare",
+    "Aetna",
+    "ComPsych",
+    "Medicare",
+    "Molina",
+    "Carelon",
+    "UHC Commercial",
+    "UHC Centennial",
+    "ChampVA",
+  ],
+
+  // Row 12: Elizabeth (Liz Lopez) - LL - Full credentials
+  "Liz Lopez": [
     "Presbyterian Commercial",
     "Presbyterian Turquoise Care",
     "BlueCross BlueShield Commercial",

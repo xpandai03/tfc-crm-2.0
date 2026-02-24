@@ -247,9 +247,23 @@ export function SendEmailModal({
         }),
       });
 
-      const result = await response.json();
+      // Defensive: handle empty or non-JSON responses gracefully.
+      // The backend may close the connection before sending a body
+      // (e.g., proxy timeout on Fly.io after slow n8n calls).
+      const text = await response.text();
+      let result: { success?: boolean; error?: string } = {};
+      if (text) {
+        try {
+          result = JSON.parse(text);
+        } catch {
+          // Response was not valid JSON — treat 2xx as success
+          if (!response.ok) {
+            throw new Error("Server returned an invalid response");
+          }
+        }
+      }
 
-      if (!response.ok || !result.success) {
+      if (!response.ok || (text && !result.success)) {
         throw new Error(result.error || "Failed to send email");
       }
 

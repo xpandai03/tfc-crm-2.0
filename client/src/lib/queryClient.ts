@@ -17,6 +17,7 @@ export async function apiRequest(
     headers: data ? { "Content-Type": "application/json" } : {},
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
+    cache: "no-store", // CRITICAL: Prevent browser caching to avoid stale fallback data
   });
 
   await throwIfResNotOk(res);
@@ -31,6 +32,7 @@ export const getQueryFn: <T>(options: {
   async ({ queryKey }) => {
     const res = await fetch(queryKey.join("/") as string, {
       credentials: "include",
+      cache: "no-store", // CRITICAL: Prevent browser caching to avoid stale fallback data
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
