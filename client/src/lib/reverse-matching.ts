@@ -11,6 +11,7 @@ import {
   inferAgeGroupFromRequestingFor,
   extractPrimarySpecialty,
   extractSecondaryKeywords,
+  mapCityToLocation,
   type MatchingContext,
   type MatchReason,
 } from "./provider-matching";
@@ -33,6 +34,21 @@ export interface PatientMatchResult {
 }
 
 /**
+ * Extract city name from modality string.
+ * "In Person - Albuquerque" → "Albuquerque"
+ * "In Person - Rio Rancho"  → "Rio Rancho"
+ * "Telehealth" / null       → null
+ */
+function extractLocationFromModality(modality: string | null | undefined): string | null {
+  if (!modality) return null;
+  if (modality.toLowerCase().includes("telehealth")) return null;
+
+  // Match "In Person - <City>" or "In Person-<City>" (dash/en-dash/em-dash)
+  const match = modality.match(/[-–—]\s*(.+)$/);
+  return match ? match[1].trim() : null;
+}
+
+/**
  * Build a MatchingContext from a WaitlistContact.
  * Maps the lighter WaitlistContact fields to the same context
  * structure that computeProviderScore expects.
@@ -47,7 +63,7 @@ export function buildMatchingContextFromWaitlistContact(
     age: null,
     primarySpecialty: extractPrimarySpecialty(reasonString),
     secondaryKeywords: extractSecondaryKeywords(reasonString),
-    location: null,
+    location: extractLocationFromModality(contact.modality),
     modality: contact.modality || null,
     insurance: normalizeInsurance(contact.insurancePayer),
   };
@@ -74,6 +90,13 @@ export function computePatientMatches(
     if (!isActiveStatus(contact.statusCode)) continue;
 
     const context = buildMatchingContextFromWaitlistContact(contact);
+
+    // Hard constraint: In-person patients must match provider's location
+    if (context.location) {
+      const contactLocation = mapCityToLocation(context.location);
+      if (contactLocation && contactLocation !== provider.location) continue;
+    }
+
     const useStrict = context.insurance !== "Unknown" && providerHasInsurance;
     const match = computeProviderScore(provider, context, useStrict);
 
