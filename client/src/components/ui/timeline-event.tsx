@@ -2,10 +2,10 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { MessageSquare, Flag, RefreshCw, Info, Mail, ChevronDown, ChevronUp, Download, Loader2 } from "lucide-react";
+import { MessageSquare, Flag, RefreshCw, Info, Mail, ChevronDown, ChevronUp, Download } from "lucide-react";
 import type { TimelineEvent } from "@/lib/timeline";
 import { formatRelativeTime, formatFullDate } from "@/lib/timeline";
-import { downloadEmailSnapshot } from "@/lib/email-snapshot";
+import { SnapshotPreviewModal } from "@/components/ui/snapshot-preview-modal";
 
 interface TimelineEventCardProps {
   event: TimelineEvent;
@@ -70,7 +70,7 @@ function getEventStyles(event: TimelineEvent) {
 
 export function TimelineEventCard({ event, className }: TimelineEventCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const [isDownloading, setIsDownloading] = useState(false);
+  const [isSnapshotOpen, setIsSnapshotOpen] = useState(false);
 
   const Icon = getEventIcon(event);
   const styles = getEventStyles(event);
@@ -83,101 +83,90 @@ export function TimelineEventCard({ event, className }: TimelineEventCardProps) 
   const relativeTime = formatRelativeTime(event.timestamp);
   const fullDate = formatFullDate(event.timestamp);
 
-  const handleDownloadSnapshot = async () => {
-    if (!event.snapshotId || isDownloading) return;
-    setIsDownloading(true);
-    try {
-      await downloadEmailSnapshot(event.snapshotId);
-    } catch (err) {
-      console.error("[timeline] Failed to download snapshot:", err);
-    } finally {
-      setIsDownloading(false);
-    }
-  };
-
   return (
-    <Card className={cn("shadow-sm", styles.borderColor, className)}>
-      <CardContent className="p-3">
-        {/* Header row: Icon, author (if any), and time */}
-        <div className="flex items-start justify-between gap-2 mb-2">
-          <div className="flex items-center gap-2">
-            <div className={cn(
-              "flex items-center justify-center w-6 h-6 rounded-full",
-              styles.iconBg
-            )}>
-              <Icon className={cn("h-3.5 w-3.5", styles.iconColor)} />
+    <>
+      <Card className={cn("shadow-sm", styles.borderColor, className)}>
+        <CardContent className="p-3">
+          {/* Header row: Icon, author (if any), and time */}
+          <div className="flex items-start justify-between gap-2 mb-2">
+            <div className="flex items-center gap-2">
+              <div className={cn(
+                "flex items-center justify-center w-6 h-6 rounded-full",
+                styles.iconBg
+              )}>
+                <Icon className={cn("h-3.5 w-3.5", styles.iconColor)} />
+              </div>
+              {event.author && (
+                <span className="text-xs font-medium text-muted-foreground">
+                  {event.author}
+                </span>
+              )}
+              {event.type === "milestone" && event.milestoneType && (
+                <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                  {event.milestoneType === "added" ? "Waitlist" : event.milestoneType}
+                </span>
+              )}
             </div>
-            {event.author && (
-              <span className="text-xs font-medium text-muted-foreground">
-                {event.author}
-              </span>
-            )}
-            {event.type === "milestone" && event.milestoneType && (
-              <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
-                {event.milestoneType === "added" ? "Waitlist" : event.milestoneType}
-              </span>
-            )}
+            <span className="text-xs text-muted-foreground shrink-0">
+              {relativeTime}
+            </span>
           </div>
-          <span className="text-xs text-muted-foreground shrink-0">
-            {relativeTime}
-          </span>
-        </div>
 
-        {/* Content */}
-        {displayContent && (
-          <p className="text-sm text-foreground whitespace-pre-wrap break-words">
-            {displayContent}
+          {/* Content */}
+          {displayContent && (
+            <p className="text-sm text-foreground whitespace-pre-wrap break-words">
+              {displayContent}
+            </p>
+          )}
+
+          {/* Show more/less toggle */}
+          {needsTruncation && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 mt-1 text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => setIsExpanded(!isExpanded)}
+            >
+              {isExpanded ? (
+                <>
+                  Show less <ChevronUp className="h-3 w-3 ml-1" />
+                </>
+              ) : (
+                <>
+                  Show more <ChevronDown className="h-3 w-3 ml-1" />
+                </>
+              )}
+            </Button>
+          )}
+
+          {/* Download Snapshot button for email events with snapshots */}
+          {event.type === "email_sent" && event.snapshotId && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-3 mt-2 text-xs border-violet-300 text-violet-700 hover:bg-violet-50 dark:border-violet-700 dark:text-violet-400 dark:hover:bg-violet-900/20"
+              onClick={() => setIsSnapshotOpen(true)}
+            >
+              <Download className="h-3 w-3 mr-1.5" />
+              Download Snapshot
+            </Button>
+          )}
+
+          {/* Full date (subtle) */}
+          <p className="text-[10px] text-muted-foreground/70 mt-2">
+            {fullDate}
           </p>
-        )}
+        </CardContent>
+      </Card>
 
-        {/* Show more/less toggle */}
-        {needsTruncation && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 px-2 mt-1 text-xs text-muted-foreground hover:text-foreground"
-            onClick={() => setIsExpanded(!isExpanded)}
-          >
-            {isExpanded ? (
-              <>
-                Show less <ChevronUp className="h-3 w-3 ml-1" />
-              </>
-            ) : (
-              <>
-                Show more <ChevronDown className="h-3 w-3 ml-1" />
-              </>
-            )}
-          </Button>
-        )}
-
-        {/* Download Snapshot button for email events with snapshots */}
-        {event.type === "email_sent" && event.snapshotId && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 px-3 mt-2 text-xs border-violet-300 text-violet-700 hover:bg-violet-50 dark:border-violet-700 dark:text-violet-400 dark:hover:bg-violet-900/20"
-            onClick={handleDownloadSnapshot}
-            disabled={isDownloading}
-          >
-            {isDownloading ? (
-              <>
-                <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                Downloading...
-              </>
-            ) : (
-              <>
-                <Download className="h-3 w-3 mr-1.5" />
-                Download Snapshot
-              </>
-            )}
-          </Button>
-        )}
-
-        {/* Full date (subtle) */}
-        <p className="text-[10px] text-muted-foreground/70 mt-2">
-          {fullDate}
-        </p>
-      </CardContent>
-    </Card>
+      {/* Snapshot preview modal — renders email visibly for PDF capture */}
+      {event.snapshotId && (
+        <SnapshotPreviewModal
+          isOpen={isSnapshotOpen}
+          onClose={() => setIsSnapshotOpen(false)}
+          snapshotId={event.snapshotId}
+        />
+      )}
+    </>
   );
 }
