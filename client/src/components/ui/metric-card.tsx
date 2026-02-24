@@ -18,10 +18,10 @@ interface MetricCardProps {
 }
 
 const variantStyles = {
-  default: "",
-  warning: "bg-amber-500/15 border-amber-500/20 backdrop-blur-sm",
-  danger: "bg-red-500/15 border-red-500/20 backdrop-blur-sm",
-  success: "bg-green-500/15 border-green-500/20 backdrop-blur-sm",
+  default: "bg-white/70 dark:bg-gray-900/70 backdrop-blur-md border-white/40 dark:border-gray-700/40",
+  warning: "bg-amber-500/20 dark:bg-amber-500/10 border-amber-500/30 dark:border-amber-500/20 backdrop-blur-md shadow-amber-500/10",
+  danger: "bg-red-500/20 dark:bg-red-500/10 border-red-500/30 dark:border-red-500/20 backdrop-blur-md shadow-red-500/10",
+  success: "bg-green-500/20 dark:bg-green-500/10 border-green-500/30 dark:border-green-500/20 backdrop-blur-md shadow-green-500/10",
 };
 
 const variantTextStyles = {
@@ -59,8 +59,8 @@ export function MetricCard({
   const textStyles = variantTextStyles[variant];
 
   return (
-    <Card className={cn("overflow-visible", variantStyles[variant], className)}>
-      <CardContent className="p-4">
+    <Card className={cn("overflow-visible transition-all duration-300 hover:shadow-xl hover:shadow-black/10 dark:hover:shadow-black/30 hover:-translate-y-0.5", variantStyles[variant], className)}>
+      <CardContent className="p-5">
         <div className="flex items-center gap-1.5 mb-1">
           <p className={cn("text-sm", textStyles.label)}>{label}</p>
           {tooltip && (

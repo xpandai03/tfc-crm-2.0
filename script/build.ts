@@ -7,6 +7,7 @@ import { rm, readFile } from "fs/promises";
 const allowlist = [
   "@google/generative-ai",
   "axios",
+  // better-sqlite3 is excluded - native modules must remain external
   "connect-pg-simple",
   "cors",
   "date-fns",
@@ -19,11 +20,13 @@ const allowlist = [
   "memorystore",
   "multer",
   "nanoid",
+  "node-cron",
   "nodemailer",
   "openai",
   "passport",
   "passport-local",
   "pg",
+  "resend",
   "stripe",
   "uuid",
   "ws",

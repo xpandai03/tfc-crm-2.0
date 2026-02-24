@@ -14,6 +14,7 @@ interface DroppableColumnProps {
   className?: string;
   color?: "slate" | "amber" | "purple" | "red";
   currentUserEmail?: string;
+  isInactiveColumn?: boolean;
 }
 
 // Color scheme mapping for umbrella columns
@@ -48,6 +49,7 @@ export function DroppableColumn({
   className,
   color = "slate",
   currentUserEmail,
+  isInactiveColumn = false,
 }: DroppableColumnProps) {
   const { isOver, setNodeRef } = useDroppable({
     id: columnId,
@@ -62,15 +64,18 @@ export function DroppableColumn({
         "w-[280px] flex-shrink-0 flex flex-col overflow-visible transition-colors duration-200",
         styles.border,
         isOver && "ring-2 ring-primary ring-offset-2",
+        isInactiveColumn && "opacity-75",
         className
       )}
       data-testid={`column-${columnId}`}
     >
       <CardHeader className={cn("pb-3 flex-shrink-0 rounded-t-lg", styles.header)}>
         <CardTitle className="flex items-center justify-between">
-          <span className="text-sm font-medium">{title}</span>
+          <span className="text-sm font-medium">
+            {title}
+          </span>
           <Badge className={cn("ml-2", styles.badge)} data-testid={`badge-count-${columnId}`}>
-            {contacts.length}
+            {isInactiveColumn ? `${contacts.length} inactive` : contacts.length}
           </Badge>
         </CardTitle>
       </CardHeader>

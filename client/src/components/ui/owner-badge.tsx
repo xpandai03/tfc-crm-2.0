@@ -34,6 +34,27 @@ function getInitialsFromEmail(email: string): string {
   return localPart.substring(0, 2).toUpperCase();
 }
 
+/**
+ * Derive a display name from an email address
+ * e.g., "raunek@tfc.help" -> "Raunek"
+ * e.g., "jessica.smith@tfc.help" -> "Jessica Smith"
+ */
+function getNameFromEmail(email: string): string {
+  const localPart = email.split("@")[0];
+  if (!localPart) return email;
+
+  // Handle firstname.lastname format
+  const dotParts = localPart.split(".");
+  if (dotParts.length >= 2) {
+    return dotParts
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+      .join(" ");
+  }
+
+  // Single word - capitalize first letter
+  return localPart.charAt(0).toUpperCase() + localPart.slice(1).toLowerCase();
+}
+
 export function OwnerBadge({
   email,
   currentUserEmail,
@@ -92,7 +113,10 @@ export function OwnerBadge({
         </div>
       </TooltipTrigger>
       <TooltipContent side="top" className="text-xs">
-        {email}
+        <div className="flex flex-col">
+          <span className="font-medium">{getNameFromEmail(email)}</span>
+          <span className="text-muted-foreground">{email}</span>
+        </div>
       </TooltipContent>
     </Tooltip>
   );

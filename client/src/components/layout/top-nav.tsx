@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Home, Users, BarChart3 } from "lucide-react";
+import { Home, Users, BarChart3, UserCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDataSource } from "@/lib/data-source-context";
 import { UserMenu } from "./user-menu";
@@ -8,6 +8,7 @@ const navItems = [
   { href: "/", label: "Today", icon: Home },
   { href: "/waitlist", label: "Waitlist", icon: Users },
   { href: "/insights", label: "Insights", icon: BarChart3 },
+  { href: "/providers", label: "Providers", icon: UserCheck, beta: true },
 ];
 
 // Format relative time for last sync
@@ -61,10 +62,10 @@ export function TopNav() {
 
         <nav className="flex items-center gap-1 ml-auto">
           {navItems.map((item) => {
-            const isActive = location === item.href || 
+            const isActive = location === item.href ||
               (item.href !== "/" && location.startsWith(item.href));
             const Icon = item.icon;
-            
+
             return (
               <Link key={item.href} href={item.href}>
                 <span
@@ -79,6 +80,11 @@ export function TopNav() {
                 >
                   <Icon className="h-4 w-4" />
                   <span className="hidden sm:inline-block">{item.label}</span>
+                  {item.beta && (
+                    <span className="hidden sm:inline-block text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400 font-medium">
+                      Beta
+                    </span>
+                  )}
                 </span>
               </Link>
             );

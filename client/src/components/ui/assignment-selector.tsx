@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -12,13 +12,17 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
-import { assignContact, getStaffList } from "@/lib/api";
+import { getStaffList } from "@/lib/api";
 import { Check, ChevronDown, User, UserMinus, UserPlus, Loader2 } from "lucide-react";
 
 interface AssignmentSelectorProps {
   contactId: number;
-  currentAssignee: string | null | undefined;
-  onAssignmentChange?: (assignee: string | null) => void;
+  /** Current assignee value - controlled by parent */
+  value: string | null | undefined;
+  /** Called immediately when user selects a new assignee (for optimistic update) */
+  onChange: (newAssignee: string | null) => void;
+  /** Whether an assignment operation is in progress */
+  isLoading?: boolean;
 }
 
 /**
@@ -35,14 +39,39 @@ function getInitialsFromEmail(email: string): string {
   return localPart.substring(0, 2).toUpperCase();
 }
 
+/**
+ * Derive a display name from an email address
+ * e.g., "raunek@tfc.help" -> "Raunek"
+ * e.g., "jessica.smith@tfc.help" -> "Jessica Smith"
+ */
+function getNameFromEmail(email: string): string {
+  const localPart = email.split("@")[0];
+  if (!localPart) return email;
+
+  // Handle firstname.lastname format
+  const dotParts = localPart.split(".");
+  if (dotParts.length >= 2) {
+    return dotParts
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+      .join(" ");
+  }
+
+  // Single word - capitalize first letter
+  return localPart.charAt(0).toUpperCase() + localPart.slice(1).toLowerCase();
+}
+
+/**
+ * Controlled AssignmentSelector component.
+ * Parent owns the state and handles API calls with optimistic updates.
+ */
 export function AssignmentSelector({
   contactId,
-  currentAssignee,
-  onAssignmentChange,
+  value,
+  onChange,
+  isLoading = false,
 }: AssignmentSelectorProps) {
   const { toast } = useToast();
   const { user } = useAuth();
-  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [manualEmail, setManualEmail] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -56,56 +85,11 @@ export function AssignmentSelector({
 
   const staff = staffData?.staff || [];
 
-  // Assignment mutation
-  const assignMutation = useMutation({
-    mutationFn: ({ contactId, assignedTo }: { contactId: number; assignedTo: string | null }) =>
-      assignContact(contactId, assignedTo),
-    onMutate: async ({ assignedTo }) => {
-      const toastRef = toast({
-        title: "Updating assignment...",
-        description: assignedTo ? `Assigning to ${assignedTo}` : "Removing assignment",
-      });
-
-      setOpen(false);
-      setManualEmail("");
-
-      return { toastRef };
-    },
-    onSuccess: (data, _variables, context) => {
-      if (context?.toastRef) {
-        context.toastRef.update({
-          id: context.toastRef.id,
-          title: "Assignment updated",
-          description: data.assignedTo ? `Assigned to ${data.assignedTo}` : "Unassigned",
-        });
-        setTimeout(() => context.toastRef.dismiss(), 2000);
-      }
-
-      // Notify parent of change
-      onAssignmentChange?.(data.assignedTo);
-
-      // Invalidate queries
-      queryClient.invalidateQueries({ queryKey: ["/api/contact", contactId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/staff-list"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/get-waitlist-board"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"] });
-    },
-    onError: (error, _variables, context) => {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      if (context?.toastRef) {
-        context.toastRef.update({
-          id: context.toastRef.id,
-          title: "Assignment failed",
-          description: errorMessage,
-          variant: "destructive",
-        });
-        setTimeout(() => context.toastRef.dismiss(), 5000);
-      }
-    },
-  });
-
   const handleAssign = (email: string | null) => {
-    assignMutation.mutate({ contactId, assignedTo: email });
+    setOpen(false);
+    setManualEmail("");
+    // Call parent's onChange immediately for optimistic update
+    onChange(email);
   };
 
   const handleAssignToMe = () => {
@@ -141,14 +125,8 @@ export function AssignmentSelector({
     }
   }, [open]);
 
-  const isCurrentUser = currentAssignee && user?.email &&
-    currentAssignee.toLowerCase() === user.email.toLowerCase();
-
-  const displayValue = currentAssignee
-    ? (isCurrentUser ? "You" : getInitialsFromEmail(currentAssignee))
-    : "Unassigned";
-
-  const isLoading = assignMutation.isPending;
+  const isCurrentUser = value && user?.email &&
+    value.toLowerCase() === user.email.toLowerCase();
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -163,20 +141,20 @@ export function AssignmentSelector({
           <div className="flex items-center gap-2">
             {isLoading ? (
               <Loader2 className="h-4 w-4 animate-spin" />
-            ) : currentAssignee ? (
+            ) : value ? (
               <Avatar className="h-5 w-5">
                 <AvatarFallback className={cn(
                   "text-[10px] font-medium",
                   isCurrentUser ? "bg-primary/20 text-primary" : "bg-muted"
                 )}>
-                  {getInitialsFromEmail(currentAssignee)}
+                  {getInitialsFromEmail(value)}
                 </AvatarFallback>
               </Avatar>
             ) : (
               <User className="h-4 w-4 text-muted-foreground" />
             )}
-            <span className={cn(!currentAssignee && "text-muted-foreground")}>
-              {currentAssignee || "Unassigned"}
+            <span className={cn(!value && "text-muted-foreground")}>
+              {value ? getNameFromEmail(value) : "Unassigned"}
             </span>
           </div>
           <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
@@ -203,11 +181,11 @@ export function AssignmentSelector({
             variant="ghost"
             className="w-full justify-start gap-2 text-muted-foreground"
             onClick={() => handleAssign(null)}
-            disabled={isLoading || !currentAssignee}
+            disabled={isLoading || !value}
           >
             <UserMinus className="h-4 w-4" />
             Unassign
-            {!currentAssignee && <Check className="h-4 w-4 ml-auto" />}
+            {!value && <Check className="h-4 w-4 ml-auto" />}
           </Button>
         </div>
 
@@ -224,8 +202,9 @@ export function AssignmentSelector({
               ) : (
                 <div className="space-y-1">
                   {staff.map((email) => {
-                    const isSelected = currentAssignee?.toLowerCase() === email.toLowerCase();
+                    const isSelected = value?.toLowerCase() === email.toLowerCase();
                     const initials = getInitialsFromEmail(email);
+                    const displayName = getNameFromEmail(email);
                     return (
                       <Button
                         key={email}
@@ -239,7 +218,10 @@ export function AssignmentSelector({
                             {initials}
                           </AvatarFallback>
                         </Avatar>
-                        <span className="truncate text-sm">{email}</span>
+                        <div className="flex flex-col items-start min-w-0 flex-1">
+                          <span className="truncate text-sm font-medium">{displayName}</span>
+                          <span className="truncate text-xs text-muted-foreground">{email}</span>
+                        </div>
                         {isSelected && <Check className="h-4 w-4 ml-auto shrink-0" />}
                       </Button>
                     );

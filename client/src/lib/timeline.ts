@@ -9,7 +9,7 @@
 
 export interface TimelineEvent {
   id: string;
-  type: "note" | "status_change" | "milestone" | "system";
+  type: "note" | "status_change" | "milestone" | "system" | "email_sent";
   timestamp: string; // ISO date or datetime string
 
   // Content fields
@@ -22,6 +22,14 @@ export interface TimelineEvent {
 
   // Milestone specific
   milestoneType?: "added" | "scheduled" | "closed" | "insurance_rejected";
+
+  // Email event specific (v1)
+  emailTemplate?: string;
+  emailResult?: "sent" | "failed";
+  eccStatus?: "present" | "missing";
+
+  // Snapshot download
+  snapshotId?: number;
 
   // Metadata
   source?: "live" | "mock" | "derived";
@@ -172,6 +180,35 @@ function safeContent(content: unknown, maxLength = 10000): string {
   return str;
 }
 
+// Qualifying email template names → IDs for snapshot matching
+const EMAIL_TEMPLATE_NAME_TO_ID: Record<string, string> = {
+  "Appointment Confirmation": "appointment-confirmation",
+  "Post-Appointment Survey": "post-appointment-survey",
+  "Intake Form Reminder": "intake-form-reminder",
+};
+
+/** Snapshot metadata shape (from /api/email-snapshots/:contactId) */
+export interface EmailSnapshotMeta {
+  id: number;
+  contactId: number;
+  templateId: string;
+  subject: string;
+  sentByEmail: string;
+  sentAt: string;
+}
+
+/**
+ * Parse an [Email] prefixed note.
+ * Returns extracted template name or null if not an email note.
+ */
+function parseEmailNote(content: string): { templateName: string; templateId: string | null } | null {
+  const match = content.match(/^\[Email\]\s*(.+?)\s+sent/);
+  if (!match) return null;
+  const templateName = match[1];
+  const templateId = EMAIL_TEMPLATE_NAME_TO_ID[templateName] ?? null;
+  return { templateName, templateId };
+}
+
 /**
  * Build timeline events from a contact snapshot.
  * Returns events sorted by timestamp (most recent first).
@@ -179,7 +216,8 @@ function safeContent(content: unknown, maxLength = 10000): string {
  * FAIL-SOFT: Always returns an array, never throws.
  */
 export function buildTimelineEvents(
-  snapshot: ContactSnapshot | null | undefined
+  snapshot: ContactSnapshot | null | undefined,
+  snapshots?: EmailSnapshotMeta[],
 ): TimelineEvent[] {
   // Guard: null/undefined snapshot
   if (!snapshot || typeof snapshot !== "object") {
@@ -205,14 +243,49 @@ export function buildTimelineEvents(
 
         // Only add if we have content (date is optional, will show "Unknown date")
         if (content) {
-          events.push({
-            id: generateEventKey("note", idx, parsedDate),
-            type: "note",
-            timestamp: parsedDate || "",
-            content,
-            author: note.author, // Pass through author initials from parsed note (Phase 6)
-            source,
-          });
+          // Detect [Email] prefixed notes and promote to email_sent type
+          const emailParsed = parseEmailNote(content);
+          if (emailParsed) {
+            // Try to match a snapshot by templateId and timestamp proximity
+            let matchedSnapshotId: number | undefined;
+            if (emailParsed.templateId && snapshots && parsedDate) {
+              const noteTime = new Date(parsedDate).getTime();
+              for (const snap of snapshots) {
+                if (snap.templateId !== emailParsed.templateId) continue;
+                const snapTime = new Date(snap.sentAt).getTime();
+                // Match within 5 minutes
+                if (Math.abs(noteTime - snapTime) < 5 * 60 * 1000) {
+                  matchedSnapshotId = snap.id;
+                  break;
+                }
+              }
+              // If no time match, fall back to most recent snapshot with same templateId
+              if (!matchedSnapshotId) {
+                const match = snapshots.find((s) => s.templateId === emailParsed.templateId);
+                if (match) matchedSnapshotId = match.id;
+              }
+            }
+
+            events.push({
+              id: generateEventKey("email", idx, parsedDate),
+              type: "email_sent",
+              timestamp: parsedDate || "",
+              content,
+              author: note.author,
+              emailTemplate: emailParsed.templateName,
+              snapshotId: matchedSnapshotId,
+              source,
+            });
+          } else {
+            events.push({
+              id: generateEventKey("note", idx, parsedDate),
+              type: "note",
+              timestamp: parsedDate || "",
+              content,
+              author: note.author,
+              source,
+            });
+          }
         }
       });
     }

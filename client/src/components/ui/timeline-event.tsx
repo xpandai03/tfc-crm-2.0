@@ -2,9 +2,10 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { MessageSquare, Flag, RefreshCw, Info, ChevronDown, ChevronUp } from "lucide-react";
+import { MessageSquare, Flag, RefreshCw, Info, Mail, ChevronDown, ChevronUp, Download, Loader2 } from "lucide-react";
 import type { TimelineEvent } from "@/lib/timeline";
 import { formatRelativeTime, formatFullDate } from "@/lib/timeline";
+import { downloadEmailSnapshot } from "@/lib/email-snapshot";
 
 interface TimelineEventCardProps {
   event: TimelineEvent;
@@ -22,6 +23,8 @@ function getEventIcon(event: TimelineEvent) {
       return Flag;
     case "status_change":
       return RefreshCw;
+    case "email_sent":
+      return Mail;
     case "system":
     default:
       return Info;
@@ -49,6 +52,12 @@ function getEventStyles(event: TimelineEvent) {
         iconColor: "text-blue-600 dark:text-blue-400",
         borderColor: "border-l-2 border-l-blue-500",
       };
+    case "email_sent":
+      return {
+        iconBg: "bg-violet-100 dark:bg-violet-900/30",
+        iconColor: "text-violet-600 dark:text-violet-400",
+        borderColor: "border-l-2 border-l-violet-500",
+      };
     case "system":
     default:
       return {
@@ -61,6 +70,7 @@ function getEventStyles(event: TimelineEvent) {
 
 export function TimelineEventCard({ event, className }: TimelineEventCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   const Icon = getEventIcon(event);
   const styles = getEventStyles(event);
@@ -72,6 +82,18 @@ export function TimelineEventCard({ event, className }: TimelineEventCardProps) 
 
   const relativeTime = formatRelativeTime(event.timestamp);
   const fullDate = formatFullDate(event.timestamp);
+
+  const handleDownloadSnapshot = async () => {
+    if (!event.snapshotId || isDownloading) return;
+    setIsDownloading(true);
+    try {
+      await downloadEmailSnapshot(event.snapshotId);
+    } catch (err) {
+      console.error("[timeline] Failed to download snapshot:", err);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   return (
     <Card className={cn("shadow-sm", styles.borderColor, className)}>
@@ -123,6 +145,29 @@ export function TimelineEventCard({ event, className }: TimelineEventCardProps) 
             ) : (
               <>
                 Show more <ChevronDown className="h-3 w-3 ml-1" />
+              </>
+            )}
+          </Button>
+        )}
+
+        {/* Download Snapshot button for email events with snapshots */}
+        {event.type === "email_sent" && event.snapshotId && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-3 mt-2 text-xs border-violet-300 text-violet-700 hover:bg-violet-50 dark:border-violet-700 dark:text-violet-400 dark:hover:bg-violet-900/20"
+            onClick={handleDownloadSnapshot}
+            disabled={isDownloading}
+          >
+            {isDownloading ? (
+              <>
+                <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                Downloading...
+              </>
+            ) : (
+              <>
+                <Download className="h-3 w-3 mr-1.5" />
+                Download Snapshot
               </>
             )}
           </Button>

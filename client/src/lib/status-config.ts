@@ -12,7 +12,7 @@
  * - PS (Pending Scheduling): 200-201 — Provider matched, scheduling in progress (active only)
  * - SCH (Scheduled): 202 — Appointment confirmed (active)
  * - PMR (PM Review): 300 — Requires practice manager attention
- * - INS (Insurance N/A): 103, 104, 203, 204, 205, 400 — Inactive/declined contacts
+ * - INS (Inactive): 103, 104, 203, 204, 205, 400 — Inactive/declined contacts
  */
 
 // Status code to human-readable label mapping
@@ -87,7 +87,7 @@ export const STATUS_UMBRELLAS = {
   INS: {
     codes: [103, 104, 203, 204, 205, 400],
     entry: 400,
-    label: "Insurance N/A",
+    label: "Inactive",
     color: "red"
   },
 } as const;
@@ -107,7 +107,7 @@ export const PIPELINE_COLUMNS: PipelineColumn[] = [
   { id: "PS", label: "Pending Scheduling", codes: STATUS_UMBRELLAS.PS.codes, color: "amber" },
   { id: "SCH", label: "Scheduled", codes: STATUS_UMBRELLAS.SCH.codes, color: "green" },
   { id: "PMR", label: "PM Review", codes: STATUS_UMBRELLAS.PMR.codes, color: "purple" },
-  { id: "INS", label: "Insurance N/A", codes: STATUS_UMBRELLAS.INS.codes, color: "red" },
+  { id: "INS", label: "Inactive", codes: STATUS_UMBRELLAS.INS.codes, color: "red" },
 ];
 
 // Column IDs for type safety

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { PageLayout } from "@/components/layout/page-layout";
 import { MetricCard } from "@/components/ui/metric-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,13 +8,14 @@ import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/page-loader";
 import { SyncStatus } from "@/components/ui/sync-status";
 import { FallbackBanner } from "@/components/ui/fallback-banner";
-import { Download, AlertCircle } from "lucide-react";
+import { Download, AlertCircle, ChevronRight } from "lucide-react";
 import { getWaitlistSummary, getWaitlistContacts, type WithSource } from "@/lib/api";
 import { useDataSource } from "@/lib/data-source-context";
-import { 
-  isActiveStatus, 
-  getColumnForStatus, 
-  stringStatusToCode, 
+import { normalizeInsurance } from "@/lib/insurance-utils";
+import {
+  isActiveStatus,
+  getColumnForStatus,
+  stringStatusToCode,
   getStatusLabel,
   safeNumber,
   safeString,
@@ -23,165 +24,45 @@ import {
 import type { WaitlistSummary, WaitlistContact } from "@shared/schema";
 
 /**
- * Insurance normalization mapping (raw values → canonical categories)
- * Based on Dawn's insurance categorization document
- * Maps multiple raw variants to a single canonical category
- */
-const INSURANCE_NORMALIZATION_MAP: Record<string, string> = {
-  // 1. VACCN
-  "vaccn": "VACCN",
-  "va": "VACCN",
-  
-  // 2. Presbyterian Commercial
-  "presbyterian": "Presbyterian Commercial",
-  "magellan": "Presbyterian Commercial",
-  "presbyterian aps": "Presbyterian Commercial",
-  "pres commercial": "Presbyterian Commercial",
-  "pres": "Presbyterian Commercial",
-  "presbyterian health plan": "Presbyterian Commercial",
-  
-  // 3. BlueCross BlueShield Commercial
-  "bcbs of nm": "BlueCross BlueShield Commercial",
-  "bcbs": "BlueCross BlueShield Commercial",
-  "blue cross blue shield": "BlueCross BlueShield Commercial",
-  "bcbs comm": "BlueCross BlueShield Commercial",
-  "highmark blue cross blue shield": "BlueCross BlueShield Commercial",
-  "bluegrass blueshield": "BlueCross BlueShield Commercial",
-  "bcbs of new mexico": "BlueCross BlueShield Commercial",
-  "bluecross blueshield of new mexico": "BlueCross BlueShield Commercial",
-  "blue cross blue sheild": "BlueCross BlueShield Commercial", // typo handling
-  "blue cross": "BlueCross BlueShield Commercial",
-  "blue cross blueshield": "BlueCross BlueShield Commercial",
-  "blue cross blue shield of minnesota": "BlueCross BlueShield Commercial",
-  "blue cross blue shield nm": "BlueCross BlueShield Commercial",
-  "bcbs of texas": "BlueCross BlueShield Commercial",
-  "blue cross blue shield fep": "BlueCross BlueShield Commercial",
-  "bcbsnm": "BlueCross BlueShield Commercial",
-  "bcbs nm": "BlueCross BlueShield Commercial",
-  
-  // 4. Tricare
-  "tricare": "Tricare",
-  "tricare west": "Tricare",
-  "tricare select": "Tricare",
-  "tricare west prime": "Tricare",
-  "tri care": "Tricare",
-  "triwest": "Tricare",
-  "tricare prime or triwest": "Tricare",
-  
-  // 5. Presbyterian Turquoise Care
-  "pres tc": "Presbyterian Turquoise Care",
-  "presbyterian - turquoise care": "Presbyterian Turquoise Care",
-  "pres turquoise": "Presbyterian Turquoise Care",
-  "presbyterian turquoise care": "Presbyterian Turquoise Care",
-  "presbyterian turquoise": "Presbyterian Turquoise Care",
-  "magellan turquoise care": "Presbyterian Turquoise Care",
-  "pres cent - turquoise": "Presbyterian Turquoise Care",
-  "turquoise care presbyterian": "Presbyterian Turquoise Care",
-  "truq care presbyterian health plan": "Presbyterian Turquoise Care",
-  "presbyterian centennial": "Presbyterian Turquoise Care",
-  
-  // 6. BlueCross BlueShield Turquoise Care
-  "bcbs cent": "BlueCross BlueShield Turquoise Care",
-  "bcbs - turquoise care": "BlueCross BlueShield Turquoise Care",
-  "bcbs turquoise care": "BlueCross BlueShield Turquoise Care",
-  "blue cross blue shield - turquoise care": "BlueCross BlueShield Turquoise Care",
-  "blue cross blue shield turquoise": "BlueCross BlueShield Turquoise Care",
-  "bcbs tc": "BlueCross BlueShield Turquoise Care",
-  "bcbs centenial": "BlueCross BlueShield Turquoise Care", // typo handling
-  "bcbs turquioise": "BlueCross BlueShield Turquoise Care", // typo handling
-  
-  // 7. United Healthcare
-  "united healthcare": "United Healthcare",
-  "uhc": "United Healthcare",
-  "united healrhcare": "United Healthcare", // typo handling
-  
-  // 8. Aetna
-  "atena": "Aetna", // typo handling
-  "aetna": "Aetna",
-  
-  // 9. Medicare
-  "medicare": "Medicare",
-  "blue cross blue shield medicare": "Medicare",
-  "uhc medicare": "Medicare",
-  "bcbs medicare advantage": "Medicare",
-  
-  // 10. UMR
-  "umr": "UMR",
-  "umr - secondy medicaid -": "UMR",
-  
-  // 11. Molina
-  "molina": "Molina",
-  
-  // 12. Medicaid
-  "turquoise care native american": "Medicaid",
-  "medicaid": "Medicaid",
-  
-  // 13. Self-Pay
-  "self-pay": "Self-Pay",
-  
-  // 14. ComPsych
-  "compsych": "ComPsych",
-  
-  // 15. Need to remove as we do not accept insurance
-  "healthscope benifits quantum health": "Need to remove as we do not accept insurance",
-  "lisa hale": "Need to remove as we do not accept insurance",
-  "humana medicare": "Need to remove as we do not accept insurance",
-  "medicare amb": "Need to remove as we do not accept insurance",
-};
-
-/**
  * Modality normalization mapping (raw values → canonical categories)
  * Maps form options and historical values to display categories
  */
 const MODALITY_NORMALIZATION_MAP: Record<string, string> = {
   // Hybrid
   "hybrid": "Hybrid",
-  
+
   // In Person - Albuquerque (ABQ)
   "in person - albuquerque": "In Person ABQ",
   "in person-abq": "In Person ABQ",
   "in person abq": "In Person ABQ",
   "abq": "In Person ABQ",
   "albuquerque": "In Person ABQ",
-  
+
   // In Person - Rio Rancho (RR)
   "in person - rio rancho": "In Person RR",
   "in person-rio rancho": "In Person RR",
   "in person rr": "In Person RR",
   "rio rancho": "In Person RR",
-  
+
   // In Person (generic - includes Los Lunas, combined options, and old values without location)
   "in person": "In Person",
   "in person - los lunas": "In Person",
   "in person - albuquerque or rio rancho": "In Person",
   "in-person": "In Person",
   "in person los lunas": "In Person",
-  
+
   // Telehealth
   "telehealth": "Telehealth",
   "th": "Telehealth",
   "tele-health": "Telehealth",
   "tele health": "Telehealth",
-  
+
   // Flexible/Flex
   "flexible (open to any option)": "Flex",
   "flexible": "Flex",
   "flex": "Flex",
   "open to any option": "Flex",
 };
-
-/**
- * Normalize insurance payer name to canonical category
- * Pure function: no side effects, deterministic
- * Returns "Unknown" for unmapped values
- */
-function normalizeInsurance(rawValue: string | null | undefined): string {
-  if (!rawValue) return "Unknown";
-  const trimmed = rawValue.trim();
-  if (!trimmed) return "Unknown";
-  const normalized = trimmed.toLowerCase();
-  return INSURANCE_NORMALIZATION_MAP[normalized] || "Unknown";
-}
 
 /**
  * Normalize modality to canonical category
@@ -208,6 +89,15 @@ function normalizeModality(rawValue: string | null | undefined): string {
 export default function Insights() {
   const { updateSummarySource, updateContactsSource, updateSyncTime, lastSyncTime, dataMode, summarySource, contactsSource, isContactsLive, isFullyLive } = useDataSource();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  // Drill-down navigation handler - navigates to Waitlist List View with filter applied
+  const handleDrillDown = useCallback((filterType: "insurance" | "modality" | "umbrella", value: string) => {
+    const encoded = encodeURIComponent(value);
+    const targetUrl = `/waitlist?${filterType}=${encoded}`;
+    console.log("[Insights] Drill-down clicked:", { filterType, value, targetUrl });
+    // Use window.location for reliable navigation with query params
+    window.location.href = targetUrl;
+  }, []);
   
   // Check data sources for honest indicators
   // Only show as live when user has explicitly enabled live mode AND data is actually live
@@ -279,6 +169,7 @@ export default function Insights() {
         serviceTypes: {} as Record<string, number>,
         insuranceTypes: {} as Record<string, number>,
         modalityTypes: {} as Record<string, number>,
+        reasonTypes: {} as Record<string, number>,
       };
     }
 
@@ -351,6 +242,30 @@ export default function Insights() {
       modalityTypes[normalizedModality] = (modalityTypes[normalizedModality] || 0) + 1;
     }
 
+    // Reason for seeking services distribution (active only)
+    // Each contact may have multiple reasons - count each individually
+    // Legacy records without reasons go to "Not Collected (Older Intake)"
+    const reasonTypes: Record<string, number> = {};
+    const LEGACY_REASON_LABEL = "Not Collected (Older Intake)";
+    for (const c of activeContacts) {
+      const reasons = c.reasonForTherapy;
+      // Check if array exists and has valid entries
+      if (reasons && Array.isArray(reasons) && reasons.length > 0) {
+        // Count each reason individually (a contact can have multiple)
+        for (const reason of reasons) {
+          const trimmed = reason?.trim();
+          if (trimmed) {
+            // Normalize to title case for consistency
+            const normalized = trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase();
+            reasonTypes[normalized] = (reasonTypes[normalized] || 0) + 1;
+          }
+        }
+      } else {
+        // No reasons = legacy/older intake
+        reasonTypes[LEGACY_REASON_LABEL] = (reasonTypes[LEGACY_REASON_LABEL] || 0) + 1;
+      }
+    }
+
     return {
       totalActive,
       avgWaitDays,
@@ -364,6 +279,7 @@ export default function Insights() {
       serviceTypes,
       insuranceTypes,
       modalityTypes,
+      reasonTypes,
     };
   }, [contacts]);
 
@@ -443,10 +359,20 @@ export default function Insights() {
   const sortedServiceTypes = Object.entries(computedMetrics.serviceTypes).sort((a, b) => b[1] - a[1]);
 
   // Sort insurance types by count
-  const sortedInsuranceTypes = Object.entries(computedMetrics.insuranceTypes).sort((a, b) => b[1] - a[1]);
+  // Note: normalizeInsurance now returns "Unknown" for unrecognized/rejected values
+  const sortedInsuranceTypes = Object.entries(computedMetrics.insuranceTypes)
+    .sort((a, b) => b[1] - a[1]);
 
   // Sort modality types by count
   const sortedModalityTypes = Object.entries(computedMetrics.modalityTypes).sort((a, b) => b[1] - a[1]);
+
+  // Sort reason types by count, but keep "Not Collected" at the end
+  const sortedReasonTypes = Object.entries(computedMetrics.reasonTypes).sort((a, b) => {
+    // Always put legacy bucket last
+    if (a[0] === "Not Collected (Older Intake)") return 1;
+    if (b[0] === "Not Collected (Older Intake)") return -1;
+    return b[1] - a[1];
+  });
 
   return (
     <PageLayout>
@@ -516,12 +442,19 @@ export default function Insights() {
             <CardContent>
               <div className="space-y-4">
                 {Object.entries(computedMetrics.statusDistribution).map(([columnId, count]) => (
-                  <div key={columnId} className="space-y-1.5">
+                  <div 
+                    key={columnId} 
+                    className="group space-y-1.5 cursor-pointer rounded-lg p-2 -mx-2 transition-all duration-200 hover:bg-muted/30"
+                    onClick={() => handleDrillDown("umbrella", columnId)}
+                  >
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">
+                      <span className="text-muted-foreground group-hover:text-primary transition-colors">
                         {columnLabels[columnId] || columnId}
                       </span>
-                      <span className="font-medium text-foreground">{count}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-foreground">{count}</span>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
                     </div>
                     <div className="h-2 bg-muted/50 backdrop-blur-sm rounded-full overflow-hidden border border-white/20 dark:border-gray-700/30">
                       <div
@@ -575,12 +508,16 @@ export default function Insights() {
                   sortedInsuranceTypes.map(([insurance, count]) => (
                     <div
                       key={insurance}
-                      className="flex items-center justify-between p-3 rounded-lg bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border border-white/40 dark:border-gray-700/40 shadow-md transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-white/90 dark:hover:bg-gray-800/90"
+                      onClick={() => handleDrillDown("insurance", insurance)}
+                      className="group flex items-center justify-between p-3 rounded-lg bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border border-white/40 dark:border-gray-700/40 shadow-md transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-white/90 dark:hover:bg-gray-800/90 cursor-pointer hover:border-primary/30"
                     >
-                      <span className="text-sm font-medium text-foreground">
+                      <span className="text-sm font-medium text-foreground group-hover:text-primary transition-colors">
                         {insurance}
                       </span>
-                      <Badge variant="secondary" className="backdrop-blur-sm border-white/40 dark:border-gray-700/40 shadow-md">{count}</Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary" className="backdrop-blur-sm border-white/40 dark:border-gray-700/40 shadow-md">{count}</Badge>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
                     </div>
                   ))
                 )}
@@ -601,12 +538,58 @@ export default function Insights() {
                   sortedModalityTypes.map(([modality, count]) => (
                     <div
                       key={modality}
-                      className="flex items-center justify-between p-3 rounded-lg bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border border-white/40 dark:border-gray-700/40 shadow-md transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-white/90 dark:hover:bg-gray-800/90"
+                      onClick={() => handleDrillDown("modality", modality)}
+                      className="group flex items-center justify-between p-3 rounded-lg bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border border-white/40 dark:border-gray-700/40 shadow-md transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-white/90 dark:hover:bg-gray-800/90 cursor-pointer hover:border-primary/30"
                     >
-                      <span className="text-sm font-medium text-foreground">
+                      <span className="text-sm font-medium text-foreground group-hover:text-primary transition-colors">
                         {modality}
                       </span>
-                      <Badge variant="secondary" className="backdrop-blur-sm border-white/40 dark:border-gray-700/40 shadow-md">{count}</Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary" className="backdrop-blur-sm border-white/40 dark:border-gray-700/40 shadow-md">{count}</Badge>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Reason for Seeking Services */}
+          <Card className="overflow-visible">
+            <CardHeader>
+              <CardTitle className="text-base font-medium">By Reason for Seeking Services</CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">
+                Contacts may have multiple reasons · Older intakes may not have this data
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {sortedReasonTypes.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">No reason data available</p>
+                ) : (
+                  sortedReasonTypes.map(([reason, count]) => (
+                    <div
+                      key={reason}
+                      className={`flex items-center justify-between p-3 rounded-lg backdrop-blur-sm border shadow-md transition-all duration-300 ${
+                        reason === "Not Collected (Older Intake)"
+                          ? "bg-gray-100/80 dark:bg-gray-900/80 border-gray-300/40 dark:border-gray-600/40"
+                          : "bg-white/80 dark:bg-gray-800/80 border-white/40 dark:border-gray-700/40 hover:scale-[1.02] hover:shadow-lg hover:bg-white/90 dark:hover:bg-gray-800/90"
+                      }`}
+                    >
+                      <span className={`text-sm font-medium ${
+                        reason === "Not Collected (Older Intake)"
+                          ? "text-muted-foreground italic"
+                          : "text-foreground"
+                      }`}>
+                        {reason}
+                      </span>
+                      <Badge 
+                        variant={reason === "Not Collected (Older Intake)" ? "outline" : "secondary"} 
+                        className="backdrop-blur-sm border-white/40 dark:border-gray-700/40 shadow-md"
+                      >
+                        {count}
+                      </Badge>
                     </div>
                   ))
                 )}

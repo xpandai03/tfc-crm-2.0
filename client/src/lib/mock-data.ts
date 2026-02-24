@@ -217,6 +217,8 @@ export const mockWaitlistContacts: WaitlistContact[] = mockContacts.map((c) => (
   serviceRequested: c.serviceRequested,
   daysOnWaitlist: c.daysOnWaitlist,
   dateAdded: c.dateAdded ?? null,
+  insurancePayer: c.insurancePayer ?? undefined,
+  modality: c.modality ?? undefined,
 }));
 
 // Mock waitlist summary
