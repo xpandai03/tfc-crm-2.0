@@ -182,8 +182,8 @@ function safeContent(content: unknown, maxLength = 10000): string {
 
 // Qualifying email template names → IDs for snapshot matching
 const EMAIL_TEMPLATE_NAME_TO_ID: Record<string, string> = {
-  "Appointment Confirmation": "appointment-confirmation",
-  "Post-Appointment Survey": "post-appointment-survey",
+  "Initial Appointment Confirmation": "appointment-confirmation",
+  "Initial Appointment Survey": "post-appointment-survey",
   "Intake Form Reminder": "intake-form-reminder",
 };
 
@@ -246,6 +246,12 @@ export function buildTimelineEvents(
           // Detect [Email] prefixed notes and promote to email_sent type
           const emailParsed = parseEmailNote(content);
           if (emailParsed) {
+            console.log("[timeline] Email note detected:", {
+              templateName: emailParsed.templateName,
+              templateId: emailParsed.templateId,
+              noteDate: parsedDate,
+              snapshotsCount: snapshots?.length ?? 0,
+            });
             // Try to match a snapshot by templateId and timestamp proximity
             let matchedSnapshotId: number | undefined;
             if (emailParsed.templateId && snapshots && parsedDate) {
