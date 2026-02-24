@@ -3,9 +3,6 @@
  *
  * Renders stored email HTML in a visible DOM context (identical to the
  * send-email-modal preview), then generates a PDF from the painted node.
- *
- * This solves the blank-PDF problem: html2canvas needs visible, painted
- * content — hidden/offscreen containers produce empty captures.
  */
 
 import { useState, useRef, useEffect } from "react";
@@ -74,38 +71,87 @@ export function SnapshotPreviewModal({
   const handleDownloadPdf = async () => {
     if (!contentRef.current || !snapshot) return;
 
-    const rect = contentRef.current.getBoundingClientRect();
-    console.log("[snapshot-modal] Content dimensions:", {
-      width: rect.width,
-      height: rect.height,
-    });
+    // Validate the DOM node is actually rendered
+    const el = contentRef.current;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    console.log("[snapshot-pdf] DOM node check:", { w, h, childCount: el.childElementCount });
 
-    if (rect.height === 0) {
-      setError("Content has zero height — cannot generate PDF");
+    if (w === 0 || h === 0) {
+      const msg = `Content has zero dimensions (${w}x${h}) — cannot generate PDF`;
+      console.error("[snapshot-pdf]", msg);
+      setError(msg);
       return;
     }
 
     setIsGenerating(true);
+    setError(null);
+
     try {
-      const html2pdf = (await import("html2pdf.js")).default;
+      // Dynamic import — html2pdf.js is a UMD module, Vite wraps CJS as { default: ... }
+      const mod = await import("html2pdf.js");
+      const html2pdf = mod.default || mod;
+      console.log("[snapshot-pdf] html2pdf import:", {
+        modType: typeof mod,
+        modDefault: typeof mod.default,
+        html2pdfType: typeof html2pdf,
+      });
+
+      if (typeof html2pdf !== "function") {
+        throw new Error(
+          `html2pdf is not a function (got ${typeof html2pdf}). ` +
+          `Module keys: ${Object.keys(mod).join(", ")}`
+        );
+      }
 
       const safeName = (snapshot.subject || "email-snapshot")
         .replace(/[^a-zA-Z0-9\s-]/g, "")
         .replace(/\s+/g, "-")
         .substring(0, 60);
 
-      await html2pdf()
+      // Generate PDF as blob for reliable download
+      const worker = html2pdf()
         .set({
           margin: 10,
           filename: `${safeName}.pdf`,
-          html2canvas: { scale: 2, useCORS: true },
+          html2canvas: {
+            scale: 2,
+            useCORS: true,
+            allowTaint: true,
+            backgroundColor: "#ffffff",
+          },
           jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
         })
-        .from(contentRef.current)
-        .save();
+        .from(el);
+
+      // Try .save() first (simplest path), with blob fallback
+      try {
+        await worker.save();
+        console.log("[snapshot-pdf] PDF saved successfully via .save()");
+      } catch (saveErr) {
+        console.warn("[snapshot-pdf] .save() failed, trying blob fallback:", saveErr);
+        // Fallback: generate blob manually
+        const pdfBlob: Blob = await worker.outputPdf("blob");
+        console.log("[snapshot-pdf] Blob generated:", pdfBlob.size, "bytes");
+        const blobUrl = URL.createObjectURL(pdfBlob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = `${safeName}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(blobUrl);
+        console.log("[snapshot-pdf] PDF downloaded via blob fallback");
+      }
     } catch (err) {
-      console.error("[snapshot-modal] PDF generation failed:", err);
-      setError("Failed to generate PDF");
+      // Log the FULL error with stack trace
+      console.error("[snapshot-pdf] PDF generation failed:", err);
+      console.error("[snapshot-pdf] Error name:", (err as Error)?.name);
+      console.error("[snapshot-pdf] Error message:", (err as Error)?.message);
+      console.error("[snapshot-pdf] Error stack:", (err as Error)?.stack);
+      setError(
+        `PDF generation failed: ${(err as Error)?.message || "Unknown error"}. Check browser console for details.`
+      );
     } finally {
       setIsGenerating(false);
     }
@@ -128,7 +174,9 @@ export function SnapshotPreviewModal({
         )}
 
         {error && (
-          <div className="text-sm text-destructive py-4">{error}</div>
+          <div className="text-sm text-destructive py-2 px-3 bg-destructive/10 rounded">
+            {error}
+          </div>
         )}
 
         {snapshot && !isLoading && (
@@ -145,6 +193,7 @@ export function SnapshotPreviewModal({
               <div
                 ref={contentRef}
                 className="p-4 bg-white text-sm"
+                style={{ minHeight: 100 }}
                 dangerouslySetInnerHTML={{ __html: snapshot.bodyHtml }}
               />
             </div>
