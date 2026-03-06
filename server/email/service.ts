@@ -14,7 +14,7 @@ import {
   type EmailTemplate,
   type TemplateMetadata,
 } from "./templates";
-import { getProviderByName, getLocationById } from "./provider-location-config";
+import { getProviderEmail, getLocationById } from "./provider-location-config";
 
 // Initialize Resend client
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -219,11 +219,11 @@ export async function sendTemplatedEmail(params: {
     const ccList: string[] = [REPLY_TO_EMAIL];
 
     if (QUALIFYING_TEMPLATES.includes(templateId) && dynamicFields?.therapistName) {
-      const provider = getProviderByName(dynamicFields.therapistName);
-      if (provider) {
-        ccList.push(provider.email);
+      const providerEmail = getProviderEmail(dynamicFields.therapistName);
+      if (providerEmail) {
+        ccList.push(providerEmail);
       } else {
-        console.warn(`[email-service] Provider not found in config: "${dynamicFields.therapistName}"`);
+        console.warn(`[email-service] Provider email not found in config: "${dynamicFields.therapistName}"`);
       }
     }
 

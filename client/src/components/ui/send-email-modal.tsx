@@ -65,10 +65,9 @@ interface RenderedEmail {
   eccStatus: "present" | "missing";
 }
 
-interface ProviderEntry {
+interface ApiProvider {
   name: string;
-  credential: string;
-  email: string;
+  credentials: string;
 }
 
 interface LocationEntry {
@@ -78,7 +77,7 @@ interface LocationEntry {
 }
 
 interface EmailConfig {
-  providers: ProviderEntry[];
+  providerEmails: Record<string, string>;
   locations: LocationEntry[];
 }
 
@@ -110,6 +109,7 @@ export function SendEmailModal({
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [emailConfig, setEmailConfig] = useState<EmailConfig | null>(null);
+  const [providerList, setProviderList] = useState<ApiProvider[]>([]);
 
   const [dynamicFields, setDynamicFields] = useState<Record<string, string>>({});
   const [rawDatetimeValues, setRawDatetimeValues] = useState<Record<string, string>>({});
@@ -121,11 +121,12 @@ export function SendEmailModal({
     [templates, selectedTemplate]
   );
 
-  // Fetch templates + email config when modal opens
+  // Fetch templates, email config, and provider list when modal opens
   useEffect(() => {
     if (isOpen) {
       if (templates.length === 0) fetchTemplates();
       if (!emailConfig) fetchEmailConfig();
+      if (providerList.length === 0) fetchProviderList();
     }
   }, [isOpen]);
 
@@ -172,6 +173,17 @@ export function SendEmailModal({
       setEmailConfig(data);
     } catch (err) {
       console.error("Failed to fetch email config:", err);
+    }
+  };
+
+  const fetchProviderList = async () => {
+    try {
+      const response = await fetch("/api/providers");
+      if (!response.ok) throw new Error("Failed to fetch providers");
+      const data = await response.json();
+      setProviderList(data.providers || []);
+    } catch (err) {
+      console.error("Failed to fetch provider list:", err);
     }
   };
 
@@ -277,11 +289,14 @@ export function SendEmailModal({
 
   // Resolve selected provider email for CC display
   const selectedProviderEmail = useMemo(() => {
-    if (!emailConfig || !dynamicFields.therapistName) return null;
-    const p = emailConfig.providers.find(
-      (prov) => prov.name === dynamicFields.therapistName
-    );
-    return p?.email || null;
+    if (!emailConfig?.providerEmails || !dynamicFields.therapistName) return null;
+    const name = dynamicFields.therapistName;
+    // Try exact match, then case-insensitive
+    return emailConfig.providerEmails[name]
+      || Object.entries(emailConfig.providerEmails).find(
+        ([k]) => k.toLowerCase() === name.toLowerCase()
+      )?.[1]
+      || null;
   }, [emailConfig, dynamicFields.therapistName]);
 
   const handleSend = async () => {
@@ -355,9 +370,9 @@ export function SendEmailModal({
               <SelectValue placeholder="Select a provider" />
             </SelectTrigger>
             <SelectContent className="max-h-[240px]">
-              {(emailConfig?.providers || []).map((p) => (
-                <SelectItem key={p.email} value={p.name}>
-                  {p.name} — {p.credential}
+              {providerList.map((p) => (
+                <SelectItem key={p.name} value={p.name}>
+                  {p.name} — {p.credentials}
                 </SelectItem>
               ))}
             </SelectContent>

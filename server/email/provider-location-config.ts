@@ -1,16 +1,17 @@
 /**
- * Provider + Location Configuration
+ * Provider Email + Location Configuration
  *
- * Source of truth: tfc-emails-march2026.md (Dawn's email, March 2026)
- * All provider names, credentials, and emails are hardcoded from that file.
- * All office locations and addresses are hardcoded from that file.
+ * Email map source: tfc-emails-march2026.md (Dawn's email, March 2026)
+ * Provider dropdown source: /api/providers (spreadsheet-backed, self-maintaining)
+ *
+ * This file provides:
+ * - PROVIDER_EMAIL_MAP: name → email lookup for CC resolution
+ * - OFFICE_LOCATIONS: location list for the location dropdown
+ *
+ * The provider *list* for the dropdown comes from the Provider Skills
+ * Spreadsheet ("Current" sheet) via /api/providers. This file is only
+ * used for email resolution — it does NOT control who appears in the dropdown.
  */
-
-export interface ProviderEntry {
-  name: string;
-  credential: string;
-  email: string;
-}
 
 export interface OfficeLocation {
   id: string;
@@ -19,39 +20,58 @@ export interface OfficeLocation {
   telehealth: boolean;
 }
 
-export const PROVIDERS: ProviderEntry[] = [
-  { name: "Abena Marfowaa Owusu-Nkwantabisiah", credential: "LPCC", email: "abena@tfc.health" },
-  { name: "Amanda Davison", credential: "LMFT", email: "amanda@tfc.health" },
-  { name: "Amaya Castaneda", credential: "Admin", email: "amayac@tfc.health" },
-  { name: "Amber Lute", credential: "LAMFT", email: "alute@tfc.health" },
-  { name: "Amber Merritt", credential: "LCSW", email: "amber@tfc.health" },
-  { name: "Angelica Chavez", credential: "LCSW", email: "angelicac@tfc.health" },
-  { name: "Angelica Villicana", credential: "LCSW", email: "angelica@tfc.health" },
-  { name: "Anna Aldridge", credential: "LMHC", email: "anna@tfc.health" },
-  { name: "Bentley Carbone", credential: "LAMFT", email: "bentley@tfc.health" },
-  { name: "Carrie Savedra", credential: "LMSW", email: "carrie@tfc.health" },
-  { name: "Cindy Ketchum", credential: "Intern", email: "cindy@tfc.health" },
-  { name: "Danielle Dimas", credential: "LPCC", email: "danielle@tfc.health" },
-  { name: "Debra Dederich-Elsner", credential: "LPCC", email: "debra@tfc.health" },
-  { name: "Elizabeth Lopez", credential: "LCSW", email: "elopez@tfc.health" },
-  { name: "Erica Benavidez", credential: "Office Manager", email: "ebenavidez@tfc.health" },
-  { name: "Ivory Kahler", credential: "LMSW", email: "ikahler@tfc.health" },
-  { name: "Janet Fackrell", credential: "Intern", email: "jfackrell@tfc.health" },
-  { name: "Jennifer Bogart", credential: "LPCC", email: "jenniferb@tfc.health" },
-  { name: "Jessica Neuhart", credential: "Intern", email: "jneuhart@tfc.health" },
-  { name: "Jill Nantze", credential: "LAMFT", email: "jnantze@tfc.health" },
-  { name: "Kennedy Hull", credential: "LPCC", email: "kennedy@tfc.health" },
-  { name: "Krista Luna", credential: "LMHC", email: "kluna@tfc.health" },
-  { name: "Kristi Simmons", credential: "Intern", email: "ksimmons@tfc.health" },
-  { name: "Laura Garcia-Rosecrans", credential: "LMHC", email: "lgarcia-rosecrans@tfc.health" },
-  { name: "Laurel Muehlmeyer", credential: "Intern", email: "lmuehlmeyer@tfc.health" },
-  { name: "Nona Bockius", credential: "Admin", email: "nbockius@tfc.health" },
-  { name: "Paula Raley", credential: "LCSW", email: "praley@tfc.health" },
-  { name: "Renee Singletary", credential: "LCSW", email: "renee@tfc.health" },
-  { name: "Sandra Rivera", credential: "LMFT", email: "sandra@tfc.health" },
-  { name: "Tyra Jones", credential: "Intern", email: "tjones@tfc.health" },
-  { name: "Victoria Santangelo", credential: "Admin", email: "victoria@tfc.health" },
-];
+/**
+ * Provider name → email address.
+ * Used for CC resolution when sending emails.
+ * Names are stored as-is from the md file; lookup is case-insensitive.
+ */
+export const PROVIDER_EMAIL_MAP: Record<string, string> = {
+  "Abena Marfowaa Owusu-Nkwantabisiah": "abena@tfc.health",
+  "Amanda Davison": "amanda@tfc.health",
+  "Amaya Castaneda": "amayac@tfc.health",
+  "Amber Lute": "alute@tfc.health",
+  "Amber Merritt": "amber@tfc.health",
+  "Angelica Chavez": "angelicac@tfc.health",
+  "Angelica Villicana": "angelica@tfc.health",
+  "Anna Aldridge": "anna@tfc.health",
+  "Bentley Carbone": "bentley@tfc.health",
+  "Carrie Savedra": "carrie@tfc.health",
+  "Cindy Ketchum": "cindy@tfc.health",
+  "Danielle Dimas": "danielle@tfc.health",
+  "Debra Dederich-Elsner": "debra@tfc.health",
+  "Elizabeth Lopez": "elopez@tfc.health",
+  "Erica Benavidez": "ebenavidez@tfc.health",
+  "Ivory Kahler": "ikahler@tfc.health",
+  "Janet Fackrell": "jfackrell@tfc.health",
+  "Jennifer Bogart": "jenniferb@tfc.health",
+  "Jessica Neuhart": "jneuhart@tfc.health",
+  "Jill Nantze": "jnantze@tfc.health",
+  "Kennedy Hull": "kennedy@tfc.health",
+  "Krista Luna": "kluna@tfc.health",
+  "Kristi Simmons": "ksimmons@tfc.health",
+  "Laura Garcia-Rosecrans": "lgarcia-rosecrans@tfc.health",
+  "Laurel Muehlmeyer": "lmuehlmeyer@tfc.health",
+  "Nona Bockius": "nbockius@tfc.health",
+  "Paula Raley": "praley@tfc.health",
+  "Renee Singletary": "renee@tfc.health",
+  "Sandra Rivera": "sandra@tfc.health",
+  "Tyra Jones": "tjones@tfc.health",
+  "Victoria Santangelo": "victoria@tfc.health",
+};
+
+// Case-insensitive index built once at import time
+const emailMapLower: Record<string, string> = {};
+for (const [name, email] of Object.entries(PROVIDER_EMAIL_MAP)) {
+  emailMapLower[name.toLowerCase()] = email;
+}
+
+/**
+ * Resolve a provider name to their email address.
+ * Case-insensitive. Returns undefined if no match.
+ */
+export function getProviderEmail(name: string): string | undefined {
+  return emailMapLower[name.toLowerCase()];
+}
 
 export const OFFICE_LOCATIONS: OfficeLocation[] = [
   {
@@ -79,12 +99,6 @@ export const OFFICE_LOCATIONS: OfficeLocation[] = [
     telehealth: true,
   },
 ];
-
-export function getProviderByName(name: string): ProviderEntry | undefined {
-  return PROVIDERS.find(
-    (p) => p.name.toLowerCase() === name.toLowerCase()
-  );
-}
 
 export function getLocationById(id: string): OfficeLocation | undefined {
   return OFFICE_LOCATIONS.find((l) => l.id === id);
