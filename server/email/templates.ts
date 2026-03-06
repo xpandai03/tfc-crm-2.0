@@ -10,7 +10,7 @@
 export interface RequiredField {
   key: string;          // Variable name in template (e.g., "therapistName")
   label: string;        // Display label for admin input (e.g., "Provider Name")
-  type: "text" | "datetime"; // Input type: "text" = free text, "datetime" = datetime picker
+  type: "text" | "datetime" | "provider-select" | "location-select";
   defaultText: string;  // Placeholder text shown in preview when unfilled (e.g., "[Provider Name]")
 }
 
@@ -291,13 +291,10 @@ Albuquerque, New Mexico
       </p>
 
       <p style="margin: 0 0 20px 0;">
-        To confirm, you are scheduled with <strong style="color: #1e3a5f;">{{therapistName}}</strong> on <strong style="color: #1e3a5f;">{{appointmentDatetime}}</strong>.<br>
-        The appointment will be <strong style="color: #1e3a5f;">{{appointmentLocationOrModality}}</strong>.
+        To confirm, you are scheduled with <strong style="color: #1e3a5f;">{{therapistName}}</strong> on <strong style="color: #1e3a5f;">{{appointmentDatetime}}</strong>.
       </p>
 
-      <p style="margin: 0 0 20px 0;">
-        For telehealth sessions, you will receive an email from your provider with a link to join the video session.
-      </p>
+      {{locationBlock}}
 
       <p style="margin: 0 0 20px 0;">
         If you have a copayment or coinsurance, the amount is due 2 hours prior to your scheduled appointment. If your credit card is not on file, please reach out to our Administrative Department with a payment method 2 hours prior to your appointment.
@@ -322,9 +319,8 @@ Hello {{firstName}},
 Thank you again for reaching out to The Family Connection and allowing us to serve you.
 
 To confirm, you are scheduled with {{therapistName}} on {{appointmentDatetime}}.
-The appointment will be {{appointmentLocationOrModality}}.
 
-For telehealth sessions, you will receive an email from your provider with a link to join the video session.
+{{locationBlockText}}
 
 If you have a copayment or coinsurance, the amount is due 2 hours prior to your scheduled appointment. If your credit card is not on file, please reach out to our Administrative Department with a payment method 2 hours prior to your appointment.
 
@@ -339,10 +335,11 @@ The Family Connection Team
 The Family Connection
 Albuquerque, New Mexico
     `.trim(),
-    variables: ["firstName", "therapistName", "appointmentDatetime", "appointmentLocationOrModality"],
+    variables: ["firstName", "therapistName", "appointmentDatetime", "locationBlock", "locationBlockText"],
     requiredFields: [
-      { key: "therapistName", label: "Provider Name", type: "text", defaultText: "[Provider Name]" },
+      { key: "therapistName", label: "Provider Name", type: "provider-select", defaultText: "[Provider Name]" },
       { key: "appointmentDatetime", label: "Appointment Date & Time", type: "datetime", defaultText: "[Appointment Date & Time]" },
+      { key: "locationId", label: "Appointment Location", type: "location-select", defaultText: "[Location]" },
     ],
   },
   {
@@ -403,7 +400,11 @@ The Family Connection
 Albuquerque, New Mexico
     `.trim(),
     variables: ["firstName"],
-    requiredFields: [],
+    requiredFields: [
+      { key: "therapistName", label: "Provider Name", type: "provider-select", defaultText: "[Provider Name]" },
+      { key: "appointmentDatetime", label: "Appointment Date & Time", type: "datetime", defaultText: "[Appointment Date & Time]" },
+      { key: "locationId", label: "Appointment Location", type: "location-select", defaultText: "[Location]" },
+    ],
   },
   {
     id: "intake-form-reminder",
@@ -449,7 +450,11 @@ The Family Connection
 Albuquerque, New Mexico
     `.trim(),
     variables: ["firstName"],
-    requiredFields: [],
+    requiredFields: [
+      { key: "therapistName", label: "Provider Name", type: "provider-select", defaultText: "[Provider Name]" },
+      { key: "appointmentDatetime", label: "Appointment Date & Time", type: "datetime", defaultText: "[Appointment Date & Time]" },
+      { key: "locationId", label: "Appointment Location", type: "location-select", defaultText: "[Location]" },
+    ],
   },
 ];
 

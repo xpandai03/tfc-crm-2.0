@@ -22,12 +22,21 @@ export function initEmailSnapshotsTable(): void {
       subject TEXT NOT NULL,
       body_html TEXT NOT NULL,
       sent_by_email TEXT NOT NULL,
+      cc_emails TEXT NOT NULL DEFAULT '[]',
       sent_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_snapshots_contact
       ON email_snapshots(contact_id);
   `);
+
+  // Additive migration: add cc_emails column if missing (existing tables)
+  try {
+    db.exec(`ALTER TABLE email_snapshots ADD COLUMN cc_emails TEXT NOT NULL DEFAULT '[]'`);
+    console.log("[email-snapshots-db] Added cc_emails column");
+  } catch {
+    // Column already exists — expected on subsequent startups
+  }
 
   console.log("[email-snapshots-db] Table initialized");
 }
@@ -38,19 +47,22 @@ export function initEmailSnapshotsTable(): void {
 export function saveEmailSnapshot(params: CreateEmailSnapshotParams): number {
   const db = getDatabase();
 
+  const ccJson = JSON.stringify(params.ccEmails || []);
+
   const result = db.prepare(`
-    INSERT INTO email_snapshots (contact_id, template_id, subject, body_html, sent_by_email)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO email_snapshots (contact_id, template_id, subject, body_html, sent_by_email, cc_emails)
+    VALUES (?, ?, ?, ?, ?, ?)
   `).run(
     params.contactId,
     params.templateId,
     params.subject,
     params.bodyHtml,
     params.sentByEmail,
+    ccJson,
   );
 
   const id = result.lastInsertRowid as number;
-  console.log(`[email-snapshots-db] Saved snapshot ${id} for contact ${params.contactId} (${params.templateId})`);
+  console.log(`[email-snapshots-db] Saved snapshot ${id} for contact ${params.contactId} (${params.templateId}), CC: ${ccJson}`);
   return id;
 }
 
@@ -68,6 +80,7 @@ export function getEmailSnapshot(id: number): EmailSnapshot | null {
       subject,
       body_html    as bodyHtml,
       sent_by_email as sentByEmail,
+      cc_emails    as ccEmails,
       sent_at      as sentAt
     FROM email_snapshots
     WHERE id = ?

@@ -5,6 +5,7 @@ export interface EmailSnapshot {
   subject: string;
   bodyHtml: string;
   sentByEmail: string;
+  ccEmails: string;
   sentAt: string;
 }
 
@@ -14,4 +15,5 @@ export interface CreateEmailSnapshotParams {
   subject: string;
   bodyHtml: string;
   sentByEmail: string;
+  ccEmails?: string[];
 }

@@ -2233,6 +2233,12 @@ export async function registerRoutes(
     validateEmailServiceConfig,
   } = await import("./email/service");
 
+  // Import provider/location config
+  const {
+    PROVIDERS,
+    OFFICE_LOCATIONS,
+  } = await import("./email/provider-location-config");
+
   // Log email service configuration status at startup
   const emailConfig = validateEmailServiceConfig();
   if (emailConfig.warnings.length > 0) {
@@ -2241,6 +2247,27 @@ export async function registerRoutes(
   } else {
     console.log("[email-api] Email service configured correctly");
   }
+
+  // GET /api/email-config - Provider + location lists for modal dropdowns
+  app.get("/api/email-config", (_req, res) => {
+    try {
+      return res.json({
+        providers: PROVIDERS.map((p) => ({
+          name: p.name,
+          credential: p.credential,
+          email: p.email,
+        })),
+        locations: OFFICE_LOCATIONS.map((l) => ({
+          id: l.id,
+          label: l.label,
+          address: l.address,
+        })),
+      });
+    } catch (error) {
+      console.error("[email-api] Error fetching email config:", error);
+      return res.status(500).json({ error: "Failed to fetch email config" });
+    }
+  });
 
   // GET /api/email-templates - List available templates for dropdown
   app.get("/api/email-templates", (_req, res) => {
@@ -2484,6 +2511,7 @@ export async function registerRoutes(
             subject: sendResult.renderedSubject || templateName,
             bodyHtml: sendResult.renderedHtml,
             sentByEmail: userEmail,
+            ccEmails: sendResult.ccEmails,
           });
         } catch (snapshotErr) {
           console.error("[send-email] Failed to save email snapshot (non-blocking):", snapshotErr);
