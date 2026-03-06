@@ -14,6 +14,7 @@ import {
   type EmailTemplate,
   type TemplateMetadata,
 } from "./templates";
+import { getProviderByName, getLocationById } from "./provider-location-config";
 
 // Initialize Resend client
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -62,6 +63,7 @@ export interface SendResult {
   emailId?: string;
   renderedHtml?: string;
   renderedSubject?: string;
+  ccEmails?: string[];
 }
 
 /**
@@ -77,19 +79,39 @@ function buildVariableMap(
     modality: contact.modality || "your preferred modality",
     city: contact.city || "your area",
     serviceRequested: contact.serviceRequested || "therapy",
-    // Appointment confirmation variables — admin fills these contextually
     therapistName: "[Provider Name]",
     appointmentDatetime: "[Appointment Date & Time]",
     appointmentLocationOrModality: contact.modality || "[Location/Modality]",
-    // Survey variable
     surveyLink: "[Survey Link]",
+    locationBlock: "",
+    locationBlockText: "",
   };
 
-  // Override defaults with admin-provided values
+  // Override defaults with admin-provided values (skip locationId — handled below)
   if (dynamicFields) {
     for (const [key, value] of Object.entries(dynamicFields)) {
+      if (key === "locationId") continue;
       if (key in map && value && value.trim()) {
         map[key] = value.trim();
+      }
+    }
+  }
+
+  // Resolve locationId into locationBlock HTML and plain-text equivalents
+  if (dynamicFields?.locationId) {
+    const location = getLocationById(dynamicFields.locationId);
+    if (location) {
+      if (location.telehealth) {
+        map.locationBlock =
+          `<p style="margin: 0 0 20px 0;">For telehealth sessions, you will receive an email from your provider with a link to join the video session.</p>`;
+        map.locationBlockText =
+          "For telehealth sessions, you will receive an email from your provider with a link to join the video session.";
+      } else {
+        const addressHtml = (location.address || "").replace(/\n/g, "<br>");
+        map.locationBlock =
+          `<p style="margin: 0 0 20px 0;"><strong style="color: #1e3a5f;">Location: ${location.label} Office</strong><br>${addressHtml}</p>`;
+        map.locationBlockText =
+          `Location: ${location.label} Office\n${location.address || ""}`;
       }
     }
   }
@@ -190,13 +212,28 @@ export async function sendTemplatedEmail(params: {
   }
 
   try {
-    // Defensive logging - verify sender configuration
     const sender = `${FROM_NAME} <${FROM_EMAIL}>`;
+
+    // Build CC list — qualifying templates also CC the selected provider
+    const QUALIFYING_TEMPLATES = ["appointment-confirmation", "post-appointment-survey", "intake-form-reminder"];
+    const ccList: string[] = [REPLY_TO_EMAIL];
+
+    if (QUALIFYING_TEMPLATES.includes(templateId) && dynamicFields?.therapistName) {
+      const provider = getProviderByName(dynamicFields.therapistName);
+      if (provider) {
+        ccList.push(provider.email);
+      } else {
+        console.warn(`[email-service] Provider not found in config: "${dynamicFields.therapistName}"`);
+      }
+    }
+
+    const uniqueCc = Array.from(new Set(ccList));
+
     console.log(`[email-service] === EMAIL SEND START ===`);
     console.log(`[email-service] FROM: ${sender}`);
     console.log(`[email-service] TO: ${contact.email}`);
     console.log(`[email-service] REPLY-TO: ${REPLY_TO_EMAIL}`);
-    console.log(`[email-service] CC: ${REPLY_TO_EMAIL}`);
+    console.log(`[email-service] CC: ${uniqueCc.join(", ")}`);
     console.log(`[email-service] Template: ${rendered.templateName}`);
     console.log(`[email-service] Admin (audit only): ${sentByEmail}`);
     console.log(`[email-service] ECC Status: ${eccStatus}`);
@@ -204,8 +241,8 @@ export async function sendTemplatedEmail(params: {
     const result = await resend.emails.send({
       from: sender,
       to: contact.email,
-      replyTo: REPLY_TO_EMAIL, // All replies routed to admin inbox (camelCase required by Resend SDK v6+)
-      cc: [REPLY_TO_EMAIL],    // Admin dept receives a copy of every templated email
+      replyTo: REPLY_TO_EMAIL,
+      cc: uniqueCc,
       subject: rendered.subject,
       html: rendered.bodyHtml,
       text: rendered.bodyText,
@@ -225,6 +262,7 @@ export async function sendTemplatedEmail(params: {
       emailId: result.data?.id,
       renderedHtml: rendered.bodyHtml,
       renderedSubject: rendered.subject,
+      ccEmails: uniqueCc,
     };
   } catch (error) {
     const errorMessage =

@@ -4,11 +4,12 @@
  * Admin-triggered email sending with template selection and preview.
  * - NO auto-sending: requires explicit "Send" click
  * - Templates with requiredFields show dynamic inputs that update preview live
+ * - Provider and location dropdowns for qualifying templates
  * - ECC soft-gate: warns if consent missing but doesn't block
  * - Full audit logging via Activity Timeline
  */
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   Dialog,
   DialogContent,
@@ -42,7 +43,7 @@ interface SendEmailModalProps {
 interface RequiredField {
   key: string;
   label: string;
-  type: "text" | "datetime";
+  type: "text" | "datetime" | "provider-select" | "location-select";
   defaultText: string;
 }
 
@@ -64,9 +65,23 @@ interface RenderedEmail {
   eccStatus: "present" | "missing";
 }
 
-/**
- * Format a datetime-local value into a human-readable string for the email
- */
+interface ProviderEntry {
+  name: string;
+  credential: string;
+  email: string;
+}
+
+interface LocationEntry {
+  id: string;
+  label: string;
+  address: string | null;
+}
+
+interface EmailConfig {
+  providers: ProviderEntry[];
+  locations: LocationEntry[];
+}
+
 function formatDatetimeForEmail(datetimeLocalValue: string): string {
   const date = new Date(datetimeLocalValue);
   if (isNaN(date.getTime())) return "";
@@ -94,26 +109,27 @@ export function SendEmailModal({
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [emailConfig, setEmailConfig] = useState<EmailConfig | null>(null);
 
-  // Dynamic field values (formatted strings ready for email substitution)
   const [dynamicFields, setDynamicFields] = useState<Record<string, string>>({});
-  // Raw datetime-local input values (YYYY-MM-DDTHH:mm format for controlled inputs)
   const [rawDatetimeValues, setRawDatetimeValues] = useState<Record<string, string>>({});
 
-  // Get the selected template's metadata
+  const previewAbortRef = useRef<AbortController | null>(null);
+
   const selectedTpl = useMemo(
     () => templates.find((t) => t.id === selectedTemplate) || null,
     [templates, selectedTemplate]
   );
 
-  // Fetch templates when modal opens
+  // Fetch templates + email config when modal opens
   useEffect(() => {
-    if (isOpen && templates.length === 0) {
-      fetchTemplates();
+    if (isOpen) {
+      if (templates.length === 0) fetchTemplates();
+      if (!emailConfig) fetchEmailConfig();
     }
   }, [isOpen]);
 
-  // Fetch preview when template is selected (base preview with default placeholders)
+  // Fetch base preview when template is selected
   useEffect(() => {
     if (selectedTemplate && contact?.contactId) {
       fetchPreview(selectedTemplate, contact.contactId);
@@ -122,7 +138,7 @@ export function SendEmailModal({
     }
   }, [selectedTemplate, contact?.contactId]);
 
-  // Reset all state when modal closes
+  // Reset state when modal closes
   useEffect(() => {
     if (!isOpen) {
       setSelectedTemplate(null);
@@ -138,9 +154,7 @@ export function SendEmailModal({
     setError(null);
     try {
       const response = await fetch("/api/email-templates");
-      if (!response.ok) {
-        throw new Error("Failed to fetch templates");
-      }
+      if (!response.ok) throw new Error("Failed to fetch templates");
       const data = await response.json();
       setTemplates(data.templates || []);
     } catch (err) {
@@ -150,57 +164,96 @@ export function SendEmailModal({
     }
   };
 
-  const fetchPreview = async (templateId: string, contactId: number) => {
-    setIsLoadingPreview(true);
-    setError(null);
+  const fetchEmailConfig = async () => {
     try {
-      const response = await fetch("/api/email-preview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ templateId, contactId }),
-      });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to generate preview");
-      }
+      const response = await fetch("/api/email-config");
+      if (!response.ok) throw new Error("Failed to fetch email config");
       const data = await response.json();
-      setPreview(data);
+      setEmailConfig(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load preview");
-      setPreview(null);
-    } finally {
-      setIsLoadingPreview(false);
+      console.error("Failed to fetch email config:", err);
     }
   };
 
-  // Handle template selection change — reset dynamic fields
+  const fetchPreview = useCallback(
+    async (templateId: string, contactId: number, fields?: Record<string, string>) => {
+      if (previewAbortRef.current) previewAbortRef.current.abort();
+      const controller = new AbortController();
+      previewAbortRef.current = controller;
+
+      setIsLoadingPreview(true);
+      setError(null);
+      try {
+        const response = await fetch("/api/email-preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ templateId, contactId, dynamicFields: fields }),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || "Failed to generate preview");
+        }
+        const data = await response.json();
+        setPreview(data);
+      } catch (err) {
+        if ((err as Error).name === "AbortError") return;
+        setError(err instanceof Error ? err.message : "Failed to load preview");
+        setPreview(null);
+      } finally {
+        setIsLoadingPreview(false);
+      }
+    },
+    []
+  );
+
+  // Re-fetch preview from server when location or provider changes (server renders locationBlock)
+  const refetchPreviewWithFields = useCallback(
+    (updatedFields: Record<string, string>) => {
+      if (selectedTemplate && contact?.contactId) {
+        fetchPreview(selectedTemplate, contact.contactId, updatedFields);
+      }
+    },
+    [selectedTemplate, contact?.contactId, fetchPreview]
+  );
+
   const handleTemplateChange = (value: string) => {
     setSelectedTemplate(value || null);
     setDynamicFields({});
     setRawDatetimeValues({});
   };
 
-  // Handle text field change
   const handleTextFieldChange = (key: string, value: string) => {
     setDynamicFields((prev) => ({ ...prev, [key]: value }));
   };
 
-  // Handle datetime field change — stores formatted string in dynamicFields
   const handleDatetimeFieldChange = (key: string, rawValue: string) => {
     setRawDatetimeValues((prev) => ({ ...prev, [key]: rawValue }));
     const formatted = formatDatetimeForEmail(rawValue);
     setDynamicFields((prev) => ({ ...prev, [key]: formatted }));
   };
 
-  // Live preview: replace default placeholder text with admin's input
+  const handleProviderChange = (providerName: string) => {
+    const next = { ...dynamicFields, therapistName: providerName };
+    setDynamicFields(next);
+    refetchPreviewWithFields(next);
+  };
+
+  const handleLocationChange = (locationId: string) => {
+    const next = { ...dynamicFields, locationId };
+    setDynamicFields(next);
+    refetchPreviewWithFields(next);
+  };
+
+  // Live preview: client-side replacement of text/datetime/provider placeholders.
+  // Location block HTML comes from the server re-fetch.
   const livePreviewHtml = useMemo(() => {
     if (!preview?.bodyHtml || !selectedTpl) return preview?.bodyHtml || "";
     let html = preview.bodyHtml;
     for (const field of selectedTpl.requiredFields) {
+      if (field.type === "location-select") continue;
       const value = dynamicFields[field.key];
       if (value && value.trim()) {
-        // Replace all occurrences of the default placeholder text with the admin's value
-        // Escape special regex chars in defaultText
         const escaped = field.defaultText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         html = html.replace(new RegExp(escaped, "g"), value.trim());
       }
@@ -208,7 +261,6 @@ export function SendEmailModal({
     return html;
   }, [preview?.bodyHtml, selectedTpl, dynamicFields]);
 
-  // Check if all required fields are filled
   const allRequiredFieldsFilled = useMemo(() => {
     if (!selectedTpl || selectedTpl.requiredFields.length === 0) return true;
     return selectedTpl.requiredFields.every(
@@ -216,7 +268,6 @@ export function SendEmailModal({
     );
   }, [selectedTpl, dynamicFields]);
 
-  // Find unfilled required fields for validation message
   const unfilledFields = useMemo(() => {
     if (!selectedTpl) return [];
     return selectedTpl.requiredFields.filter(
@@ -224,17 +275,24 @@ export function SendEmailModal({
     );
   }, [selectedTpl, dynamicFields]);
 
+  // Resolve selected provider email for CC display
+  const selectedProviderEmail = useMemo(() => {
+    if (!emailConfig || !dynamicFields.therapistName) return null;
+    const p = emailConfig.providers.find(
+      (prov) => prov.name === dynamicFields.therapistName
+    );
+    return p?.email || null;
+  }, [emailConfig, dynamicFields.therapistName]);
+
   const handleSend = async () => {
     if (!selectedTemplate || !contact?.contactId || !preview) return;
 
-    // Close modal immediately for better UX - don't make user wait
     const templateId = selectedTemplate;
     const contactId = contact.contactId;
     const eccStatus = preview.eccStatus;
     const fieldsToSend = { ...dynamicFields };
     onClose();
 
-    // Fire off send in background - parent will show toast with result
     try {
       const response = await fetch("/api/send-email", {
         method: "POST",
@@ -247,16 +305,12 @@ export function SendEmailModal({
         }),
       });
 
-      // Defensive: handle empty or non-JSON responses gracefully.
-      // The backend may close the connection before sending a body
-      // (e.g., proxy timeout on Fly.io after slow n8n calls).
       const text = await response.text();
       let result: { success?: boolean; error?: string } = {};
       if (text) {
         try {
           result = JSON.parse(text);
         } catch {
-          // Response was not valid JSON — treat 2xx as success
           if (!response.ok) {
             throw new Error("Server returned an invalid response");
           }
@@ -267,7 +321,6 @@ export function SendEmailModal({
         throw new Error(result.error || "Failed to send email");
       }
 
-      // Success - notify parent (will show toast)
       onSend({ success: true });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to send email";
@@ -286,6 +339,100 @@ export function SendEmailModal({
     hasEmail &&
     !isLoadingPreview &&
     allRequiredFieldsFilled;
+
+  const renderField = (field: RequiredField) => {
+    if (field.type === "provider-select") {
+      return (
+        <div key={field.key} className="space-y-1.5">
+          <Label htmlFor={`field-${field.key}`} className="text-sm">
+            {field.label} <span className="text-destructive">*</span>
+          </Label>
+          <Select
+            value={dynamicFields[field.key] || ""}
+            onValueChange={handleProviderChange}
+          >
+            <SelectTrigger id={`field-${field.key}`}>
+              <SelectValue placeholder="Select a provider" />
+            </SelectTrigger>
+            <SelectContent className="max-h-[240px]">
+              {(emailConfig?.providers || []).map((p) => (
+                <SelectItem key={p.email} value={p.name}>
+                  {p.name} — {p.credential}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {selectedProviderEmail && (
+            <p className="text-xs text-muted-foreground">
+              CC: {selectedProviderEmail}
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    if (field.type === "location-select") {
+      return (
+        <div key={field.key} className="space-y-1.5">
+          <Label htmlFor={`field-${field.key}`} className="text-sm">
+            {field.label} <span className="text-destructive">*</span>
+          </Label>
+          <Select
+            value={dynamicFields[field.key] || ""}
+            onValueChange={handleLocationChange}
+          >
+            <SelectTrigger id={`field-${field.key}`}>
+              <SelectValue placeholder="Select a location" />
+            </SelectTrigger>
+            <SelectContent>
+              {(emailConfig?.locations || []).map((loc) => (
+                <SelectItem key={loc.id} value={loc.id}>
+                  {loc.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      );
+    }
+
+    if (field.type === "datetime") {
+      return (
+        <div key={field.key} className="space-y-1.5">
+          <Label htmlFor={`field-${field.key}`} className="text-sm">
+            {field.label} <span className="text-destructive">*</span>
+          </Label>
+          <Input
+            id={`field-${field.key}`}
+            type="datetime-local"
+            value={rawDatetimeValues[field.key] || ""}
+            onChange={(e) =>
+              handleDatetimeFieldChange(field.key, e.target.value)
+            }
+            className="w-full"
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div key={field.key} className="space-y-1.5">
+        <Label htmlFor={`field-${field.key}`} className="text-sm">
+          {field.label} <span className="text-destructive">*</span>
+        </Label>
+        <Input
+          id={`field-${field.key}`}
+          type="text"
+          value={dynamicFields[field.key] || ""}
+          onChange={(e) =>
+            handleTextFieldChange(field.key, e.target.value)
+          }
+          placeholder={`Enter ${field.label.toLowerCase()}`}
+          className="w-full"
+        />
+      </div>
+    );
+  };
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
@@ -355,36 +502,7 @@ export function SendEmailModal({
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                 Required Information
               </p>
-              {selectedTpl.requiredFields.map((field) => (
-                <div key={field.key} className="space-y-1.5">
-                  <Label htmlFor={`field-${field.key}`} className="text-sm">
-                    {field.label} <span className="text-destructive">*</span>
-                  </Label>
-                  {field.type === "datetime" ? (
-                    <Input
-                      id={`field-${field.key}`}
-                      type="datetime-local"
-                      value={rawDatetimeValues[field.key] || ""}
-                      onChange={(e) =>
-                        handleDatetimeFieldChange(field.key, e.target.value)
-                      }
-                      className="w-full"
-                    />
-                  ) : (
-                    <Input
-                      id={`field-${field.key}`}
-                      type="text"
-                      value={dynamicFields[field.key] || ""}
-                      onChange={(e) =>
-                        handleTextFieldChange(field.key, e.target.value)
-                      }
-                      placeholder={`Enter ${field.label.toLowerCase()}`}
-                      className="w-full"
-                    />
-                  )}
-                </div>
-              ))}
-              {/* Validation: show unfilled fields */}
+              {selectedTpl.requiredFields.map(renderField)}
               {unfilledFields.length > 0 && selectedTemplate && (
                 <p className="text-xs text-amber-600 dark:text-amber-400">
                   {unfilledFields.map((f) => f.label).join(", ")}{" "}
@@ -417,12 +535,10 @@ export function SendEmailModal({
             <div className="space-y-3">
               <Label>Preview</Label>
               <div className="border rounded-lg overflow-hidden">
-                {/* Subject Line */}
                 <div className="px-4 py-2 bg-muted border-b">
                   <span className="text-xs text-muted-foreground">Subject: </span>
                   <span className="text-sm font-medium">{preview.subject}</span>
                 </div>
-                {/* Body Preview — uses live-substituted HTML */}
                 <div
                   className="p-4 bg-white dark:bg-gray-950 text-sm max-h-[300px] overflow-y-auto"
                   dangerouslySetInnerHTML={{ __html: livePreviewHtml }}
@@ -439,7 +555,7 @@ export function SendEmailModal({
             </Alert>
           )}
 
-          {/* Sender Info - shows actual system sender, not admin login */}
+          {/* Sender Info */}
           <p className="text-xs text-muted-foreground">
             From: <span className="font-medium">The Family Connection &lt;no-reply@hipaacheck.ai&gt;</span>
           </p>
