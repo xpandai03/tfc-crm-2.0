@@ -87,10 +87,10 @@ function buildVariableMap(
     locationBlockText: "",
   };
 
-  // Override defaults with admin-provided values (skip locationId — handled below)
+  // Override defaults with admin-provided values (skip non-template keys)
   if (dynamicFields) {
     for (const [key, value] of Object.entries(dynamicFields)) {
-      if (key === "locationId") continue;
+      if (key === "locationId" || key === "ccEmail") continue;
       if (key in map && value && value.trim()) {
         map[key] = value.trim();
       }
@@ -224,6 +224,16 @@ export async function sendTemplatedEmail(params: {
         ccList.push(providerEmail);
       } else {
         console.warn(`[email-service] Provider email not found in config: "${dynamicFields.therapistName}"`);
+      }
+    }
+
+    // Manual CC from admin — silently ignore if empty or invalid
+    if (dynamicFields?.ccEmail) {
+      const manualCc = dynamicFields.ccEmail.trim();
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(manualCc)) {
+        ccList.push(manualCc);
+      } else {
+        console.warn(`[email-service] Ignoring invalid manual CC: "${manualCc}"`);
       }
     }
 

@@ -511,6 +511,23 @@ export function SendEmailModal({
             </Select>
           </div>
 
+          {/* Additional CC (optional) — visible after template is selected */}
+          {selectedTemplate && (
+            <div className="space-y-1.5">
+              <Label htmlFor="cc-email" className="text-sm">
+                Additional CC <span className="text-muted-foreground font-normal">(optional)</span>
+              </Label>
+              <Input
+                id="cc-email"
+                type="email"
+                value={dynamicFields.ccEmail || ""}
+                onChange={(e) => handleTextFieldChange("ccEmail", e.target.value)}
+                placeholder="Enter email to CC"
+                className="w-full"
+              />
+            </div>
+          )}
+
           {/* Dynamic Required Fields */}
           {selectedTpl && selectedTpl.requiredFields.length > 0 && (
             <div className="space-y-3 rounded-lg border p-3 bg-muted/30">
