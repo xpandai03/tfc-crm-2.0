@@ -2235,7 +2235,7 @@ export async function registerRoutes(
 
   // Import provider/location config
   const {
-    PROVIDER_EMAIL_MAP,
+    PROVIDER_LIST,
     OFFICE_LOCATIONS,
   } = await import("./email/provider-location-config");
 
@@ -2248,13 +2248,21 @@ export async function registerRoutes(
     console.log("[email-api] Email service configured correctly");
   }
 
-  // GET /api/email-config - Provider email map + location list for modal
-  // Provider *list* comes from /api/providers (spreadsheet-backed, self-maintaining).
-  // This endpoint provides only the email lookup map and office locations.
+  // GET /api/email-config - Provider list + location list for the Send Email modal
   app.get("/api/email-config", (_req, res) => {
     try {
+      // Build providerEmails map from PROVIDER_LIST for backwards compat
+      const providerEmails: Record<string, string> = {};
+      for (const p of PROVIDER_LIST) {
+        providerEmails[p.name] = p.email;
+      }
       return res.json({
-        providerEmails: PROVIDER_EMAIL_MAP,
+        providers: PROVIDER_LIST.map((p) => ({
+          name: p.name,
+          credentials: p.credential,
+          email: p.email,
+        })),
+        providerEmails,
         locations: OFFICE_LOCATIONS.map((l) => ({
           id: l.id,
           label: l.label,

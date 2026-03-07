@@ -77,6 +77,7 @@ interface LocationEntry {
 }
 
 interface EmailConfig {
+  providers: ApiProvider[];
   providerEmails: Record<string, string>;
   locations: LocationEntry[];
 }
@@ -109,7 +110,6 @@ export function SendEmailModal({
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [emailConfig, setEmailConfig] = useState<EmailConfig | null>(null);
-  const [providerList, setProviderList] = useState<ApiProvider[]>([]);
 
   const [dynamicFields, setDynamicFields] = useState<Record<string, string>>({});
   const [rawDatetimeValues, setRawDatetimeValues] = useState<Record<string, string>>({});
@@ -126,7 +126,6 @@ export function SendEmailModal({
     if (isOpen) {
       if (templates.length === 0) fetchTemplates();
       if (!emailConfig) fetchEmailConfig();
-      if (providerList.length === 0) fetchProviderList();
     }
   }, [isOpen]);
 
@@ -176,16 +175,6 @@ export function SendEmailModal({
     }
   };
 
-  const fetchProviderList = async () => {
-    try {
-      const response = await fetch("/api/providers");
-      if (!response.ok) throw new Error("Failed to fetch providers");
-      const data = await response.json();
-      setProviderList(data.providers || []);
-    } catch (err) {
-      console.error("Failed to fetch provider list:", err);
-    }
-  };
 
   const fetchPreview = useCallback(
     async (templateId: string, contactId: number, fields?: Record<string, string>) => {
@@ -370,7 +359,7 @@ export function SendEmailModal({
               <SelectValue placeholder="Select a provider" />
             </SelectTrigger>
             <SelectContent className="max-h-[240px]">
-              {providerList.map((p) => (
+              {(emailConfig?.providers || []).map((p) => (
                 <SelectItem key={p.name} value={p.name}>
                   {p.name} — {p.credentials}
                 </SelectItem>

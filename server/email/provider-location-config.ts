@@ -1,17 +1,19 @@
 /**
  * Provider Email + Location Configuration
  *
- * Email map source: tfc-emails-march2026.md (Dawn's email, March 2026)
- * Provider dropdown source: /api/providers (spreadsheet-backed, self-maintaining)
- *
- * This file provides:
- * - PROVIDER_EMAIL_MAP: name → email lookup for CC resolution
+ * Single source of truth for the Send Email modal:
+ * - PROVIDER_LIST: canonical provider list (dropdown + CC resolution)
  * - OFFICE_LOCATIONS: location list for the location dropdown
  *
- * The provider *list* for the dropdown comes from the Provider Skills
- * Spreadsheet ("Current" sheet) via /api/providers. This file is only
- * used for email resolution — it does NOT control who appears in the dropdown.
+ * Source: tfc-emails-march2026.md (Dawn's email, March 2026)
+ * Credentials: Provider Skills Spreadsheet
  */
+
+export interface ProviderEntry {
+  name: string;
+  credential: string;
+  email: string;
+}
 
 export interface OfficeLocation {
   id: string;
@@ -21,44 +23,42 @@ export interface OfficeLocation {
 }
 
 /**
- * Provider name → email address.
- * Used for CC resolution when sending emails.
- * Names match the canonical CRM provider dataset (Provider Skills Spreadsheet).
- * Lookup is case-insensitive.
+ * Canonical provider list — powers both the dropdown and CC resolution.
+ * Alphabetical by last name. No admins, no inactive providers.
  */
-export const PROVIDER_EMAIL_MAP: Record<string, string> = {
-  "Abena Marfowaa Owusu-Nkwantabisah": "abena@tfc.health",
-  "Amanda Davison": "amanda@tfc.health",
-  "Amber Lute": "alute@tfc.health",
-  "Amber Merritt": "amber@tfc.health",
-  "Angelica Chavez": "angelicac@tfc.health",
-  "Angelica Villicana": "angelica@tfc.health",
-  "Anna Aldridge": "anna@tfc.health",
-  "Bentley Carbone": "bentley@tfc.health",
-  "Carrie Savedra": "carrie@tfc.health",
-  "Cindy Ketchum": "cindy@tfc.health",
-  "Danielle Burke": "danielle@tfc.health",
-  "Debra Dederich-Elsner": "debra@tfc.health",
-  "Janet Fackrell": "jfackrell@tfc.health",
-  "Jennifer Bogart": "jenniferb@tfc.health",
-  "Jessica Neuhart": "jneuhart@tfc.health",
-  "Jill Nantze": "jnantze@tfc.health",
-  "Kennedy Hull": "kennedy@tfc.health",
-  "Krista Luna": "kluna@tfc.health",
-  "Kristi Simmons": "ksimmons@tfc.health",
-  "Laura Garcia-Rosecrans": "lgarcia-rosecrans@tfc.health",
-  "Laurel Muehlmeyer": "lmuehlmeyer@tfc.health",
-  "Liz Lopez": "elopez@tfc.health",
-  "Paula Raley": "praley@tfc.health",
-  "Renee Singletary": "renee@tfc.health",
-  "Sandra Rivera": "sandra@tfc.health",
-  "Tyra Jones": "tjones@tfc.health",
-};
+export const PROVIDER_LIST: ProviderEntry[] = [
+  { name: "Anna Aldridge", credential: "LMHC", email: "anna@tfc.health" },
+  { name: "Danielle Burke", credential: "LPCC", email: "danielle@tfc.health" },
+  { name: "Bentley Carbone", credential: "LAMFT", email: "bentley@tfc.health" },
+  { name: "Angelica Chavez", credential: "LCSW", email: "angelicac@tfc.health" },
+  { name: "Amanda Davison", credential: "LMFT", email: "amanda@tfc.health" },
+  { name: "Debra Dederich-Elsner", credential: "LPCC", email: "debra@tfc.health" },
+  { name: "Janet Fackrell", credential: "Intern", email: "jfackrell@tfc.health" },
+  { name: "Laura Garcia-Rosecrans", credential: "LMHC", email: "lgarcia-rosecrans@tfc.health" },
+  { name: "Kennedy Hull", credential: "LPCC", email: "kennedy@tfc.health" },
+  { name: "Tyra Jones", credential: "LMHC", email: "tjones@tfc.health" },
+  { name: "Cindy Ketchum", credential: "Intern", email: "cindy@tfc.health" },
+  { name: "Liz Lopez", credential: "LCSW", email: "elopez@tfc.health" },
+  { name: "Krista Luna", credential: "LMHC", email: "kluna@tfc.health" },
+  { name: "Amber Lute", credential: "LAMFT", email: "alute@tfc.health" },
+  { name: "Amber Merritt", credential: "LCSW", email: "amber@tfc.health" },
+  { name: "Laurel Muehlmeyer", credential: "Intern", email: "lmuehlmeyer@tfc.health" },
+  { name: "Jill Nantze", credential: "LAMFT", email: "jnantze@tfc.health" },
+  { name: "Jessica Neuhart", credential: "Intern", email: "jneuhart@tfc.health" },
+  { name: "Abena Marfowaa Owusu-Nkwantabisah", credential: "LPCC", email: "abena@tfc.health" },
+  { name: "Jennifer Bogart", credential: "LPCC", email: "jenniferb@tfc.health" },
+  { name: "Paula Raley", credential: "LCSW", email: "praley@tfc.health" },
+  { name: "Sandra Rivera", credential: "LMFT", email: "sandra@tfc.health" },
+  { name: "Carrie Savedra", credential: "LMSW", email: "carrie@tfc.health" },
+  { name: "Kristi Simmons", credential: "Intern", email: "ksimmons@tfc.health" },
+  { name: "Renee Singletary", credential: "LCSW", email: "renee@tfc.health" },
+  { name: "Angelica Villicana", credential: "LCSW", email: "angelica@tfc.health" },
+];
 
-// Case-insensitive index built once at import time
+// Derived email map for CC resolution (case-insensitive)
 const emailMapLower: Record<string, string> = {};
-for (const [name, email] of Object.entries(PROVIDER_EMAIL_MAP)) {
-  emailMapLower[name.toLowerCase()] = email;
+for (const p of PROVIDER_LIST) {
+  emailMapLower[p.name.toLowerCase()] = p.email;
 }
 
 /**
