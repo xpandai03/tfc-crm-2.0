@@ -64,7 +64,6 @@ export const PROVIDER_NAME_MAPPING: Record<string, string> = {
 export const UNMATCHED_SNAPSHOT_PROVIDERS = [
   "Ginger",    // Not in Current sheet
   "Ivory",     // Not in Current sheet (new in 2.9.26 PDF)
-  "Tyra",      // Not in Current sheet
 ];
 
 /**

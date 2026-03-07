@@ -23,12 +23,12 @@ export interface OfficeLocation {
 /**
  * Provider name → email address.
  * Used for CC resolution when sending emails.
- * Names are stored as-is from the md file; lookup is case-insensitive.
+ * Names match the canonical CRM provider dataset (Provider Skills Spreadsheet).
+ * Lookup is case-insensitive.
  */
 export const PROVIDER_EMAIL_MAP: Record<string, string> = {
-  "Abena Marfowaa Owusu-Nkwantabisiah": "abena@tfc.health",
+  "Abena Marfowaa Owusu-Nkwantabisah": "abena@tfc.health",
   "Amanda Davison": "amanda@tfc.health",
-  "Amaya Castaneda": "amayac@tfc.health",
   "Amber Lute": "alute@tfc.health",
   "Amber Merritt": "amber@tfc.health",
   "Angelica Chavez": "angelicac@tfc.health",
@@ -37,11 +37,8 @@ export const PROVIDER_EMAIL_MAP: Record<string, string> = {
   "Bentley Carbone": "bentley@tfc.health",
   "Carrie Savedra": "carrie@tfc.health",
   "Cindy Ketchum": "cindy@tfc.health",
-  "Danielle Dimas": "danielle@tfc.health",
+  "Danielle Burke": "danielle@tfc.health",
   "Debra Dederich-Elsner": "debra@tfc.health",
-  "Elizabeth Lopez": "elopez@tfc.health",
-  "Erica Benavidez": "ebenavidez@tfc.health",
-  "Ivory Kahler": "ikahler@tfc.health",
   "Janet Fackrell": "jfackrell@tfc.health",
   "Jennifer Bogart": "jenniferb@tfc.health",
   "Jessica Neuhart": "jneuhart@tfc.health",
@@ -51,12 +48,11 @@ export const PROVIDER_EMAIL_MAP: Record<string, string> = {
   "Kristi Simmons": "ksimmons@tfc.health",
   "Laura Garcia-Rosecrans": "lgarcia-rosecrans@tfc.health",
   "Laurel Muehlmeyer": "lmuehlmeyer@tfc.health",
-  "Nona Bockius": "nbockius@tfc.health",
+  "Liz Lopez": "elopez@tfc.health",
   "Paula Raley": "praley@tfc.health",
   "Renee Singletary": "renee@tfc.health",
   "Sandra Rivera": "sandra@tfc.health",
   "Tyra Jones": "tjones@tfc.health",
-  "Victoria Santangelo": "victoria@tfc.health",
 };
 
 // Case-insensitive index built once at import time
