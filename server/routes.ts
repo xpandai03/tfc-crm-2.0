@@ -30,6 +30,9 @@ import {
   updateSyncContactStatus,
   updateSyncContactAssignment,
   appendSyncContactNote,
+  enrichSyncContact,
+  upsertSingleContact,
+  type SyncPayloadContact,
 } from "./sync/db";
 import * as XLSX from "xlsx";
 import * as path from "path";
@@ -482,21 +485,133 @@ export async function registerRoutes(
 
       console.log(`[contact-snapshot] Fetching contact by ID: ${contactId}, READ_SOURCE: ${READ_SOURCE}`);
 
-      // Fast path: read from sync cache (has both board + detailed data)
+      // Hybrid path: Use sync for board data, enrich with n8n for detailed fields
       if (shouldReadFromSync()) {
         const syncContact = getSyncContactById(contactId);
         if (syncContact) {
+          const hasDetailedData = syncContact.lastNote || syncContact.email;
+
+          if (hasDetailedData) {
+            // Sync cache has detailed data — serve immediately
+            const statusCode = syncContact.statusCode ?? 100;
+            const umbrella = statusCode >= 100 && statusCode < 200 ? "WL"
+              : statusCode >= 200 && statusCode < 300 ? "PS"
+              : statusCode >= 300 && statusCode < 400 ? "PMR"
+              : statusCode >= 400 && statusCode < 500 ? "INS"
+              : "unknown";
+
+            const notes = parseNotesFromLastNote(syncContact.lastNote || undefined);
+            console.log(`[contact-snapshot] Serving ${syncContact.name} from enriched sync cache`);
+            return res.json({
+              ...syncContact,
+              statusCode,
+              umbrella,
+              status: syncContact.status || "intake",
+              serviceRequested: syncContact.serviceRequested || "Unknown",
+              daysOnWaitlist: syncContact.daysOnWaitlist ?? 0,
+              notes,
+              _source: "sync",
+            });
+          }
+
+          // Sync has board data but no detailed data — fetch from n8n and enrich
+          console.log(`[contact-snapshot] Sync cache has ${syncContact.name} but missing detail fields, enriching from n8n`);
+          try {
+            const snapshotResponse = await fetch(N8N_ENDPOINTS.contactSnapshot, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ contactId }),
+            });
+
+            if (snapshotResponse.ok) {
+              const rawData = await snapshotResponse.json();
+              const detailed = (rawData.contact || rawData || {}) as Record<string, unknown>;
+
+              // Enrich sync cache for next time (fire-and-forget)
+              try { enrichSyncContact(contactId, detailed); } catch (e) {
+                console.warn(`[contact-snapshot] Failed to enrich sync cache:`, e);
+              }
+
+              // Build response merging sync board data + n8n detailed data
+              const statusCode = syncContact.statusCode ?? 100;
+              const umbrella = statusCode >= 100 && statusCode < 200 ? "WL"
+                : statusCode >= 200 && statusCode < 300 ? "PS"
+                : statusCode >= 300 && statusCode < 400 ? "PMR"
+                : statusCode >= 400 && statusCode < 500 ? "INS"
+                : "unknown";
+
+              const assignedTo = (() => {
+                const raw = (detailed.assignedTo as string)
+                  || (detailed["Admin Assigned To Contact"] as string)
+                  || syncContact.assignedTo
+                  || null;
+                return typeof raw === "string" && raw.trim() !== "" ? raw.trim() : null;
+              })();
+
+              const merged = {
+                contactId: syncContact.contactId,
+                name: syncContact.name,
+                email: (detailed.email as string) || null,
+                phone: (detailed.phone as string) || null,
+                requestingFor: (detailed.requestingFor as string) || null,
+                reasonForSeeking: (detailed.reasonForSeeking as string) || null,
+                reasonForTherapy: (detailed.reasonForTherapy as string)
+                  || (detailed["Reason for Therapy MCQ"] as string)
+                  || (detailed.reasonForTherapyMCQ as string)
+                  || (detailed["Reason for Therapy"] as string)
+                  || null,
+                detailedReason: (detailed.detailedReason as string) || (detailed.DetailedReason as string) || null,
+                formCompletedBy: (detailed.formCompletedBy as string) || null,
+                modality: (detailed.modality as string) || null,
+                referralSource: (detailed.referralSource as string) || null,
+                priorServices: (detailed.priorServices as string) || null,
+                priorProvider: (detailed.priorProvider as string) || null,
+                insurancePayer: (detailed.insurancePayer as string) || (detailed.insurance as string) || null,
+                insurancePlan: (detailed.insurancePlan as string) || (detailed.planName as string) || null,
+                insuranceId: (detailed.insuranceId as string) || (detailed.memberId as string) || null,
+                insuranceStatus: (detailed.insuranceStatus as string) || null,
+                referralAuth: (detailed.referralAuth as string) || null,
+                referralStatus: (detailed.referralStatus as string) || null,
+                patientDob: normalizeExcelDate(detailed.patientDob || detailed.dob || detailed.dateOfBirth),
+                gender: (detailed.gender as string) || (detailed.sex as string) || null,
+                age: typeof detailed.age === "number" ? detailed.age : null,
+                streetAddress: (detailed.streetAddress as string) || (detailed.address as string) || null,
+                city: (detailed.city as string) || null,
+                state: (detailed.state as string) || null,
+                zipCode: (detailed.zipCode as string) || (detailed.zip as string) || null,
+                county: (detailed.county as string) || null,
+                preferredContact: (detailed.preferredContact as string) || null,
+                custody: (detailed.custody as string) || null,
+                flags: (detailed.flags as string) || null,
+                priority: (detailed.priority as string) || null,
+                rfsLink: (detailed.rfsLink as string) || (detailed.rfs as string) || null,
+                documentLink: (detailed.documentLink as string) || (detailed.documents as string) || null,
+                statusCode,
+                umbrella,
+                status: syncContact.status || "intake",
+                serviceRequested: syncContact.serviceRequested || "Unknown",
+                daysOnWaitlist: syncContact.daysOnWaitlist ?? 0,
+                dateAdded: syncContact.dateAdded,
+                lastContact: normalizeExcelDate(detailed.lastContact),
+                assignedTo,
+                notes: parseNotesFromLastNote(detailed.lastNote as string | undefined),
+                _source: "sync+n8n",
+              };
+
+              console.log(`[contact-snapshot] Returning enriched data for ${syncContact.name}`);
+              return res.json(merged);
+            }
+          } catch (enrichError) {
+            console.warn(`[contact-snapshot] n8n enrichment failed, serving board-only sync data:`, enrichError);
+          }
+
+          // Fallback: serve sync data even without detailed fields
           const statusCode = syncContact.statusCode ?? 100;
           const umbrella = statusCode >= 100 && statusCode < 200 ? "WL"
             : statusCode >= 200 && statusCode < 300 ? "PS"
             : statusCode >= 300 && statusCode < 400 ? "PMR"
             : statusCode >= 400 && statusCode < 500 ? "INS"
             : "unknown";
-
-          // Parse notes from lastNote field (same as n8n path)
-          const notes = parseNotesFromLastNote(syncContact.lastNote || undefined);
-
-          console.log(`[contact-snapshot] Serving ${syncContact.name} from sync cache`);
           return res.json({
             ...syncContact,
             statusCode,
@@ -504,7 +619,7 @@ export async function registerRoutes(
             status: syncContact.status || "intake",
             serviceRequested: syncContact.serviceRequested || "Unknown",
             daysOnWaitlist: syncContact.daysOnWaitlist ?? 0,
-            notes,
+            notes: [],
             _source: "sync",
           });
         }
@@ -2887,6 +3002,74 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[sync] Error fetching status:", error);
       return res.status(500).json({ error: "Failed to fetch sync status" });
+    }
+  });
+
+  // Manual single-contact sync (admin-triggered refresh from Excel)
+  app.post("/api/sync/contact/:contactId", async (req, res) => {
+    try {
+      const contactId = parseInt(req.params.contactId, 10);
+      if (isNaN(contactId)) {
+        return res.status(400).json({ error: "contactId must be a number" });
+      }
+
+      console.log(`[sync] Manual sync for contact ${contactId}`);
+
+      // Step 1: Fetch board data to get base record
+      let boardContact: Record<string, unknown> | null = null;
+      try {
+        const boardResponse = await fetch(WAITLIST_BOARD_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        if (boardResponse.ok) {
+          const boardData = await boardResponse.json();
+          const contacts = boardData.contacts || [];
+          boardContact = contacts.find((c: any) => c.contactId === contactId) || null;
+        }
+      } catch (e) {
+        console.warn(`[sync] Board fetch failed during manual sync:`, e);
+      }
+
+      if (!boardContact) {
+        return res.status(404).json({ error: "Contact not found in Excel" });
+      }
+
+      // Step 2: Fetch detailed data from n8n snapshot
+      let detailedData: Record<string, unknown> = {};
+      try {
+        const snapshotResponse = await fetch(N8N_ENDPOINTS.contactSnapshot, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contactId }),
+        });
+        if (snapshotResponse.ok) {
+          const rawData = await snapshotResponse.json();
+          detailedData = (rawData.contact || rawData || {}) as Record<string, unknown>;
+        }
+      } catch (e) {
+        console.warn(`[sync] Snapshot fetch failed during manual sync:`, e);
+      }
+
+      // Step 3: Merge board + detailed data and upsert
+      const merged = { ...boardContact, ...detailedData, contactId } as SyncPayloadContact;
+      upsertSingleContact(merged);
+
+      // Step 4: Also enrich with detailed fields
+      enrichSyncContact(contactId, detailedData);
+
+      // Step 5: Return the fresh contact
+      const freshContact = getSyncContactById(contactId);
+      console.log(`[sync] Manual sync complete for contact ${contactId}`);
+
+      return res.json({
+        success: true,
+        contact: freshContact,
+      });
+    } catch (error) {
+      console.error("[sync] Manual sync error:", error);
+      return res.status(500).json({ error: "Failed to sync contact" });
     }
   });
 

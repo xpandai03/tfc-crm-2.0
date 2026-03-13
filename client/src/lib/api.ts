@@ -282,6 +282,15 @@ export async function createAssignment(params: {
 }
 
 // ============================================================================
+// Sync API
+// ============================================================================
+
+export async function syncContactFromExcel(contactId: number): Promise<{ success: boolean; contact: unknown }> {
+  const response = await apiRequest("POST", `/api/sync/contact/${contactId}`);
+  return response.json();
+}
+
+// ============================================================================
 // TherapyNotes API
 // ============================================================================
 
