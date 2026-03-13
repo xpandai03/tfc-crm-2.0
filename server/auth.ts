@@ -298,6 +298,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     "/auth/callback",
     "/auth/logout",
     "/api/me", // This handles its own auth check
+    "/api/sync/contacts", // n8n sync endpoint (uses X-Sync-Key auth)
   ];
 
   // Public assets that must be accessible without auth (e.g., for email templates)
