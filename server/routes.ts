@@ -19,6 +19,18 @@ import {
 import type { TnAgentPayload, TnAgentResponse } from "./therapy-notes";
 import { saveEmailSnapshot, getEmailSnapshot, getSnapshotsForContact } from "./email-snapshots";
 import { createAssignment, getAssignmentsByContact } from "./assignments/db";
+import {
+  syncContacts as syncContactsToDb,
+  recordSyncError,
+  getAllSyncContacts,
+  getSyncContactById,
+  getSyncMeta,
+  getSyncStaffList,
+  getSyncContactCount,
+  updateSyncContactStatus,
+  updateSyncContactAssignment,
+  appendSyncContactNote,
+} from "./sync/db";
 import * as XLSX from "xlsx";
 import * as path from "path";
 
@@ -26,6 +38,33 @@ import * as path from "path";
 // Change to "live" to use real n8n webhooks instead of mock data
 type DataMode = "mock" | "live";
 const DATA_MODE: DataMode = "live";
+
+// ============================================================================
+// Read Source Configuration
+// ============================================================================
+// "auto": Use sync (SQLite) if data exists, fall back to n8n
+// "sync": Always use SQLite (fastest, requires active n8n sync job)
+// "n8n": Always use n8n webhooks (legacy behavior)
+type ReadSource = "auto" | "sync" | "n8n";
+const READ_SOURCE: ReadSource = (process.env.READ_SOURCE as ReadSource) || "auto";
+
+// Shared secret for n8n sync endpoint authentication
+const SYNC_API_KEY = process.env.SYNC_API_KEY || "tfc-sync-2026";
+
+/**
+ * Check if we should read from sync cache.
+ * Returns true if sync cache has data and READ_SOURCE allows it.
+ */
+function shouldReadFromSync(): boolean {
+  if (READ_SOURCE === "n8n") return false;
+  if (READ_SOURCE === "sync") return true;
+  // "auto": use sync if it has data
+  try {
+    return getSyncContactCount() > 0;
+  } catch {
+    return false;
+  }
+}
 
 // ============================================================================
 // Server-Side Board Data Cache
@@ -441,7 +480,36 @@ export async function registerRoutes(
         return res.status(400).json({ error: "contactId (number) is required" });
       }
 
-      console.log(`[contact-snapshot] Fetching contact by ID: ${contactId}`);
+      console.log(`[contact-snapshot] Fetching contact by ID: ${contactId}, READ_SOURCE: ${READ_SOURCE}`);
+
+      // Fast path: read from sync cache (has both board + detailed data)
+      if (shouldReadFromSync()) {
+        const syncContact = getSyncContactById(contactId);
+        if (syncContact) {
+          const statusCode = syncContact.statusCode ?? 100;
+          const umbrella = statusCode >= 100 && statusCode < 200 ? "WL"
+            : statusCode >= 200 && statusCode < 300 ? "PS"
+            : statusCode >= 300 && statusCode < 400 ? "PMR"
+            : statusCode >= 400 && statusCode < 500 ? "INS"
+            : "unknown";
+
+          // Parse notes from lastNote field (same as n8n path)
+          const notes = parseNotesFromLastNote(syncContact.lastNote || undefined);
+
+          console.log(`[contact-snapshot] Serving ${syncContact.name} from sync cache`);
+          return res.json({
+            ...syncContact,
+            statusCode,
+            umbrella,
+            status: syncContact.status || "intake",
+            serviceRequested: syncContact.serviceRequested || "Unknown",
+            daysOnWaitlist: syncContact.daysOnWaitlist ?? 0,
+            notes,
+            _source: "sync",
+          });
+        }
+        console.log(`[contact-snapshot] Contact ${contactId} not found in sync cache, falling through to n8n`);
+      }
 
       if (DATA_MODE === "live") {
         try {
@@ -1195,6 +1263,71 @@ export async function registerRoutes(
   // Get waitlist summary
   app.post("/api/get-waitlist-summary", async (_req, res) => {
     console.log("[SUMMARY] === REQUEST START ===");
+    console.log("[SUMMARY] READ_SOURCE:", READ_SOURCE);
+
+    // Fast path: compute summary from sync cache
+    if (shouldReadFromSync()) {
+      try {
+        const contacts = getAllSyncContacts();
+        const activeContacts = contacts.filter((c) => {
+          const sc = c.statusCode ?? 0;
+          // Inactive: 103, 104, 203, 204, 205, 400+
+          return ![103, 104, 203, 204, 205].includes(sc) && sc < 400;
+        });
+
+        const waitDays = activeContacts
+          .map((c) => c.daysOnWaitlist ?? 0)
+          .filter((d) => d > 0);
+        const avgWaitDays = waitDays.length > 0
+          ? Math.round(waitDays.reduce((a, b) => a + b, 0) / waitDays.length)
+          : 0;
+
+        let longestWaitDays = 0;
+        let longestWaitingName = "---";
+        for (const c of activeContacts) {
+          const d = c.daysOnWaitlist ?? 0;
+          if (d > longestWaitDays) {
+            longestWaitDays = d;
+            longestWaitingName = c.name;
+          }
+        }
+
+        const over30Days = activeContacts.filter((c) => (c.daysOnWaitlist ?? 0) > 30).length;
+        const over60Days = activeContacts.filter((c) => (c.daysOnWaitlist ?? 0) > 60).length;
+        const readyToSchedule = contacts.filter((c) => {
+          const sc = c.statusCode ?? 0;
+          return sc >= 200 && sc < 203;
+        }).length;
+        const needsFollowUp = contacts.filter((c) => {
+          const sc = c.statusCode ?? 0;
+          return sc >= 300 && sc < 400;
+        }).length;
+
+        // Status breakdown
+        const byStatus: Record<string, number> = {};
+        for (const c of contacts) {
+          const s = c.status || "unknown";
+          byStatus[s] = (byStatus[s] || 0) + 1;
+        }
+
+        console.log(`[SUMMARY] Computed from ${contacts.length} sync contacts`);
+        return res.json({
+          totalActive: activeContacts.length,
+          avgWaitDays,
+          longestWaitDays,
+          longestWaitingName,
+          over30Days,
+          over60Days,
+          readyToSchedule,
+          needsFollowUp,
+          byStatus,
+          _source: "sync",
+        });
+      } catch (syncError) {
+        console.warn("[SUMMARY] Sync read failed, falling through to n8n:", syncError);
+      }
+    }
+
     console.log("[SUMMARY] FINAL FETCH URL =", WAITLIST_SUMMARY_URL);
     try {
       if (DATA_MODE === "live") {
@@ -1247,7 +1380,21 @@ export async function registerRoutes(
   // Uses the board endpoint to ensure contactId is always present
   app.get("/api/waitlist-contacts", async (_req, res) => {
     console.log("[WAITLIST-CONTACTS] === REQUEST START ===");
-    console.log("[WAITLIST-CONTACTS] DATA_MODE:", DATA_MODE);
+    console.log("[WAITLIST-CONTACTS] DATA_MODE:", DATA_MODE, "READ_SOURCE:", READ_SOURCE);
+
+    // Fast path: read from sync cache
+    if (shouldReadFromSync()) {
+      try {
+        const contacts = getAllSyncContacts();
+        console.log(`[WAITLIST-CONTACTS] Serving ${contacts.length} contacts from sync cache`);
+        // Populate board cache for backward compat (contact-snapshot lookups)
+        setBoardCache({ contacts: contacts as any[] });
+        return res.json({ contacts, _source: "sync" });
+      } catch (syncError) {
+        console.warn("[WAITLIST-CONTACTS] Sync read failed, falling through to n8n:", syncError);
+      }
+    }
+
     console.log("[WAITLIST-CONTACTS] FINAL FETCH URL =", WAITLIST_BOARD_URL);
     try {
       if (DATA_MODE === "live") {
@@ -1415,7 +1562,20 @@ export async function registerRoutes(
   // Get waitlist board (contact rows for Kanban - uses dedicated live endpoint)
   app.post("/api/get-waitlist-board", async (_req, res) => {
     console.log("[BOARD] === REQUEST START ===");
-    console.log("[BOARD] DATA_MODE:", DATA_MODE);
+    console.log("[BOARD] DATA_MODE:", DATA_MODE, "READ_SOURCE:", READ_SOURCE);
+
+    // Fast path: read from sync cache
+    if (shouldReadFromSync()) {
+      try {
+        const contacts = getAllSyncContacts();
+        console.log(`[BOARD] Serving ${contacts.length} contacts from sync cache`);
+        setBoardCache({ contacts: contacts as any[] });
+        return res.json({ contacts, _source: "sync" });
+      } catch (syncError) {
+        console.warn("[BOARD] Sync read failed, falling through to n8n:", syncError);
+      }
+    }
+
     console.log("[BOARD] FINAL FETCH URL =", WAITLIST_BOARD_URL);
     try {
       if (DATA_MODE === "live") {
@@ -1587,6 +1747,22 @@ export async function registerRoutes(
       });
 
       if (DATA_MODE === "live") {
+        // Write-through: update sync cache first for instant UI feedback
+        const statusCodeToString: Record<number, string> = {
+          100: "intake", 101: "waiting", 102: "waiting",
+          200: "ready_to_schedule", 201: "waiting", 202: "scheduled", 203: "waiting",
+          300: "on_hold", 400: "closed",
+        };
+        try {
+          updateSyncContactStatus(contactId, statusCode, statusCodeToString[statusCode] || "unknown");
+          console.log(`[update-status] Sync cache updated for contactId ${contactId}`);
+        } catch (e) {
+          console.warn(`[update-status] Failed to update sync cache:`, e);
+        }
+
+        // Clear board cache so next read picks up the change
+        boardCache = null;
+
         try {
           const payload = { contactId, statusCode };
 
@@ -1607,11 +1783,8 @@ export async function registerRoutes(
 
           if (!response.ok) {
             console.error(`[update-status] n8n returned ${response.status}: ${responseText}`);
-            return res.status(502).json({
-              error: "Status update failed",
-              message: `n8n returned ${response.status}: ${response.statusText}`,
-              details: responseText.substring(0, 200),
-            });
+            // Still return success since sync cache was updated — n8n sync will reconcile
+            return res.json({ success: true, contactId, newStatus: statusCode, n8nError: true });
           }
 
           // Parse the response
@@ -1626,11 +1799,9 @@ export async function registerRoutes(
           return res.json({ success: true, contactId, newStatus: statusCode, ...data });
         } catch (liveError) {
           const errorMessage = liveError instanceof Error ? liveError.message : "Unknown error";
-          console.error(`[update-status] Live update failed for contactId ${contactId}:`, errorMessage);
-          return res.status(500).json({
-            error: "Status update failed",
-            message: `Could not update status: ${errorMessage}`,
-          });
+          console.error(`[update-status] n8n write failed for contactId ${contactId}:`, errorMessage);
+          // Still return success — sync cache was already updated, n8n sync will reconcile
+          return res.json({ success: true, contactId, newStatus: statusCode, n8nError: true });
         }
       } else {
         // Mock mode - update by index
@@ -1687,6 +1858,15 @@ export async function registerRoutes(
       });
 
       if (DATA_MODE === "live") {
+        // Write-through: update sync cache for instant timeline update
+        try {
+          appendSyncContactNote(contactId, note.trim(), author.trim(), timestamp);
+          console.log(`[add-note] Sync cache updated for contactId ${contactId}`);
+        } catch (e) {
+          console.warn(`[add-note] Failed to update sync cache:`, e);
+        }
+        boardCache = null;
+
         try {
           // Forward exact payload to n8n - it handles Excel formatting
           const payload = {
@@ -1899,6 +2079,14 @@ export async function registerRoutes(
       console.log(`[assign-contact] Assigning contactId ${contactId} to ${assignedTo || "unassigned"}`);
 
       if (DATA_MODE === "live") {
+        // Write-through: update sync cache for instant UI feedback
+        try {
+          updateSyncContactAssignment(contactId, assignedTo);
+          console.log(`[assign-contact] Sync cache updated for contactId ${contactId}`);
+        } catch (e) {
+          console.warn(`[assign-contact] Failed to update sync cache:`, e);
+        }
+
         try {
           const payload = {
             contactId,
@@ -1979,6 +2167,13 @@ export async function registerRoutes(
   // Returns unique non-null assignedTo values from board data
   app.get("/api/staff-list", async (_req, res) => {
     try {
+      // Fast path: read from sync cache
+      if (shouldReadFromSync()) {
+        const staff = getSyncStaffList();
+        console.log(`[staff-list] Serving ${staff.length} staff from sync cache`);
+        return res.json({ staff });
+      }
+
       // Check cache first
       if (staffListCache) {
         const age = Date.now() - staffListCache.timestamp;
@@ -2643,6 +2838,55 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error clearing attention flag:", error);
       return res.status(500).json({ error: "Failed to clear attention flag" });
+    }
+  });
+
+  // ============================================================================
+  // Sync API (n8n → CRM database)
+  // ============================================================================
+
+  // n8n pushes full Excel snapshot to this endpoint on a cron schedule
+  app.post("/api/sync/contacts", async (req, res) => {
+    try {
+      // Authenticate with shared secret
+      const apiKey = req.headers["x-sync-key"] as string;
+      if (apiKey !== SYNC_API_KEY) {
+        return res.status(401).json({ error: "Invalid sync key" });
+      }
+
+      const { contacts } = req.body;
+
+      if (!contacts || !Array.isArray(contacts)) {
+        return res.status(400).json({ error: "contacts array is required" });
+      }
+
+      console.log(`[sync] Received ${contacts.length} contacts from n8n`);
+
+      const result = syncContactsToDb(contacts);
+
+      console.log(`[sync] Complete: ${result.synced} synced, ${result.skipped} unchanged, ${result.deleted} deleted in ${result.durationMs}ms`);
+
+      return res.json({
+        success: true,
+        ...result,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Sync failed";
+      console.error("[sync] Error:", message);
+      recordSyncError(message);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // Sync health status (for frontend badge + monitoring)
+  app.get("/api/sync/status", async (_req, res) => {
+    try {
+      const meta = getSyncMeta();
+      const contactCount = getSyncContactCount();
+      return res.json({ ...meta, contactCount });
+    } catch (error) {
+      console.error("[sync] Error fetching status:", error);
+      return res.status(500).json({ error: "Failed to fetch sync status" });
     }
   });
 
