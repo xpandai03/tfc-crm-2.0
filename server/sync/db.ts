@@ -631,3 +631,86 @@ export function appendSyncContactNote(
     WHERE contact_id = ?
   `).run(updated, timestamp.split("T")[0], contactId);
 }
+
+/**
+ * Enrich a sync contact with detailed data (from n8n contact snapshot).
+ * Updates only non-null fields — preserves existing board data.
+ */
+export function enrichSyncContact(contactId: number, detailed: Record<string, unknown>): void {
+  const db = getDatabase();
+
+  const str = (v: unknown): string | null =>
+    v !== undefined && v !== null && String(v).trim() !== "" ? String(v).trim() : null;
+  const num = (v: unknown): number | null => {
+    if (v === undefined || v === null) return null;
+    const n = Number(v);
+    return isNaN(n) ? null : n;
+  };
+
+  // Only update fields that have values in the detailed data
+  const updates: string[] = [];
+  const values: unknown[] = [];
+
+  const fieldMap: Array<[string, unknown]> = [
+    ["email", str(detailed.email)],
+    ["phone", str(detailed.phone)],
+    ["requesting_for", str(detailed.requestingFor)],
+    ["reason_for_seeking", str(detailed.reasonForSeeking)],
+    ["reason_for_therapy", str(detailed.reasonForTherapy ?? detailed["Reason for Therapy MCQ"] ?? detailed["reasonForTherapyMCQ"])],
+    ["detailed_reason", str(detailed.detailedReason ?? detailed["DetailedReason"])],
+    ["form_completed_by", str(detailed.formCompletedBy)],
+    ["modality", str(detailed.modality ?? detailed["Desired Modality"])],
+    ["referral_source", str(detailed.referralSource)],
+    ["prior_services", str(detailed.priorServices)],
+    ["prior_provider", str(detailed.priorProvider)],
+    ["preferred_contact", str(detailed.preferredContact ?? detailed["preferredContactMethod"])],
+    ["custody", str(detailed.custody ?? detailed["custodyStatus"])],
+    ["flags", str(detailed.flags ?? detailed["alert"])],
+    ["priority", str(detailed.priority ?? detailed["urgency"])],
+    ["insurance_payer", str(detailed.insurancePayer ?? detailed.insurance ?? detailed["Primary Insurance Provider"])],
+    ["insurance_plan", str(detailed.insurancePlan ?? detailed["planName"])],
+    ["insurance_id", str(detailed.insuranceId ?? detailed["memberId"] ?? detailed["policyNumber"])],
+    ["insurance_status", str(detailed.insuranceStatus ?? detailed["verificationStatus"])],
+    ["referral_auth", str(detailed.referralAuth ?? detailed["authNumber"])],
+    ["referral_status", str(detailed.referralStatus)],
+    ["patient_dob", str(detailed.patientDob ?? detailed.dob ?? detailed.dateOfBirth)],
+    ["gender", str(detailed.gender ?? detailed["sex"])],
+    ["age", num(detailed.age)],
+    ["street_address", str(detailed.streetAddress ?? detailed.address ?? detailed["street"])],
+    ["city", str(detailed.city)],
+    ["state", str(detailed.state)],
+    ["zip_code", str(detailed.zipCode ?? detailed.zip ?? detailed["postalCode"])],
+    ["county", str(detailed.county)],
+    ["rfs_link", str(detailed.rfsLink ?? detailed.rfs ?? detailed["sharepointLink"] ?? detailed["formLink"])],
+    ["document_link", str(detailed.documentLink ?? detailed.documents ?? detailed["fileLink"])],
+    ["last_contact", str(detailed.lastContact)],
+    ["last_note", str(detailed.lastNote)],
+  ];
+
+  for (const [col, val] of fieldMap) {
+    if (val !== null) {
+      updates.push(`${col} = ?`);
+      values.push(val);
+    }
+  }
+
+  if (updates.length === 0) return;
+
+  updates.push("synced_at = datetime('now')");
+  values.push(contactId);
+
+  db.prepare(
+    `UPDATE sync_contacts SET ${updates.join(", ")} WHERE contact_id = ?`
+  ).run(...values);
+
+  console.log(`[sync-db] Enriched contact ${contactId} with ${updates.length - 1} detailed fields`);
+}
+
+/**
+ * Upsert a single contact (board + detailed data merged).
+ * Used by the manual "Sync Contact Now" feature.
+ */
+export function upsertSingleContact(contact: SyncPayloadContact): void {
+  // Reuse the batch sync logic for a single contact
+  syncContacts([contact]);
+}

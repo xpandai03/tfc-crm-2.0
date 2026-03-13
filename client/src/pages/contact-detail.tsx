@@ -46,8 +46,9 @@ import {
   Loader2,
   RotateCcw,
   UserPlus,
+  RefreshCw,
 } from "lucide-react";
-import { getContactSnapshot, updateContactStatus, addNoteToContact, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
+import { getContactSnapshot, updateContactStatus, addNoteToContact, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, syncContactFromExcel, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
 import { ReminderModal } from "@/components/ui/reminder-modal";
 import { AssignProviderModal } from "@/components/ui/assign-provider-modal";
 import { SendEmailModal } from "@/components/ui/send-email-modal";
@@ -500,6 +501,18 @@ export default function ContactDetail() {
     if (!contactId || !user?.email) return;
     clearFlagMutation.mutate({ contactId, clearedByEmail: user.email });
   };
+
+  // Manual sync from Excel
+  const syncFromExcelMutation = useMutation({
+    mutationFn: (id: number) => syncContactFromExcel(id),
+    onSuccess: () => {
+      toast({ title: "Contact synced", description: "Fresh data loaded from Excel." });
+      queryClient.invalidateQueries({ queryKey: ["/api/contact", contactId] });
+    },
+    onError: (error) => {
+      toast({ title: "Sync failed", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" });
+    },
+  });
 
   // Handle status change from dropdown
   const handleStatusChange = (statusCode: number) => {
@@ -1404,6 +1417,19 @@ export default function ContactDetail() {
                   >
                     <UserPlus className="h-4 w-4 mr-2" />
                     Assign Provider
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start"
+                    size="sm"
+                    disabled={syncFromExcelMutation.isPending}
+                    onClick={() => {
+                      if (contactId) syncFromExcelMutation.mutate(contactId);
+                    }}
+                  >
+                    <RefreshCw className={`h-4 w-4 mr-2 ${syncFromExcelMutation.isPending ? "animate-spin" : ""}`} />
+                    {syncFromExcelMutation.isPending ? "Syncing..." : "Sync From Excel"}
                   </Button>
 
                   {canUseTn && (
