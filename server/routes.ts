@@ -18,6 +18,7 @@ import {
 } from "./therapy-notes";
 import type { TnAgentPayload, TnAgentResponse } from "./therapy-notes";
 import { saveEmailSnapshot, getEmailSnapshot, getSnapshotsForContact } from "./email-snapshots";
+import { createAssignment, getAssignmentsByContact } from "./assignments/db";
 import * as XLSX from "xlsx";
 import * as path from "path";
 
@@ -2642,6 +2643,70 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error clearing attention flag:", error);
       return res.status(500).json({ error: "Failed to clear attention flag" });
+    }
+  });
+
+  // ============================================================================
+  // Provider Assignments (CRM-only)
+  // ============================================================================
+
+  // Get all assignments for a contact
+  app.get("/api/assignments/:contactId", async (req, res) => {
+    try {
+      const contactId = parseInt(req.params.contactId, 10);
+      if (isNaN(contactId)) {
+        return res.status(400).json({ error: "contactId must be a number" });
+      }
+
+      const assignments = getAssignmentsByContact(contactId);
+      return res.json({ assignments });
+    } catch (error) {
+      console.error("Error getting assignments:", error);
+      return res.status(500).json({ error: "Failed to get assignments" });
+    }
+  });
+
+  // Create a provider assignment
+  app.post("/api/assignments", async (req, res) => {
+    try {
+      const { contactId, contactName, providerName, credential, assignmentComment, assignedByEmail, assignedByInitials } = req.body;
+
+      if (contactId === undefined || typeof contactId !== "number") {
+        return res.status(400).json({ error: "contactId (number) is required" });
+      }
+      if (!contactName || typeof contactName !== "string" || contactName.trim() === "") {
+        return res.status(400).json({ error: "contactName is required" });
+      }
+      if (!providerName || typeof providerName !== "string" || providerName.trim() === "") {
+        return res.status(400).json({ error: "providerName is required" });
+      }
+      if (!credential || typeof credential !== "string" || credential.trim() === "") {
+        return res.status(400).json({ error: "credential is required" });
+      }
+      if (!assignedByEmail || typeof assignedByEmail !== "string" || !assignedByEmail.includes("@")) {
+        return res.status(400).json({ error: "valid assignedByEmail is required" });
+      }
+      if (!assignedByInitials || typeof assignedByInitials !== "string") {
+        return res.status(400).json({ error: "assignedByInitials is required" });
+      }
+
+      const result = createAssignment({
+        contactId,
+        contactName: contactName.trim(),
+        providerName: providerName.trim(),
+        credential: credential.trim(),
+        assignmentComment: assignmentComment?.trim() || undefined,
+        assignedByEmail: assignedByEmail.trim(),
+        assignedByInitials: assignedByInitials.trim(),
+      });
+
+      return res.json({
+        success: true,
+        assignmentId: result.assignmentId,
+      });
+    } catch (error) {
+      console.error("Error creating assignment:", error);
+      return res.status(500).json({ error: "Failed to create assignment" });
     }
   });
 

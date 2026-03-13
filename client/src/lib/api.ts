@@ -241,6 +241,47 @@ export async function clearAttentionFlag(
 }
 
 // ============================================================================
+// Provider Assignments API
+// ============================================================================
+
+export interface ProviderAssignment {
+  id: number;
+  contactId: number;
+  contactName: string;
+  providerName: string;
+  credential: string;
+  assignmentComment: string | null;
+  assignedByEmail: string;
+  assignedByInitials: string;
+  assignedAt: string;
+  source: string;
+}
+
+export async function getAssignments(contactId: number): Promise<{ assignments: ProviderAssignment[] }> {
+  const response = await fetch(`/api/assignments/${contactId}`, {
+    cache: "no-store",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw new Error("Failed to fetch assignments");
+  }
+  return response.json();
+}
+
+export async function createAssignment(params: {
+  contactId: number;
+  contactName: string;
+  providerName: string;
+  credential: string;
+  assignmentComment?: string;
+  assignedByEmail: string;
+  assignedByInitials: string;
+}): Promise<{ success: boolean; assignmentId: number }> {
+  const response = await apiRequest("POST", "/api/assignments", params);
+  return response.json();
+}
+
+// ============================================================================
 // TherapyNotes API
 // ============================================================================
 

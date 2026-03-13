@@ -45,9 +45,11 @@ import {
   ExternalLink,
   Loader2,
   RotateCcw,
+  UserPlus,
 } from "lucide-react";
-import { getContactSnapshot, updateContactStatus, addNoteToContact, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, type WithSource, type IntakeComment } from "@/lib/api";
+import { getContactSnapshot, updateContactStatus, addNoteToContact, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
 import { ReminderModal } from "@/components/ui/reminder-modal";
+import { AssignProviderModal } from "@/components/ui/assign-provider-modal";
 import { SendEmailModal } from "@/components/ui/send-email-modal";
 import { AssignmentSelector } from "@/components/ui/assignment-selector";
 import { useDataSource } from "@/lib/data-source-context";
@@ -134,6 +136,7 @@ export default function ContactDetail() {
   const [showReminderModal, setShowReminderModal] = useState(false);
   const [showSendEmailModal, setShowSendEmailModal] = useState(false);
   const [showCreateTnModal, setShowCreateTnModal] = useState(false);
+  const [showAssignProviderModal, setShowAssignProviderModal] = useState(false);
   const [isCreatingReminder, setIsCreatingReminder] = useState(false);
   const noteTextareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -439,6 +442,16 @@ export default function ContactDetail() {
     enabled: isValidId,
   });
 
+  // Provider assignments query
+  const { data: assignmentsData } = useQuery({
+    queryKey: ["/api/assignments", contactId],
+    queryFn: () => getAssignments(contactId!),
+    enabled: isValidId,
+  });
+
+  const assignments = assignmentsData?.assignments || [];
+  const latestAssignment = assignments.length > 0 ? assignments[0] : null;
+
   const isContactFlagged = useMemo(() => {
     if (!flagsData?.flags || !contactId) return false;
     return flagsData.flags.some(f => f.contactId === contactId);
@@ -569,12 +582,13 @@ export default function ContactDetail() {
           _source: contactData?._source as "live" | "mock" | undefined,
         },
         snapshotsData?.snapshots,
+        assignments,
       );
     } catch (e) {
       console.error("[contact-detail] Error building timeline events:", e);
       return [];
     }
-  }, [contact, contactData?._source, snapshotsData?.snapshots]);
+  }, [contact, contactData?._source, snapshotsData?.snapshots, assignments]);
 
   // Derive "Last Contact" date from most recent note in timeline
   // Falls back to contact.lastContact if no timeline notes exist
@@ -1230,6 +1244,64 @@ export default function ContactDetail() {
                 </CardContent>
               </Card>
 
+              {/* Assignment History — CRM-only provider assignments */}
+              <Card className="overflow-visible">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <UserPlus className="h-4 w-4" />
+                    Assignment History
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {/* Current assignment badge */}
+                  {latestAssignment && (
+                    <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-md p-2.5">
+                      <p className="text-xs font-medium text-amber-800 dark:text-amber-300">Assigned Provider</p>
+                      <p className="text-sm font-semibold text-foreground">
+                        {latestAssignment.providerName} — {latestAssignment.credential}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        Assigned {new Date(latestAssignment.assignedAt + "Z").toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                        })} by {latestAssignment.assignedByInitials}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Assignment list */}
+                  {assignments.length > 0 && (
+                    <div className="space-y-2 pt-2 border-t border-border">
+                      {assignments.map((assignment) => (
+                        <div key={assignment.id} className="text-xs space-y-0.5 bg-muted/40 rounded-md p-2">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-foreground">{assignment.assignedByInitials}</span>
+                            <span className="text-muted-foreground">
+                              {new Date(assignment.assignedAt + "Z").toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                hour: "numeric",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                          </div>
+                          <p className="text-foreground">
+                            Assigned provider: {assignment.providerName} — {assignment.credential}
+                          </p>
+                          {assignment.assignmentComment && (
+                            <p className="text-muted-foreground">Reason: {assignment.assignmentComment}</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {assignments.length === 0 && (
+                    <p className="text-xs text-muted-foreground italic">No provider assigned yet</p>
+                  )}
+                </CardContent>
+              </Card>
+
               {/* Quick Actions - Data-aware with tooltips */}
               <Card className="overflow-visible">
                 <CardHeader className="pb-3">
@@ -1320,6 +1392,18 @@ export default function ContactDetail() {
                   >
                     <Users className="h-4 w-4 mr-2" />
                     Find Provider Matches
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start"
+                    size="sm"
+                    disabled={isLoading}
+                    onClick={() => setShowAssignProviderModal(true)}
+                    data-testid="button-assign-provider"
+                  >
+                    <UserPlus className="h-4 w-4 mr-2" />
+                    Assign Provider
                   </Button>
 
                   {canUseTn && (
@@ -1416,6 +1500,19 @@ export default function ContactDetail() {
           isSubmitting={createTnMutation.isPending}
         />
       )}
+
+      {/* Assign Provider Modal */}
+      <AssignProviderModal
+        isOpen={showAssignProviderModal}
+        onClose={() => setShowAssignProviderModal(false)}
+        contact={contact ? { contactId: contact.contactId, name: contact.name } : null}
+        userEmail={user?.email || ""}
+        authorInitials={authorInitials}
+        onAssigned={() => {
+          toast({ title: "Provider assigned", description: `Provider assigned to ${contact?.name}` });
+          queryClient.invalidateQueries({ queryKey: ["/api/assignments", contactId] });
+        }}
+      />
 
       {/* Send Email Modal */}
       <SendEmailModal
