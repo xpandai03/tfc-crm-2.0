@@ -2,7 +2,7 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { MessageSquare, Flag, RefreshCw, Info, Mail, ChevronDown, ChevronUp, Download } from "lucide-react";
+import { MessageSquare, Flag, RefreshCw, Info, Mail, ChevronDown, ChevronUp, Download, UserPlus } from "lucide-react";
 import type { TimelineEvent } from "@/lib/timeline";
 import { formatRelativeTime, formatFullDate } from "@/lib/timeline";
 import { SnapshotPreviewModal } from "@/components/ui/snapshot-preview-modal";
@@ -25,6 +25,8 @@ function getEventIcon(event: TimelineEvent) {
       return RefreshCw;
     case "email_sent":
       return Mail;
+    case "assignment":
+      return UserPlus;
     case "system":
     default:
       return Info;
@@ -57,6 +59,12 @@ function getEventStyles(event: TimelineEvent) {
         iconBg: "bg-violet-100 dark:bg-violet-900/30",
         iconColor: "text-violet-600 dark:text-violet-400",
         borderColor: "border-l-2 border-l-violet-500",
+      };
+    case "assignment":
+      return {
+        iconBg: "bg-amber-100 dark:bg-amber-900/30",
+        iconColor: "text-amber-600 dark:text-amber-400",
+        borderColor: "border-l-2 border-l-amber-500",
       };
     case "system":
     default:

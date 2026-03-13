@@ -9,7 +9,7 @@
 
 export interface TimelineEvent {
   id: string;
-  type: "note" | "status_change" | "milestone" | "system" | "email_sent";
+  type: "note" | "status_change" | "milestone" | "system" | "email_sent" | "assignment";
   timestamp: string; // ISO date or datetime string
 
   // Content fields
@@ -215,9 +215,21 @@ function parseEmailNote(content: string): { templateName: string; templateId: st
  *
  * FAIL-SOFT: Always returns an array, never throws.
  */
+/** Assignment data shape (from /api/assignments/:contactId) */
+export interface AssignmentMeta {
+  id: number;
+  contactId: number;
+  providerName: string;
+  credential: string;
+  assignmentComment: string | null;
+  assignedByInitials: string;
+  assignedAt: string;
+}
+
 export function buildTimelineEvents(
   snapshot: ContactSnapshot | null | undefined,
   snapshots?: EmailSnapshotMeta[],
+  assignments?: AssignmentMeta[],
 ): TimelineEvent[] {
   // Guard: null/undefined snapshot
   if (!snapshot || typeof snapshot !== "object") {
@@ -333,6 +345,29 @@ export function buildTimelineEvents(
     }
   } catch (e) {
     console.error("[timeline] Error creating milestone event:", e);
+  }
+
+  // Merge CRM assignment events
+  try {
+    if (assignments && Array.isArray(assignments)) {
+      assignments.forEach((a, idx) => {
+        const parsedDate = safeParseDate(a.assignedAt);
+        let content = `[Assignment] Provider assigned: ${a.providerName} — ${a.credential}`;
+        if (a.assignmentComment) {
+          content += `\nReason: ${a.assignmentComment}`;
+        }
+        events.push({
+          id: generateEventKey("assignment", idx, parsedDate),
+          type: "assignment",
+          timestamp: parsedDate || "",
+          content,
+          author: a.assignedByInitials,
+          source: "derived",
+        });
+      });
+    }
+  } catch (e) {
+    console.error("[timeline] Error processing assignment events:", e);
   }
 
   // Sort by timestamp (most recent first)
