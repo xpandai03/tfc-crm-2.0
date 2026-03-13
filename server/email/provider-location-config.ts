@@ -28,7 +28,7 @@ export interface OfficeLocation {
  */
 export const PROVIDER_LIST: ProviderEntry[] = [
   { name: "Anna Aldridge", credential: "LMHC", email: "anna@tfc.health" },
-  { name: "Danielle Burke", credential: "LPCC", email: "danielle@tfc.health" },
+  { name: "Danielle Dimas", credential: "LPCC", email: "danielle@tfc.health" },
   { name: "Bentley Carbone", credential: "LAMFT", email: "bentley@tfc.health" },
   { name: "Angelica Chavez", credential: "LCSW", email: "angelicac@tfc.health" },
   { name: "Amanda Davison", credential: "LMFT", email: "amanda@tfc.health" },
@@ -36,6 +36,7 @@ export const PROVIDER_LIST: ProviderEntry[] = [
   { name: "Janet Fackrell", credential: "Intern", email: "jfackrell@tfc.health" },
   { name: "Laura Garcia-Rosecrans", credential: "LMHC", email: "lgarcia-rosecrans@tfc.health" },
   { name: "Kennedy Hull", credential: "LPCC", email: "kennedy@tfc.health" },
+  { name: "Ivory Kahler", credential: "LMSW", email: "ikahler@tfc.health" },
   { name: "Tyra Jones", credential: "LMHC", email: "tjones@tfc.health" },
   { name: "Cindy Ketchum", credential: "Intern", email: "cindy@tfc.health" },
   { name: "Liz Lopez", credential: "LCSW", email: "elopez@tfc.health" },
