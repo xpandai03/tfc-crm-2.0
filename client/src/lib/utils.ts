@@ -41,3 +41,38 @@ export function formatDob(value: string | number | null | undefined): string {
 
   return value; // Unknown format — return as-is
 }
+
+/**
+ * Normalize and format a general date value for display.
+ * Handles: Excel serial numbers, ISO strings, US date strings, null/undefined.
+ * Always returns MM/DD/YYYY or "---".
+ */
+export function formatDate(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "---";
+
+  const num = typeof value === "number" ? value : parseFloat(value);
+  if (!isNaN(num) && num > 15000 && num < 80000) {
+    const excelEpoch = new Date(1899, 11, 30);
+    const d = new Date(excelEpoch.getTime() + num * 86400000);
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${mm}/${dd}/${d.getFullYear()}`;
+  }
+
+  if (typeof value !== "string") return "---";
+  const trimmed = value.trim();
+  if (!trimmed) return "---";
+
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) return `${isoMatch[2]}/${isoMatch[3]}/${isoMatch[1]}`;
+
+  const usMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (usMatch) {
+    const mm = usMatch[1].padStart(2, "0");
+    const dd = usMatch[2].padStart(2, "0");
+    const yyyy = usMatch[3].length === 2 ? `20${usMatch[3]}` : usMatch[3];
+    return `${mm}/${dd}/${yyyy}`;
+  }
+
+  return "---";
+}

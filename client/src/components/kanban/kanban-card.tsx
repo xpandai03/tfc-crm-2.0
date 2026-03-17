@@ -4,7 +4,7 @@ import { OwnerBadge } from "@/components/ui/owner-badge";
 import { Link } from "wouter";
 import { Calendar, Cake } from "lucide-react";
 import type { WaitlistContact } from "@shared/schema";
-import { cn, formatDob } from "@/lib/utils";
+import { cn, formatDate, formatDob } from "@/lib/utils";
 import { isActiveStatus } from "@/lib/status-config";
 
 interface KanbanCardProps {
@@ -87,7 +87,7 @@ export function KanbanCard({ contact, currentUserEmail }: KanbanCardProps) {
               </div>
               <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
                 <Calendar className="h-3 w-3" />
-                <span>{contact.dateAdded}</span>
+                <span>{formatDate(contact.dateAdded)}</span>
               </div>
             </div>
 
