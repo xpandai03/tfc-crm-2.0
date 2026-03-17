@@ -31,6 +31,17 @@ function normalizeDateValue(value: unknown): string | null {
   return s;
 }
 
+/** Reconstruct date_added from days_on_waitlist when date is missing. */
+function deriveDateFromDays(daysValue: unknown): string | null {
+  if (daysValue === undefined || daysValue === null) return null;
+  const days = Number(daysValue);
+  if (isNaN(days) || days < 0) return null;
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  now.setDate(now.getDate() - days);
+  return now.toISOString().split("T")[0];
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -328,6 +339,9 @@ export function syncContacts(contacts: SyncPayloadContact[]): {
         return isNaN(n) ? null : n;
       };
 
+      const normalizedDateAdded =
+        normalizeDateValue(raw.dateAdded) ?? deriveDateFromDays(raw.daysOnWaitlist);
+
       upsertStmt.run(
         id,
         str(raw.name) || "Unknown",
@@ -337,7 +351,7 @@ export function syncContacts(contacts: SyncPayloadContact[]): {
         num(raw.statusCode),
         str(raw.serviceRequested),
         num(raw.daysOnWaitlist),
-        normalizeDateValue(raw.dateAdded),
+        normalizedDateAdded,
         str(raw.assignedTo),
         str(raw.requestingFor),
         str(raw.reasonForSeeking),
@@ -664,6 +678,15 @@ export function enrichSyncContact(contactId: number, detailed: Record<string, un
     return isNaN(n) ? null : n;
   };
 
+  // Use existing waitlist days as fallback for date reconstruction if needed
+  const existing = db
+    .prepare(`SELECT days_on_waitlist as daysOnWaitlist FROM sync_contacts WHERE contact_id = ?`)
+    .get(contactId) as { daysOnWaitlist: number | null } | undefined;
+  const fallbackDays = existing?.daysOnWaitlist ?? null;
+  const normalizedOrDerivedDateAdded =
+    normalizeDateValue(detailed.dateAdded ?? detailed["date_added"])
+    ?? deriveDateFromDays(detailed.daysOnWaitlist ?? fallbackDays);
+
   // Only update fields that have values in the detailed data
   const updates: string[] = [];
   const values: unknown[] = [];
@@ -671,7 +694,7 @@ export function enrichSyncContact(contactId: number, detailed: Record<string, un
   const fieldMap: Array<[string, unknown]> = [
     ["email", str(detailed.email)],
     ["phone", str(detailed.phone)],
-    ["date_added", normalizeDateValue(detailed.dateAdded ?? detailed["date_added"])],
+    ["date_added", normalizedOrDerivedDateAdded],
     ["requesting_for", str(detailed.requestingFor)],
     ["reason_for_seeking", str(detailed.reasonForSeeking)],
     ["reason_for_therapy", str(detailed.reasonForTherapy ?? detailed["Reason for Therapy MCQ"] ?? detailed["reasonForTherapyMCQ"])],
@@ -743,6 +766,9 @@ export function upsertSingleContact(contact: SyncPayloadContact): void {
     const n = Number(v);
     return isNaN(n) ? null : n;
   };
+
+  const normalizedDateAdded =
+    normalizeDateValue(contact.dateAdded) ?? deriveDateFromDays(contact.daysOnWaitlist);
 
   db.prepare(`
     INSERT INTO sync_contacts (
@@ -824,7 +850,7 @@ export function upsertSingleContact(contact: SyncPayloadContact): void {
     num(contact.statusCode),
     str(contact.serviceRequested),
     num(contact.daysOnWaitlist),
-    normalizeDateValue(contact.dateAdded),
+    normalizedDateAdded,
     str(contact.assignedTo),
     str(contact.requestingFor),
     str(contact.reasonForSeeking),

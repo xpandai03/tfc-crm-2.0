@@ -148,6 +148,31 @@ function normalizeExcelDate(value: unknown): string | null {
   return null;
 }
 
+/** Reconstruct dateAdded from daysOnWaitlist when source date is missing. */
+function deriveDateAddedFromDays(daysOnWaitlist: unknown): string | null {
+  if (daysOnWaitlist === null || daysOnWaitlist === undefined) return null;
+  const days = Number(daysOnWaitlist);
+  if (isNaN(days) || days < 0) return null;
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() - days);
+  return date.toISOString().split("T")[0];
+}
+
+function normalizeOrReconstructDateAdded(
+  dateValue: unknown,
+  daysOnWaitlist: unknown,
+  contactId?: number
+): string | null {
+  const normalized = normalizeExcelDate(dateValue);
+  if (normalized) return normalized;
+  const reconstructed = deriveDateAddedFromDays(daysOnWaitlist);
+  if (reconstructed && contactId !== undefined) {
+    console.warn(`[date-fix] reconstructed dateAdded for contact ${contactId} from daysOnWaitlist=${String(daysOnWaitlist)}`);
+  }
+  return reconstructed;
+}
+
 function excelSerialToIso(serial: number): string {
   // Excel epoch is Dec 30, 1899
   const excelEpoch = new Date(1899, 11, 30);
@@ -515,7 +540,7 @@ export async function registerRoutes(
               serviceRequested: syncContact.serviceRequested || "Unknown",
               daysOnWaitlist: syncContact.daysOnWaitlist ?? 0,
               patientDob: normalizeExcelDate(syncContact.patientDob),
-              dateAdded: normalizeExcelDate(syncContact.dateAdded),
+              dateAdded: normalizeOrReconstructDateAdded(syncContact.dateAdded, syncContact.daysOnWaitlist, syncContact.contactId),
               notes,
               _source: "sync",
             });
@@ -598,7 +623,7 @@ export async function registerRoutes(
                 status: syncContact.status || "intake",
                 serviceRequested: syncContact.serviceRequested || "Unknown",
                 daysOnWaitlist: syncContact.daysOnWaitlist ?? 0,
-                dateAdded: normalizeExcelDate(syncContact.dateAdded),
+                dateAdded: normalizeOrReconstructDateAdded(syncContact.dateAdded, syncContact.daysOnWaitlist, syncContact.contactId),
                 lastContact: normalizeExcelDate(detailed.lastContact),
                 assignedTo,
                 notes: parseNotesFromLastNote(detailed.lastNote as string | undefined),
@@ -626,7 +651,7 @@ export async function registerRoutes(
             status: syncContact.status || "intake",
             serviceRequested: syncContact.serviceRequested || "Unknown",
             daysOnWaitlist: syncContact.daysOnWaitlist ?? 0,
-            dateAdded: normalizeExcelDate(syncContact.dateAdded),
+            dateAdded: normalizeOrReconstructDateAdded(syncContact.dateAdded, syncContact.daysOnWaitlist, syncContact.contactId),
             notes: [],
             _source: "sync",
           });
@@ -798,7 +823,7 @@ export async function registerRoutes(
             // Waitlist tracking fields (dates normalized from Excel serial - Phase 6.4)
             serviceRequested: contact.serviceRequested || (detailed.requestingFor as string) || "Unknown",
             daysOnWaitlist: contact.daysOnWaitlist ?? 0,
-            dateAdded: normalizeExcelDate(contact.dateAdded),
+            dateAdded: normalizeOrReconstructDateAdded(contact.dateAdded, contact.daysOnWaitlist, Number(contact.contactId)),
             lastContact: normalizeExcelDate(detailed.lastContact),
 
             // Assignment and notes
@@ -1508,7 +1533,10 @@ export async function registerRoutes(
     // Fast path: read from sync cache
     if (shouldReadFromSync()) {
       try {
-        const contacts = getAllSyncContacts();
+        const contacts = getAllSyncContacts().map((c) => ({
+          ...c,
+          dateAdded: normalizeOrReconstructDateAdded(c.dateAdded, c.daysOnWaitlist, c.contactId),
+        }));
         console.log(`[WAITLIST-CONTACTS] Serving ${contacts.length} contacts from sync cache`);
         // Populate board cache for backward compat (contact-snapshot lookups)
         setBoardCache({ contacts: contacts as any[] });
@@ -1606,8 +1634,8 @@ export async function registerRoutes(
                   || c.desiredModality
                   || null;
                 
-                // Normalize dateAdded from Excel serial to ISO format (YYYY-MM-DD)
-                const dateAdded = normalizeExcelDate(c.dateAdded);
+                // Normalize or reconstruct dateAdded when possible
+                const dateAdded = normalizeOrReconstructDateAdded(c.dateAdded, c.daysOnWaitlist, Number(c.contactId));
 
                 // Normalize assignedTo: trim whitespace, convert empty string to null
                 const assignedTo = typeof c.assignedTo === "string" && c.assignedTo.trim() !== ""
