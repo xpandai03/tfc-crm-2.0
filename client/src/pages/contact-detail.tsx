@@ -60,7 +60,7 @@ import type { ContactSnapshot, WaitlistContact } from "@shared/schema";
 import { buildTimelineEvents, formatFullDate, type EmailSnapshotMeta } from "@/lib/timeline";
 import { ProviderMatchingModal } from "@/components/ui/provider-matching-modal";
 import { CreateTnModal } from "@/components/ui/create-tn-modal";
-import { cn, formatDob } from "@/lib/utils";
+import { cn, formatDate, formatDob } from "@/lib/utils";
 import {
   STATUS_UMBRELLAS,
   STATUS_LABELS,
@@ -693,7 +693,7 @@ export default function ContactDetail() {
 
   // Safe access to contact fields with defaults
   const daysWaiting = contact?.daysOnWaitlist ?? 0;
-  const dateAdded = contact?.dateAdded || "N/A";
+  const dateAdded = formatDate(contact?.dateAdded);
   const serviceRequested = contact?.serviceRequested || "Unknown Service";
   const contactStatus = contact?.status || "intake";
 

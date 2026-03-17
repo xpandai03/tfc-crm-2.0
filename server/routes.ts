@@ -598,7 +598,7 @@ export async function registerRoutes(
                 status: syncContact.status || "intake",
                 serviceRequested: syncContact.serviceRequested || "Unknown",
                 daysOnWaitlist: syncContact.daysOnWaitlist ?? 0,
-                dateAdded: syncContact.dateAdded,
+                dateAdded: normalizeExcelDate(syncContact.dateAdded),
                 lastContact: normalizeExcelDate(detailed.lastContact),
                 assignedTo,
                 notes: parseNotesFromLastNote(detailed.lastNote as string | undefined),
@@ -626,6 +626,7 @@ export async function registerRoutes(
             status: syncContact.status || "intake",
             serviceRequested: syncContact.serviceRequested || "Unknown",
             daysOnWaitlist: syncContact.daysOnWaitlist ?? 0,
+            dateAdded: normalizeExcelDate(syncContact.dateAdded),
             notes: [],
             _source: "sync",
           });
