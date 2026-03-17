@@ -14,6 +14,23 @@
 import crypto from "crypto";
 import { getDatabase } from "../reminders/db";
 
+/** Normalize Excel serial dates (e.g. 32211) to ISO string (YYYY-MM-DD) at ingestion time. */
+function normalizeDateValue(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  const s = String(value).trim();
+  if (s === "") return null;
+  // Already a recognizable date string? Keep it.
+  if (/^\d{4}-\d{2}-\d{2}/.test(s) || /^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(s)) return s;
+  // Numeric? Could be Excel serial.
+  const num = parseFloat(s);
+  if (!isNaN(num) && num > 15000 && num < 80000) {
+    const excelEpoch = new Date(1899, 11, 30);
+    const d = new Date(excelEpoch.getTime() + num * 86400000);
+    return d.toISOString().split("T")[0]; // YYYY-MM-DD
+  }
+  return s;
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -341,7 +358,7 @@ export function syncContacts(contacts: SyncPayloadContact[]): {
         str(raw.insuranceStatus ?? raw["verificationStatus"]),
         str(raw.referralAuth ?? raw["authNumber"]),
         str(raw.referralStatus),
-        str(raw.patientDob ?? raw.dob ?? raw.dateOfBirth),
+        normalizeDateValue(raw.patientDob ?? raw.dob ?? raw.dateOfBirth),
         str(raw.gender ?? raw["sex"]),
         num(raw.age),
         str(raw.streetAddress ?? raw.address ?? raw["street"]),
@@ -673,7 +690,7 @@ export function enrichSyncContact(contactId: number, detailed: Record<string, un
     ["insurance_status", str(detailed.insuranceStatus ?? detailed["verificationStatus"])],
     ["referral_auth", str(detailed.referralAuth ?? detailed["authNumber"])],
     ["referral_status", str(detailed.referralStatus)],
-    ["patient_dob", str(detailed.patientDob ?? detailed.dob ?? detailed.dateOfBirth)],
+    ["patient_dob", normalizeDateValue(detailed.patientDob ?? detailed.dob ?? detailed.dateOfBirth)],
     ["gender", str(detailed.gender ?? detailed["sex"])],
     ["age", num(detailed.age)],
     ["street_address", str(detailed.streetAddress ?? detailed.address ?? detailed["street"])],
@@ -709,8 +726,138 @@ export function enrichSyncContact(contactId: number, detailed: Record<string, un
 /**
  * Upsert a single contact (board + detailed data merged).
  * Used by the manual "Sync Contact Now" feature.
+ * IMPORTANT: This does NOT delete other contacts — it only upserts one row.
  */
 export function upsertSingleContact(contact: SyncPayloadContact): void {
-  // Reuse the batch sync logic for a single contact
-  syncContacts([contact]);
+  const db = getDatabase();
+  const id = Number(contact.contactId);
+  if (isNaN(id)) return;
+
+  const hash = computeRowHash(contact);
+
+  const str = (v: unknown): string | null =>
+    v !== undefined && v !== null && String(v).trim() !== "" ? String(v).trim() : null;
+  const num = (v: unknown): number | null => {
+    if (v === undefined || v === null) return null;
+    const n = Number(v);
+    return isNaN(n) ? null : n;
+  };
+
+  db.prepare(`
+    INSERT INTO sync_contacts (
+      contact_id, name, email, phone, status, status_code,
+      service_requested, days_on_waitlist, date_added, assigned_to,
+      requesting_for, reason_for_seeking, reason_for_therapy, detailed_reason,
+      form_completed_by, modality, referral_source, prior_services,
+      prior_provider, preferred_contact, custody, flags, priority,
+      insurance_payer, insurance_plan, insurance_id, insurance_status,
+      referral_auth, referral_status,
+      patient_dob, gender, age,
+      street_address, city, state, zip_code, county,
+      rfs_link, document_link,
+      last_contact, last_note,
+      synced_at, sync_hash
+    ) VALUES (
+      ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?,
+      ?, ?, ?, ?,
+      ?, ?, ?, ?,
+      ?, ?, ?, ?, ?,
+      ?, ?, ?, ?,
+      ?, ?,
+      ?, ?, ?,
+      ?, ?, ?, ?, ?,
+      ?, ?,
+      ?, ?,
+      datetime('now'), ?
+    )
+    ON CONFLICT(contact_id) DO UPDATE SET
+      name = excluded.name,
+      email = excluded.email,
+      phone = excluded.phone,
+      status = excluded.status,
+      status_code = excluded.status_code,
+      service_requested = excluded.service_requested,
+      days_on_waitlist = excluded.days_on_waitlist,
+      date_added = excluded.date_added,
+      assigned_to = excluded.assigned_to,
+      requesting_for = excluded.requesting_for,
+      reason_for_seeking = excluded.reason_for_seeking,
+      reason_for_therapy = excluded.reason_for_therapy,
+      detailed_reason = excluded.detailed_reason,
+      form_completed_by = excluded.form_completed_by,
+      modality = excluded.modality,
+      referral_source = excluded.referral_source,
+      prior_services = excluded.prior_services,
+      prior_provider = excluded.prior_provider,
+      preferred_contact = excluded.preferred_contact,
+      custody = excluded.custody,
+      flags = excluded.flags,
+      priority = excluded.priority,
+      insurance_payer = excluded.insurance_payer,
+      insurance_plan = excluded.insurance_plan,
+      insurance_id = excluded.insurance_id,
+      insurance_status = excluded.insurance_status,
+      referral_auth = excluded.referral_auth,
+      referral_status = excluded.referral_status,
+      patient_dob = excluded.patient_dob,
+      gender = excluded.gender,
+      age = excluded.age,
+      street_address = excluded.street_address,
+      city = excluded.city,
+      state = excluded.state,
+      zip_code = excluded.zip_code,
+      county = excluded.county,
+      rfs_link = excluded.rfs_link,
+      document_link = excluded.document_link,
+      last_contact = excluded.last_contact,
+      last_note = excluded.last_note,
+      synced_at = datetime('now'),
+      sync_hash = excluded.sync_hash
+  `).run(
+    id,
+    str(contact.name) || "Unknown",
+    str(contact.email),
+    str(contact.phone),
+    str(contact.status),
+    num(contact.statusCode),
+    str(contact.serviceRequested),
+    num(contact.daysOnWaitlist),
+    str(contact.dateAdded),
+    str(contact.assignedTo),
+    str(contact.requestingFor),
+    str(contact.reasonForSeeking),
+    str(contact.reasonForTherapy ?? (contact as any)["Reason for Therapy MCQ"] ?? (contact as any)["reasonForTherapyMCQ"]),
+    str(contact.detailedReason ?? (contact as any)["DetailedReason"]),
+    str(contact.formCompletedBy),
+    str(contact.modality ?? (contact as any)["Desired Modality"] ?? (contact as any)["desiredModality"]),
+    str(contact.referralSource),
+    str(contact.priorServices),
+    str(contact.priorProvider),
+    str(contact.preferredContact ?? (contact as any)["preferredContactMethod"] ?? (contact as any)["contactPreference"]),
+    str(contact.custody ?? (contact as any)["custodyStatus"]),
+    str(contact.flags ?? (contact as any)["alert"]),
+    str(contact.priority ?? (contact as any)["urgency"]),
+    str(contact.insurancePayer ?? contact.insurance ?? (contact as any)["Primary Insurance Provider"]),
+    str(contact.insurancePlan ?? (contact as any)["planName"]),
+    str(contact.insuranceId ?? (contact as any)["memberId"] ?? (contact as any)["policyNumber"]),
+    str(contact.insuranceStatus ?? (contact as any)["verificationStatus"]),
+    str(contact.referralAuth ?? (contact as any)["authNumber"]),
+    str(contact.referralStatus),
+    normalizeDateValue(contact.patientDob ?? contact.dob ?? contact.dateOfBirth),
+    str(contact.gender ?? (contact as any)["sex"]),
+    num(contact.age),
+    str(contact.streetAddress ?? contact.address ?? (contact as any)["street"]),
+    str(contact.city),
+    str(contact.state),
+    str(contact.zipCode ?? contact.zip ?? (contact as any)["postalCode"]),
+    str(contact.county),
+    str(contact.rfsLink ?? contact.rfs ?? (contact as any)["sharepointLink"] ?? (contact as any)["formLink"]),
+    str(contact.documentLink ?? contact.documents ?? (contact as any)["fileLink"]),
+    str(contact.lastContact),
+    str(contact.lastNote),
+    hash,
+  );
+
+  console.log(`[sync-db] Upserted single contact ${id} (no delete of other rows)`);
 }

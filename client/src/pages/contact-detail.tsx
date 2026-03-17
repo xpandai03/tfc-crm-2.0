@@ -60,7 +60,7 @@ import type { ContactSnapshot, WaitlistContact } from "@shared/schema";
 import { buildTimelineEvents, formatFullDate, type EmailSnapshotMeta } from "@/lib/timeline";
 import { ProviderMatchingModal } from "@/components/ui/provider-matching-modal";
 import { CreateTnModal } from "@/components/ui/create-tn-modal";
-import { cn } from "@/lib/utils";
+import { cn, formatDob } from "@/lib/utils";
 import {
   STATUS_UMBRELLAS,
   STATUS_LABELS,
@@ -762,25 +762,37 @@ export default function ContactDetail() {
                       {isLoading ? (
                         <Skeleton className="h-10 w-[200px]" />
                       ) : (
-                        <div className="flex flex-col gap-1">
-                          <span className="text-xs text-muted-foreground font-medium">Workflow Status</span>
-                          <Select
-                            value={currentStatusCode.toString()}
-                            onValueChange={(val) => handleStatusChange(parseInt(val, 10))}
+                        <div className="flex items-end gap-2">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs text-muted-foreground font-medium">Workflow Status</span>
+                            <Select
+                              value={currentStatusCode.toString()}
+                              onValueChange={(val) => handleStatusChange(parseInt(val, 10))}
+                            >
+                              <SelectTrigger className="w-[200px]" data-testid="select-status">
+                                <SelectValue>
+                                  {STATUS_LABELS[currentStatusCode] || `Status ${currentStatusCode}`}
+                                </SelectValue>
+                              </SelectTrigger>
+                              <SelectContent>
+                                {Object.entries(STATUS_LABELS).map(([code, label]) => (
+                                  <SelectItem key={code} value={code}>
+                                    {code} - {label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={syncFromExcelMutation.isPending}
+                            onClick={() => { if (contactId) syncFromExcelMutation.mutate(contactId); }}
+                            className="h-9"
                           >
-                            <SelectTrigger className="w-[200px]" data-testid="select-status">
-                              <SelectValue>
-                                {STATUS_LABELS[currentStatusCode] || `Status ${currentStatusCode}`}
-                              </SelectValue>
-                            </SelectTrigger>
-                            <SelectContent>
-                              {Object.entries(STATUS_LABELS).map(([code, label]) => (
-                                <SelectItem key={code} value={code}>
-                                  {code} - {label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            <RefreshCw className={cn("h-4 w-4 mr-1.5", syncFromExcelMutation.isPending && "animate-spin")} />
+                            {syncFromExcelMutation.isPending ? "Syncing..." : "Refresh"}
+                          </Button>
                         </div>
                       )}
                     </div>
@@ -1088,7 +1100,7 @@ export default function ContactDetail() {
                       {contact.patientDob && (
                         <div>
                           <span className="text-muted-foreground text-xs">Date of Birth:</span>
-                          <p className="font-medium text-foreground">{contact.patientDob}</p>
+                          <p className="font-medium text-foreground">{formatDob(contact.patientDob)}</p>
                         </div>
                       )}
                       {contact.gender && (
