@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { triggerFullSync } from "@/lib/api";
 import { AlertCircle, LayoutGrid, List, User } from "lucide-react";
 import { StatusLegendModal } from "@/components/ui/status-legend-modal";
 import { getWaitlistBoard, updateContactStatus, addNoteToContact, getAttentionFlags } from "@/lib/api";
@@ -210,7 +211,13 @@ export default function Waitlist() {
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await refetchContacts();
+    try {
+      await triggerFullSync();
+      await refetchContacts();
+    } catch (error) {
+      console.error("[waitlist] Sync failed, refetching cache:", error);
+      await refetchContacts();
+    }
     setIsRefreshing(false);
   };
 
@@ -459,19 +466,19 @@ export default function Waitlist() {
   // Group contacts by pipeline column based on status codes
   const getContactsByColumn = (columnId: PipelineColumnId): WaitlistContact[] => {
     if (!contacts) return [];
-    return contacts.filter((c) => {
+    return [...contacts.filter((c) => {
       const statusCode = getContactStatusCode(c);
       return getColumnForStatus(statusCode) === columnId;
-    });
+    })].sort((a, b) => (Number(b.daysOnWaitlist) || 0) - (Number(a.daysOnWaitlist) || 0));
   };
 
   // Get contacts that don't match any known column (for "Other" column)
   const getUnknownContacts = (): WaitlistContact[] => {
     if (!contacts) return [];
-    return contacts.filter((c) => {
+    return [...contacts.filter((c) => {
       const statusCode = getContactStatusCode(c);
       return getColumnForStatus(statusCode) === "other";
-    });
+    })].sort((a, b) => (Number(b.daysOnWaitlist) || 0) - (Number(a.daysOnWaitlist) || 0));
   };
 
   if (isLoading) {
