@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils";
+import { cn, formatDob } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { OwnerBadge } from "@/components/ui/owner-badge";
@@ -104,13 +104,12 @@ export function PriorityCard({
     return `${valid[0]}, ${valid[1]} +${valid.length - 2} more`;
   })();
 
-  // Format DOB for display (YYYY-MM-DD → MM/DD/YYYY)
+  // Format DOB for display — handles Excel serials, ISO, US formats
   const dobDisplay = (() => {
     const raw = contact?.patientDob;
     if (!raw) return null;
-    const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (isoMatch) return `${isoMatch[2]}/${isoMatch[3]}/${isoMatch[1]}`;
-    return raw; // Already formatted or unknown format — show as-is
+    const result = formatDob(raw);
+    return result === "---" ? null : result;
   })();
 
   // CANONICAL: Use contactId for navigation, fall back to preventing navigation if missing

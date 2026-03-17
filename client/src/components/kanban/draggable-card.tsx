@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { OwnerBadge } from "@/components/ui/owner-badge";
-import { cn } from "@/lib/utils";
+import { cn, formatDob } from "@/lib/utils";
 import { normalizeInsurance } from "@/lib/insurance-utils";
 import { getAttentionFlags } from "@/lib/api";
 import { Plus, Clock, Shield, Video, FileText, Brain, AlertTriangle, Cake } from "lucide-react";
@@ -55,13 +55,12 @@ export function DraggableCard({ contact, onAddNote, isDragging = false, currentU
   const isUrgent = contact.daysOnWaitlist > 60;
   const isWarning = contact.daysOnWaitlist > 30 && contact.daysOnWaitlist <= 60;
 
-  // Format DOB for display (YYYY-MM-DD → MM/DD/YYYY)
+  // Format DOB for display — handles Excel serials, ISO, US formats
   const dobDisplay = (() => {
     const raw = contact?.patientDob;
     if (!raw) return null;
-    const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (isoMatch) return `${isoMatch[2]}/${isoMatch[3]}/${isoMatch[1]}`;
-    return raw;
+    const result = formatDob(raw);
+    return result === "---" ? null : result;
   })();
 
   // Hover expansion data

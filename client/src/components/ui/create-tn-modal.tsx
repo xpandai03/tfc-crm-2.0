@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { formatDob } from "@/lib/utils";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import type { ContactSnapshot } from "@shared/schema";
 
@@ -41,7 +42,7 @@ export function CreateTnModal({
   const fields: { label: string; value: string }[] = [
     { label: "First Name", value: firstName },
     { label: "Last Name", value: lastName },
-    { label: "Date of Birth", value: (contact.patientDob as string) || "" },
+    { label: "Date of Birth", value: formatDob(contact.patientDob as string) },
     { label: "Address", value: (contact.streetAddress as string) || "" },
     { label: "Zip Code", value: (contact.zipCode as string) || "" },
     { label: "Sex", value: (contact.gender as string) || "" },

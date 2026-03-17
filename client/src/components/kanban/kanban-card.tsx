@@ -4,7 +4,7 @@ import { OwnerBadge } from "@/components/ui/owner-badge";
 import { Link } from "wouter";
 import { Calendar, Cake } from "lucide-react";
 import type { WaitlistContact } from "@shared/schema";
-import { cn } from "@/lib/utils";
+import { cn, formatDob } from "@/lib/utils";
 import { isActiveStatus } from "@/lib/status-config";
 
 interface KanbanCardProps {
@@ -22,13 +22,12 @@ export function KanbanCard({ contact, currentUserEmail }: KanbanCardProps) {
     console.warn("[KanbanCard] Missing contactId for contact:", contact.name);
   }
 
-  // Format DOB for display (YYYY-MM-DD → MM/DD/YYYY)
+  // Format DOB for display — handles Excel serials, ISO, US formats
   const dobDisplay = (() => {
     const raw = contact?.patientDob;
     if (!raw) return null;
-    const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (isoMatch) return `${isoMatch[2]}/${isoMatch[3]}/${isoMatch[1]}`;
-    return raw;
+    const result = formatDob(raw);
+    return result === "---" ? null : result;
   })();
 
   // CANONICAL: Use contactId for navigation

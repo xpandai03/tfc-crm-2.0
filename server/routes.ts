@@ -61,9 +61,14 @@ const SYNC_API_KEY = process.env.SYNC_API_KEY || "tfc-sync-2026";
 function shouldReadFromSync(): boolean {
   if (READ_SOURCE === "n8n") return false;
   if (READ_SOURCE === "sync") return true;
-  // "auto": use sync if it has data
+  // "auto": use sync if it has enough data (>= 50 rows prevents partial-cache issues)
   try {
-    return getSyncContactCount() > 0;
+    const count = getSyncContactCount();
+    if (count > 0 && count < 50) {
+      console.log(`[sync] Cache has only ${count} rows — falling back to n8n (minimum 50 required)`);
+      return false;
+    }
+    return count >= 50;
   } catch {
     return false;
   }
@@ -509,6 +514,8 @@ export async function registerRoutes(
               status: syncContact.status || "intake",
               serviceRequested: syncContact.serviceRequested || "Unknown",
               daysOnWaitlist: syncContact.daysOnWaitlist ?? 0,
+              patientDob: normalizeExcelDate(syncContact.patientDob),
+              dateAdded: normalizeExcelDate(syncContact.dateAdded),
               notes,
               _source: "sync",
             });
@@ -3002,6 +3009,64 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[sync] Error fetching status:", error);
       return res.status(500).json({ error: "Failed to fetch sync status" });
+    }
+  });
+
+  // Frontend-triggered full sync (fetches from n8n, updates SQLite cache)
+  app.post("/api/sync/trigger", async (_req, res) => {
+    try {
+      console.log("[sync-trigger] Frontend-triggered full sync starting...");
+
+      // Fetch all contacts from n8n
+      const response = await fetch(WAITLIST_BOARD_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+        },
+        body: JSON.stringify({}),
+      });
+
+      if (!response.ok) {
+        throw new Error(`n8n returned ${response.status}`);
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("text/html")) {
+        throw new Error("Received HTML instead of JSON from n8n");
+      }
+
+      const text = await response.text();
+      if (!text || text.trim() === "") {
+        throw new Error("Empty response from n8n");
+      }
+
+      const data = JSON.parse(text);
+      const contacts = Array.isArray(data) ? data : data.contacts || data.data || [];
+
+      if (!Array.isArray(contacts) || contacts.length === 0) {
+        throw new Error("No contacts returned from n8n");
+      }
+
+      console.log(`[sync-trigger] Fetched ${contacts.length} contacts from n8n, syncing to SQLite...`);
+
+      const result = syncContactsToDb(contacts);
+
+      console.log(`[sync-trigger] Sync complete: ${result.synced} upserted, ${result.skipped} unchanged, ${result.deleted} deleted in ${result.durationMs}ms`);
+
+      return res.json({
+        success: true,
+        synced: result.synced,
+        skipped: result.skipped,
+        deleted: result.deleted,
+        durationMs: result.durationMs,
+        totalContacts: contacts.length,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Sync trigger failed";
+      console.error("[sync-trigger] Error:", message);
+      recordSyncError(message);
+      return res.status(500).json({ error: message });
     }
   });
 
