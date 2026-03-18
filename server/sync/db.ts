@@ -14,13 +14,60 @@
 import crypto from "crypto";
 import { getDatabase } from "../reminders/db";
 
+const MONTH_NAMES: Record<string, number> = {
+  january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+  july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+  jan: 0, feb: 1, mar: 2, apr: 3, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+
+/** Validate and return YYYY-MM-DD or null. */
+function toValidIsoDate(s: string): string | null {
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const [, yr, mo, dy] = m;
+  const y = parseInt(yr, 10), mon = parseInt(mo, 10), day = parseInt(dy, 10);
+  if (mon < 1 || mon > 12 || day < 1 || day > 31) return null;
+  const d = new Date(y, mon - 1, day);
+  if (d.getFullYear() !== y || d.getMonth() !== mon - 1 || d.getDate() !== day) return null;
+  return s;
+}
+
 /** Normalize Excel serial dates (e.g. 32211) to ISO string (YYYY-MM-DD) at ingestion time. */
 function normalizeDateValue(value: unknown): string | null {
   if (value === undefined || value === null) return null;
   const s = String(value).trim();
   if (s === "") return null;
-  // Already a recognizable date string? Keep it.
-  if (/^\d{4}-\d{2}-\d{2}/.test(s) || /^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(s)) return s;
+
+  // Strip datetime suffix: "2025-01-05T00:00:00Z" → "2025-01-05"
+  const isoDatetime = s.match(/^(\d{4}-\d{2}-\d{2})[T ]/);
+  if (isoDatetime) return toValidIsoDate(isoDatetime[1]);
+
+  // YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return toValidIsoDate(s);
+
+  // YYYY/MM/DD → YYYY-MM-DD
+  const slashIso = s.match(/^(\d{4})\/(\d{2})\/(\d{2})$/);
+  if (slashIso) return toValidIsoDate(`${slashIso[1]}-${slashIso[2]}-${slashIso[3]}`);
+
+  // M/D/YYYY or MM/DD/YYYY
+  const usDate = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (usDate) {
+    const mo = usDate[1].padStart(2, "0");
+    const dy = usDate[2].padStart(2, "0");
+    return toValidIsoDate(`${usDate[3]}-${mo}-${dy}`);
+  }
+
+  // Written month: "January 5, 2025" or "Jan 5, 2025"
+  const written = s.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/);
+  if (written) {
+    const monthIdx = MONTH_NAMES[written[1].toLowerCase()];
+    if (monthIdx !== undefined) {
+      const mo = String(monthIdx + 1).padStart(2, "0");
+      const dy = written[2].padStart(2, "0");
+      return toValidIsoDate(`${written[3]}-${mo}-${dy}`);
+    }
+  }
+
   // Numeric? Could be Excel serial.
   const num = parseFloat(s);
   if (!isNaN(num) && num > 15000 && num < 80000) {
@@ -28,7 +75,9 @@ function normalizeDateValue(value: unknown): string | null {
     const d = new Date(excelEpoch.getTime() + num * 86400000);
     return d.toISOString().split("T")[0]; // YYYY-MM-DD
   }
-  return s;
+
+  // Unrecognized format — return null to trigger reconstruction fallback
+  return null;
 }
 
 /** Reconstruct date_added from days_on_waitlist when date is missing. */
