@@ -110,6 +110,8 @@ export default function ContactDetail() {
     queryKey: ["/api/contact", contactId],
     queryFn: () => getContactSnapshot(contactId!),
     enabled: isValidId,
+    staleTime: 60_000,
+    refetchOnWindowFocus: true,
   });
 
   const contact = contactData;
@@ -396,6 +398,7 @@ export default function ContactDetail() {
 
       // Re-fetch to reconcile with server
       queryClient.invalidateQueries({ queryKey: ["/api/contact", variables.contactId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"] });
     },
     onError: (error, variables, context) => {
       // Rollback on error

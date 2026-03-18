@@ -114,37 +114,69 @@ function setBoardCache(data: BoardCacheEntry["data"]): void {
 // Excel stores dates as serial numbers (days since Dec 30, 1899)
 // This helper detects and converts Excel serials to ISO date strings
 // ============================================================================
+const MONTH_NAMES_MAP: Record<string, number> = {
+  january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+  july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+  jan: 0, feb: 1, mar: 2, apr: 3, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+
+/** Validate and return YYYY-MM-DD or null. */
+function toValidIsoDate(s: string): string | null {
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const [, yr, mo, dy] = m;
+  const y = parseInt(yr, 10), mon = parseInt(mo, 10), day = parseInt(dy, 10);
+  if (mon < 1 || mon > 12 || day < 1 || day > 31) return null;
+  const d = new Date(y, mon - 1, day);
+  if (d.getFullYear() !== y || d.getMonth() !== mon - 1 || d.getDate() !== day) return null;
+  return s;
+}
+
 function normalizeExcelDate(value: unknown): string | null {
   if (value === null || value === undefined || value === "") {
     return null;
   }
 
-  // If it's already a valid date string, return it
-  if (typeof value === "string") {
-    // Check if it's a recognizable date format (ISO, MM/DD/YYYY, etc.)
-    const dateRegex = /^\d{4}-\d{2}-\d{2}|^\d{1,2}\/\d{1,2}\/\d{2,4}/;
-    if (dateRegex.test(value)) {
-      return value;
-    }
-    // Try parsing as number (Excel serial passed as string)
-    const num = parseFloat(value);
-    // Range 15000-80000 covers years 1941-2119 (for birth dates from 1940s onward)
-    if (!isNaN(num) && num > 15000 && num < 80000) {
-      return excelSerialToIso(num);
-    }
-    return value; // Return as-is if not recognizable
+  const s = String(value).trim();
+  if (s === "") return null;
+
+  // Strip datetime suffix: "2025-01-05T00:00:00Z" → "2025-01-05"
+  const isoDatetime = s.match(/^(\d{4}-\d{2}-\d{2})[T ]/);
+  if (isoDatetime) return toValidIsoDate(isoDatetime[1]);
+
+  // YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return toValidIsoDate(s);
+
+  // YYYY/MM/DD → YYYY-MM-DD
+  const slashIso = s.match(/^(\d{4})\/(\d{2})\/(\d{2})$/);
+  if (slashIso) return toValidIsoDate(`${slashIso[1]}-${slashIso[2]}-${slashIso[3]}`);
+
+  // M/D/YYYY or MM/DD/YYYY
+  const usDate = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (usDate) {
+    const mo = usDate[1].padStart(2, "0");
+    const dy = usDate[2].padStart(2, "0");
+    return toValidIsoDate(`${usDate[3]}-${mo}-${dy}`);
   }
 
-  // If it's a number, check if it's an Excel serial
-  if (typeof value === "number") {
-    // Range 15000-80000 covers years 1941-2119 (for birth dates from 1940s onward)
-    // Excel serial 28045 = ~1976, 36526 = 2000, 45000 = ~2023
-    if (value > 15000 && value < 80000) {
-      return excelSerialToIso(value);
+  // Written month: "January 5, 2025" or "Jan 5, 2025"
+  const written = s.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/);
+  if (written) {
+    const monthIdx = MONTH_NAMES_MAP[written[1].toLowerCase()];
+    if (monthIdx !== undefined) {
+      const mo = String(monthIdx + 1).padStart(2, "0");
+      const dy = written[2].padStart(2, "0");
+      return toValidIsoDate(`${written[3]}-${mo}-${dy}`);
     }
-    return String(value); // Return as string if not Excel serial
   }
 
+  // Numeric Excel serial (string or number input)
+  const num = typeof value === "number" ? value : parseFloat(s);
+  if (!isNaN(num) && num > 15000 && num < 80000) {
+    return excelSerialToIso(num);
+  }
+
+  // Unrecognized — return null (caller can use reconstruction fallback)
   return null;
 }
 
@@ -522,6 +554,26 @@ export async function registerRoutes(
           const hasDetailedData = syncContact.lastNote || syncContact.email;
 
           if (hasDetailedData) {
+            // Fire-and-forget: re-enrich if cache is older than 5 minutes
+            const cacheAge = Date.now() - new Date(syncContact.syncedAt + "Z").getTime();
+            if (cacheAge > 300_000) {
+              (async () => {
+                try {
+                  const resp = await fetch(N8N_ENDPOINTS.contactSnapshot, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ contactId }),
+                  });
+                  if (resp.ok) {
+                    const raw = await resp.json();
+                    const detailed = (raw.contact || raw || {}) as Record<string, unknown>;
+                    enrichSyncContact(contactId, detailed);
+                    console.log(`[contact-snapshot] Background re-enriched stale contact ${contactId}`);
+                  }
+                } catch { /* fire-and-forget */ }
+              })();
+            }
+
             // Sync cache has detailed data — serve immediately
             const statusCode = syncContact.statusCode ?? 100;
             const umbrella = statusCode >= 100 && statusCode < 200 ? "WL"
