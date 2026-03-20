@@ -400,11 +400,7 @@ The Family Connection
 Albuquerque, New Mexico
     `.trim(),
     variables: ["firstName"],
-    requiredFields: [
-      { key: "therapistName", label: "Provider Name", type: "provider-select", defaultText: "[Provider Name]" },
-      { key: "appointmentDatetime", label: "Appointment Date & Time", type: "datetime", defaultText: "[Appointment Date & Time]" },
-      { key: "locationId", label: "Appointment Location", type: "location-select", defaultText: "[Location]" },
-    ],
+    requiredFields: [],
   },
   {
     id: "intake-form-reminder",
@@ -450,11 +446,7 @@ The Family Connection
 Albuquerque, New Mexico
     `.trim(),
     variables: ["firstName"],
-    requiredFields: [
-      { key: "therapistName", label: "Provider Name", type: "provider-select", defaultText: "[Provider Name]" },
-      { key: "appointmentDatetime", label: "Appointment Date & Time", type: "datetime", defaultText: "[Appointment Date & Time]" },
-      { key: "locationId", label: "Appointment Location", type: "location-select", defaultText: "[Location]" },
-    ],
+    requiredFields: [],
   },
 ];
 
