@@ -2,9 +2,9 @@
  * Provider Insurance Snapshot Data
  *
  * Hardcoded provider-level insurance acceptance data from the
- * Provider Insurance Snapshot spreadsheet (Feb 9, 2026).
+ * Credentialing Spreadsheet (Updated March 2026).
  *
- * Data source: Provider Snapshot 2.9.26.pdf
+ * Data source: Credentialing Spreadsheet Updated (5).pdf
  *
  * Interpretation rules:
  * - Date value (e.g., "8.1.23") → Accepted (credentialed/recredentialed)
@@ -55,6 +55,8 @@ export const PROVIDER_NAME_MAPPING: Record<string, string> = {
   "Paula": "Paula Raley",
   "Renee": "Renee Singletary",
   "Sandra": "Sandra Rivera",
+  "Tyra": "Tyra Jones",
+  "Ivory": "Ivory Kahler",
 };
 
 /**
@@ -63,7 +65,6 @@ export const PROVIDER_NAME_MAPPING: Record<string, string> = {
  */
 export const UNMATCHED_SNAPSHOT_PROVIDERS = [
   "Ginger",    // Not in Current sheet
-  "Ivory",     // Not in Current sheet (new in 2.9.26 PDF)
 ];
 
 /**
@@ -473,6 +474,32 @@ export const PROVIDER_INSURANCE_DATA: Record<string, InsuranceCategory[]> = {
   // Row 22: Laurel - RR - Supervised (intern)
   // Supervisor: Renee | Pres Com: Sup
   "Laurel Muehlmeyer": [
+    "Presbyterian Turquoise Care",
+    "BlueCross BlueShield Commercial",
+    "BlueCross BlueShield Turquoise Care",
+    "Molina",
+    "UHC Commercial",
+    "UHC Centennial",
+  ],
+
+  // Tyra Jones - ABQ - Supervised (LMHC)
+  // Supervisor: Angelica C | Pres Com: Sup
+  // Source: Credentialing Spreadsheet Updated (5).pdf — row 28
+  // Note: Skills sheet lists as "Ty Jones" — name corrected in server parser
+  "Tyra Jones": [
+    "Presbyterian Turquoise Care",
+    "BlueCross BlueShield Commercial",
+    "BlueCross BlueShield Turquoise Care",
+    "Molina",
+    "UHC Commercial",
+    "UHC Centennial",
+  ],
+
+  // Ivory Kahler - RR - Supervised (LMSW)
+  // Supervisor: Angelica V | Pres Com: Sup
+  // Source: Credentialing Spreadsheet Updated (5).pdf — row 15
+  // Note: In skills sheet with no skills/location data (placeholder)
+  "Ivory Kahler": [
     "Presbyterian Turquoise Care",
     "BlueCross BlueShield Commercial",
     "BlueCross BlueShield Turquoise Care",
