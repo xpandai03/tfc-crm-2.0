@@ -15,7 +15,7 @@ import { FallbackBanner } from "@/components/ui/fallback-banner";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { AlertTriangle, Clock, CalendarCheck, AlertCircle, CheckCircle2, Inbox, User } from "lucide-react";
-import { getWaitlistSummary, getWaitlistContacts, addNoteToContact, updateContactStatus, getAttentionFlags, type WithSource } from "@/lib/api";
+import { getWaitlistSummary, getWaitlistContacts, addNoteToContact, updateContactStatus, getAttentionFlags, triggerFullSync, type WithSource } from "@/lib/api";
 import { useDataSource } from "@/lib/data-source-context";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -155,7 +155,13 @@ export default function Home() {
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await Promise.all([refetchSummary(), refetchContacts()]);
+    try {
+      await triggerFullSync();
+      await Promise.all([refetchSummary(), refetchContacts()]);
+    } catch (error) {
+      console.error("[home] Sync failed, refetching cache:", error);
+      await Promise.all([refetchSummary(), refetchContacts()]);
+    }
     setIsRefreshing(false);
   };
 

@@ -290,6 +290,18 @@ export async function syncContactFromExcel(contactId: number): Promise<{ success
   return response.json();
 }
 
+export async function triggerFullSync(): Promise<{
+  success: boolean;
+  synced: number;
+  skipped: number;
+  deleted: number;
+  durationMs: number;
+  totalContacts: number;
+}> {
+  const response = await apiRequest("POST", "/api/sync/trigger");
+  return response.json();
+}
+
 // ============================================================================
 // TherapyNotes API
 // ============================================================================

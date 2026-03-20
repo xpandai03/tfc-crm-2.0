@@ -2527,9 +2527,10 @@ export async function registerRoutes(
         let name = nameMatch ? nameMatch[1].trim() : nameWithCredentials;
         const credentials = nameMatch ? nameMatch[2].trim() : "";
 
-        // Correct names that are in "Last First" format in the spreadsheet
+        // Correct names that are in "Last First" format or abbreviated in the spreadsheet
         const nameCorrections: Record<string, string> = {
           "Neuhart Jessica": "Jessica Neuhart",
+          "Ty Jones": "Tyra Jones",
         };
         if (nameCorrections[name]) {
           name = nameCorrections[name];

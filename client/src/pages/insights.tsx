@@ -9,7 +9,7 @@ import { PageLoader } from "@/components/ui/page-loader";
 import { SyncStatus } from "@/components/ui/sync-status";
 import { FallbackBanner } from "@/components/ui/fallback-banner";
 import { Download, AlertCircle, ChevronRight } from "lucide-react";
-import { getWaitlistSummary, getWaitlistContacts, type WithSource } from "@/lib/api";
+import { getWaitlistSummary, getWaitlistContacts, triggerFullSync, type WithSource } from "@/lib/api";
 import { useDataSource } from "@/lib/data-source-context";
 import { normalizeInsurance } from "@/lib/insurance-utils";
 import {
@@ -144,7 +144,13 @@ export default function Insights() {
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await Promise.all([refetchSummary(), refetchContacts()]);
+    try {
+      await triggerFullSync();
+      await Promise.all([refetchSummary(), refetchContacts()]);
+    } catch (error) {
+      console.error("[insights] Sync failed, refetching cache:", error);
+      await Promise.all([refetchSummary(), refetchContacts()]);
+    }
     setIsRefreshing(false);
   };
 

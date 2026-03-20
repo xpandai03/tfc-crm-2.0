@@ -10,11 +10,11 @@ interface SyncStatusProps {
   className?: string;
 }
 
-export function SyncStatus({ 
-  lastSyncTime, 
-  onRefresh, 
+export function SyncStatus({
+  lastSyncTime,
+  onRefresh,
   isRefreshing = false,
-  className 
+  className
 }: SyncStatusProps) {
   const [timeAgo, setTimeAgo] = useState<string>("");
 
@@ -46,20 +46,24 @@ export function SyncStatus({
 
   return (
     <div className={cn("flex items-center gap-2", className)}>
-      {lastSyncTime && (
+      {isRefreshing ? (
+        <span className="text-xs text-amber-600 dark:text-amber-400 font-medium" data-testid="text-syncing">
+          Syncing from Excel...
+        </span>
+      ) : lastSyncTime ? (
         <span className="text-xs text-muted-foreground" data-testid="text-last-synced">
           Last synced: {timeAgo}
         </span>
-      )}
-      <Button 
-        variant="outline" 
-        size="sm" 
+      ) : null}
+      <Button
+        variant="outline"
+        size="sm"
         onClick={onRefresh}
         disabled={isRefreshing}
         data-testid="button-refresh"
       >
         <RefreshCw className={cn("h-4 w-4 mr-2", isRefreshing && "animate-spin")} />
-        Refresh
+        {isRefreshing ? "Syncing..." : "Refresh"}
       </Button>
     </div>
   );
