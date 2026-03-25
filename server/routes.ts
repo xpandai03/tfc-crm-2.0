@@ -246,6 +246,7 @@ const TN_ALLOWED_EMAILS = [
   "amanda@tfc.health",
   "chantel@tfc.health",
   "jmontano@tfc.health",
+  "lsego@tfc.health",
 ];
 const TN_AGENT_URL =
   "https://axiom-browser-agent-clone-production.up.railway.app/api/tn/create-patient";
