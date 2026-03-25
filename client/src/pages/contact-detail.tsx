@@ -396,9 +396,9 @@ export default function ContactDetail() {
         setTimeout(() => context.toastRef.dismiss(), 2000);
       }
 
-      // Re-fetch to reconcile with server
-      queryClient.invalidateQueries({ queryKey: ["/api/contact", variables.contactId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"] });
+      // Re-fetch to reconcile with server (refetchType: "active" ensures immediate network refetch)
+      queryClient.invalidateQueries({ queryKey: ["/api/contact", variables.contactId], refetchType: "active" });
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"], refetchType: "active" });
     },
     onError: (error, variables, context) => {
       // Rollback on error
