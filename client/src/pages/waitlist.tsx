@@ -190,7 +190,8 @@ export default function Waitlist() {
 
   // Waitlist page is authoritative over its own data source
   // Use board response _source directly - ignore context state
-  const isLiveBoard = contactsData?._source === "live";
+  // "sync" = real Excel data served from SQLite cache — treat as live
+  const isLiveBoard = contactsData?._source === "live" || contactsData?._source === "sync";
   const isDemoMode = !isLiveBoard;
   
   // Debug log to verify data source (REQUIRED - DO NOT REMOVE)
@@ -323,9 +324,9 @@ export default function Waitlist() {
         setTimeout(() => context.toastRef.dismiss(), 2000);
       }
 
-      // Refetch to reconcile with server
-      queryClient.invalidateQueries({ queryKey: ["/api/get-waitlist-board"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/contact", variables.contactId] });
+      // Refetch to reconcile with server (refetchType: "active" ensures immediate network refetch)
+      queryClient.invalidateQueries({ queryKey: ["/api/get-waitlist-board"], refetchType: "active" });
+      queryClient.invalidateQueries({ queryKey: ["/api/contact", variables.contactId], refetchType: "active" });
     },
     onError: (error, _variables, context) => {
       // Update toast to error

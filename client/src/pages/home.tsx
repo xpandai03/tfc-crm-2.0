@@ -201,8 +201,8 @@ export default function Home() {
 
       // Mark contact as handled
       setHandledContacts(prev => new Set(prev).add(variables.contactId.toString()));
-      // Refresh data to show updated note
-      refetchContacts();
+      // Invalidate to force fresh data from server
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"], refetchType: "active" });
     },
     onError: (error, _variables, context) => {
       // Update toast to error
@@ -245,8 +245,8 @@ export default function Home() {
 
       // Mark contact as handled
       setHandledContacts(prev => new Set(prev).add(variables.contactId.toString()));
-      // Refresh data to reflect status change
-      refetchContacts();
+      // Invalidate to force fresh data from server
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"], refetchType: "active" });
     },
     onError: (error, _variables, context) => {
       // Update toast to error
