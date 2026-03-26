@@ -247,6 +247,8 @@ function ProviderCard({ provider, onFindPatients }: { provider: Provider; onFind
             variant="outline"
             size="sm"
             className="w-full"
+            disabled={!hasAnySpecialtyData}
+            title={!hasAnySpecialtyData ? "Provider must have specialties configured to enable matching" : undefined}
             onClick={(e) => {
               e.preventDefault();
               onFindPatients();
@@ -255,6 +257,11 @@ function ProviderCard({ provider, onFindPatients }: { provider: Provider; onFind
             <Users className="h-4 w-4 mr-2" />
             Find Matching Patients
           </Button>
+          {!hasAnySpecialtyData && (
+            <p className="text-xs text-muted-foreground mt-1.5 text-center">
+              Matching unavailable — no specialty data configured
+            </p>
+          )}
         </div>
       </CardContent>
     </Card>
