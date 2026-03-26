@@ -56,7 +56,8 @@ function extractLocationFromModality(modality: string | null | undefined): strin
 export function buildMatchingContextFromWaitlistContact(
   contact: WaitlistContact
 ): MatchingContext {
-  const reasonString = contact.reasonForTherapy?.join(", ") || null;
+  const rft = contact.reasonForTherapy;
+  const reasonString = Array.isArray(rft) ? rft.join(", ") : (rft || null);
 
   return {
     ageGroup: inferAgeGroupFromRequestingFor(contact.serviceRequested),
