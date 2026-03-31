@@ -127,6 +127,7 @@ export default function Home() {
     "amanda@tfc.health",
     "ebenavidez@tfc.health",
     "lsego@tfc.health",
+    "sandra@tfc.health",
   ];
   const canSeeAttention = !!user?.email && ATTENTION_ALLOWED_EMAILS.includes(user.email.toLowerCase());
 
