@@ -139,8 +139,9 @@ export default function Waitlist() {
   // Task ownership filter state
   const [showOnlyMine, setShowOnlyMine] = useState(false);
 
-  // PM Review column is only visible to Chantelle
-  const isPM = user?.email?.toLowerCase() === "chantel@tfc.health";
+  // PM Review column is visible to PM users
+  const PM_EMAILS = ["chantel@tfc.health", "sandra@tfc.health"];
+  const isPM = !!user?.email && PM_EMAILS.includes(user.email.toLowerCase());
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
