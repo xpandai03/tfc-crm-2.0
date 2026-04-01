@@ -256,16 +256,22 @@ export default function Insights() {
     const reasonTypes: Record<string, number> = {};
     const LEGACY_REASON_LABEL = "Not Collected (Older Intake)";
     for (const c of activeContacts) {
-      const reasons = c.reasonForTherapy;
-      // Check if array exists and has valid entries
-      if (reasons && Array.isArray(reasons) && reasons.length > 0) {
+      const raw = c.reasonForTherapy;
+      // reasonForTherapy may be a comma-separated string (from DB) or an array
+      const reasons: string[] = Array.isArray(raw)
+        ? raw
+        : typeof raw === "string" && raw.trim()
+          ? raw.split(",").map(r => r.trim()).filter(Boolean)
+          : [];
+
+      if (reasons.length > 0) {
         // Count each reason individually (a contact can have multiple)
+        const seen = new Set<string>(); // dedupe within same contact
         for (const reason of reasons) {
-          const trimmed = reason?.trim();
-          if (trimmed) {
-            // Normalize to title case for consistency
-            const normalized = trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase();
-            reasonTypes[normalized] = (reasonTypes[normalized] || 0) + 1;
+          const trimmed = reason.trim();
+          if (trimmed && !seen.has(trimmed)) {
+            seen.add(trimmed);
+            reasonTypes[trimmed] = (reasonTypes[trimmed] || 0) + 1;
           }
         }
       } else {
