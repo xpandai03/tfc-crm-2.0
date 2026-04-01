@@ -47,6 +47,7 @@ import {
   RotateCcw,
   UserPlus,
   RefreshCw,
+  Download,
 } from "lucide-react";
 import { getContactSnapshot, updateContactStatus, addNoteToContact, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, syncContactFromExcel, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
 import { ReminderModal } from "@/components/ui/reminder-modal";
@@ -1198,6 +1199,24 @@ export default function ContactDetail() {
                           </a>
                         </div>
                       )}
+                    </div>
+                  )}
+
+                  {/* Download Intake PDF */}
+                  {(contact?.requestingFor || contact?.reasonForSeeking || contact?.reasonForTherapy || contact?.formCompletedBy ||
+                    contact?.modality || contact?.insurancePayer || contact?.referralSource ||
+                    contact?.priorServices || contact?.patientDob || contact?.gender ||
+                    contact?.streetAddress || contact?.city) && (
+                    <div className="pt-3 border-t border-border">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full text-xs"
+                        onClick={() => window.open(`/api/contact/${contactId}/intake-pdf`, "_blank")}
+                      >
+                        <Download className="h-3.5 w-3.5 mr-1.5" />
+                        Download Intake PDF
+                      </Button>
                     </div>
                   )}
 

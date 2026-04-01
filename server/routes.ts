@@ -3665,6 +3665,55 @@ export async function registerRoutes(
   });
 
   // ============================================================================
+  // Intake PDF API
+  // ============================================================================
+
+  app.get("/api/contact/:id/intake-pdf", async (req, res) => {
+    try {
+      const contactId = parseInt(req.params.id, 10);
+      if (isNaN(contactId)) {
+        return res.status(400).json({ error: "contactId must be a number" });
+      }
+
+      const contact = getSyncContactById(contactId);
+      if (!contact) {
+        return res.status(404).json({ error: "Contact not found" });
+      }
+
+      const hasIntake = contact.requestingFor || contact.reasonForSeeking ||
+        contact.reasonForTherapy || contact.formCompletedBy || contact.modality ||
+        contact.insurancePayer || contact.referralSource || contact.priorServices ||
+        contact.patientDob || contact.gender || contact.streetAddress || contact.city;
+
+      if (!hasIntake) {
+        return res.status(404).json({ error: "No intake data available for this contact" });
+      }
+
+      const pdfmake = require("pdfmake");
+      pdfmake.addFonts(require("pdfmake/standard-fonts/Helvetica"));
+
+      const { buildIntakeDocument } = await import("./pdf/intake-template");
+      const docDefinition = buildIntakeDocument(contact);
+      const pdfDoc = pdfmake.createPdf(docDefinition);
+
+      const safeName = contact.name.replace(/[^a-zA-Z0-9\s-]/g, "").replace(/\s+/g, "-");
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="Intake-${safeName}-${contact.contactId}.pdf"`
+      );
+      res.setHeader("Cache-Control", "no-cache");
+
+      const stream = await pdfDoc.getStream();
+      stream.pipe(res);
+      stream.end();
+    } catch (error) {
+      console.error("[intake-pdf] Error generating PDF:", error);
+      return res.status(500).json({ error: "Failed to generate intake PDF" });
+    }
+  });
+
+  // ============================================================================
   // Email Snapshots API
   // ============================================================================
 
