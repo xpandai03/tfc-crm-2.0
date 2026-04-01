@@ -531,7 +531,7 @@ export default function Home() {
                                     {contact.name}
                                   </p>
                                   <p className="text-xs text-muted-foreground truncate mt-0.5">
-                                    {contact.serviceRequested || "—"}
+                                    {contact.requestingFor ?? contact.serviceRequested ?? "—"}
                                   </p>
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">

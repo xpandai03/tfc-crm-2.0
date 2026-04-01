@@ -68,7 +68,7 @@ export function DraggableCard({ contact, onAddNote, isDragging = false, currentU
   // Hover expansion data
   const insurance = normalizeInsurance(contact?.insurancePayer);
   const modality = formatModality(contact?.modality);
-  const service = contact?.serviceRequested || "Unknown";
+  const service = (contact as any)?.requestingFor?.trim() || contact?.serviceRequested?.trim() || "Unknown";
 
   // Reason display — always show, with explicit legacy fallback
   // Cast to unknown for runtime safety: n8n may send string instead of array
