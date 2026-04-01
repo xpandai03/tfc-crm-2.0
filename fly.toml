@@ -1,16 +1,15 @@
-# fly.toml app configuration file generated for tfc-crm-2026 on 2026-01-14T03:18:33Z
+# fly.toml — Staging instance of TFC CRM
+# IMPORTANT: This is the STAGING app. Production is tfc-crm-2026.
 #
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
+# See https://fly.io/docs/reference/configuration/
 
-app = 'tfc-crm-2026'
+app = 'tfc-crm-2-staging'
 primary_region = 'lax'
 
 [build]
 
-# Mount volume for SQLite persistence (reminders database)
 [mounts]
-  source = "tfc_data"
+  source = "tfc_staging_data"
   destination = "/data"
 
 [http_service]
@@ -18,7 +17,7 @@ primary_region = 'lax'
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
-  min_machines_running = 1  # Keep at least 1 machine running for reminder cron
+  min_machines_running = 1
   processes = ['app']
 
 [[vm]]

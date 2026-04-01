@@ -7,8 +7,10 @@
 import { Resend } from "resend";
 import type { Reminder } from "./types";
 
-// Initialize Resend client
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Initialize Resend client (null if key not configured)
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+
+const APP_URL = process.env.APP_URL || "https://tfc-crm-2026.fly.dev";
 
 // From email - must be verified domain in Resend, or use onboarding@resend.dev for testing
 // Use EMAIL_FROM_ADDRESS (same as server/email/service.ts) with RESEND_FROM_EMAIL as fallback
@@ -68,7 +70,7 @@ function generateEmailHtml(reminder: Reminder): string {
           <strong>Scheduled for:</strong> ${formatDate(reminder.dueAt)}
         </p>
         <p style="margin: 8px 0 0 0;">
-          <a href="https://tfc-crm-2026.fly.dev/contact/${reminder.contactId}" style="color: #4F46E5; text-decoration: none;">
+          <a href="${APP_URL}/contact/${reminder.contactId}" style="color: #4F46E5; text-decoration: none;">
             View Contact in TFC CRM
           </a>
         </p>
@@ -102,7 +104,7 @@ ${reminder.reminderText}
 ---
 Contact: ${reminder.contactName}
 Scheduled for: ${formatDate(reminder.dueAt)}
-View Contact: https://tfc-crm-2026.fly.dev/contact/${reminder.contactId}
+View Contact: ${APP_URL}/contact/${reminder.contactId}
 
 This reminder was created in TFC CRM on ${formatDate(reminder.createdAt)}.
   `.trim();
@@ -115,6 +117,11 @@ export async function sendReminderEmail(
   reminder: Reminder
 ): Promise<{ success: boolean; error?: string }> {
   const typeLabel = reminder.isSecondReminder ? "Advance Notice" : "Reminder";
+
+  if (!resend) {
+    console.warn(`[staging] Reminder email skipped (RESEND_API_KEY not configured) — would have sent ${typeLabel} to ${reminder.createdByEmail}`);
+    return { success: true, error: undefined };
+  }
 
   try {
     console.log(

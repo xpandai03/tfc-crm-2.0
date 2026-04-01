@@ -18,68 +18,103 @@ declare global {
   }
 }
 
-// Environment validation
-function getRequiredEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
+function isAuthDisabled(): boolean {
+  return (
+    !process.env.AZURE_AD_CLIENT_ID ||
+    process.env.AZURE_AD_CLIENT_ID === "disabled"
+  );
 }
 
-// Configure passport with Azure AD OIDC
+const STAGING_MOCK_USER: AuthUser = {
+  id: "staging-user",
+  email: "staging@tfc.health",
+  name: "Staging User",
+  tenant: "staging",
+};
+
+// Configure passport with Azure AD OIDC (or bypass for staging)
 export function configureAuth(app: Express): void {
-  const clientID = getRequiredEnv("AZURE_AD_CLIENT_ID");
-  const clientSecret = getRequiredEnv("AZURE_AD_CLIENT_SECRET");
-  const tenantID = getRequiredEnv("AZURE_AD_TENANT_ID");
-  const sessionSecret = getRequiredEnv("SESSION_SECRET");
+  if (isAuthDisabled()) {
+    console.warn("[AUTH] Azure AD credentials not configured — running in STAGING AUTH-BYPASS mode");
+    console.warn("[AUTH] All requests will use mock user:", STAGING_MOCK_USER.email);
+
+    const sessionSecret = process.env.SESSION_SECRET || "staging-secret-not-for-production";
+    const MemoryStoreSession = MemoryStore(session);
+
+    app.use(
+      session({
+        name: "tfc.sid",
+        secret: sessionSecret,
+        resave: false,
+        saveUninitialized: false,
+        store: new MemoryStoreSession({ checkPeriod: 86400000 }),
+        cookie: { httpOnly: true, secure: false, sameSite: "lax", maxAge: 24 * 60 * 60 * 1000 },
+      })
+    );
+
+    app.use((req: Request, _res: Response, next: NextFunction) => {
+      (req as any).user = STAGING_MOCK_USER;
+      (req as any).isAuthenticated = () => true;
+      next();
+    });
+
+    app.get("/api/me", (_req: Request, res: Response) => {
+      res.json(STAGING_MOCK_USER);
+    });
+
+    app.get("/auth/login", (_req: Request, res: Response) => res.redirect("/"));
+    app.get("/auth/callback", (_req: Request, res: Response) => res.redirect("/"));
+    app.get("/auth/logout", (_req: Request, res: Response) => res.redirect("/"));
+
+    return;
+  }
+
+  const clientID = process.env.AZURE_AD_CLIENT_ID!;
+  const clientSecret = process.env.AZURE_AD_CLIENT_SECRET!;
+  const tenantID = process.env.AZURE_AD_TENANT_ID!;
+  const sessionSecret = process.env.SESSION_SECRET!;
+
+  if (!clientSecret || !tenantID || !sessionSecret) {
+    throw new Error("AZURE_AD_CLIENT_SECRET, AZURE_AD_TENANT_ID, and SESSION_SECRET are required when Azure AD auth is enabled");
+  }
 
   const isProduction = process.env.NODE_ENV === "production";
 
-  // IMPORTANT: Trust proxy must be set BEFORE session middleware
-  // This is required for secure cookies to work behind Fly's proxy
   if (isProduction) {
     app.set("trust proxy", 1);
   }
 
-  // Determine callback URL based on environment
-  const callbackHost = isProduction
+  const callbackHost = process.env.APP_URL || (isProduction
     ? "https://tfc-crm-2026.fly.dev"
-    : "http://localhost:3000";
+    : "http://localhost:3000");
 
-  // Session store
   const MemoryStoreSession = MemoryStore(session);
 
-  // Session configuration
-  // Note: saveUninitialized must be true for OIDC state to be saved before redirect
   app.use(
     session({
       name: "tfc.sid",
       secret: sessionSecret,
-      resave: true,  // Required for session state persistence
-      saveUninitialized: true,  // Required for OIDC state storage before auth
+      resave: true,
+      saveUninitialized: true,
       store: new MemoryStoreSession({
-        checkPeriod: 86400000, // prune expired entries every 24h
+        checkPeriod: 86400000,
       }),
       cookie: {
         httpOnly: true,
         secure: isProduction,
         sameSite: "lax",
-        maxAge: 24 * 60 * 60 * 1000, // 24 hours
+        maxAge: 24 * 60 * 60 * 1000,
       },
     })
   );
 
-  // Initialize Passport
   app.use(passport.initialize());
   app.use(passport.session());
 
-  // Serialize user to session
   passport.serializeUser((user: AuthUser, done) => {
     done(null, user);
   });
 
-  // Deserialize user from session
   passport.deserializeUser((user: AuthUser, done) => {
     done(null, user);
   });
@@ -90,7 +125,6 @@ export function configureAuth(app: Express): void {
   console.log("[AUTH]   Client ID:", clientID);
   console.log("[AUTH]   Callback URL:", callbackURL);
 
-  // Configure Azure AD OIDC Strategy
   passport.use(
     "azure-ad",
     new OpenIDConnectStrategy(
@@ -121,7 +155,6 @@ export function configureAuth(app: Express): void {
           console.log("[AUTH]   ID Token (first 50 chars):", idToken?.substring(0, 50));
           console.log("[AUTH]   Access Token exists:", !!accessToken);
 
-          // Extract claims from profile._json (Azure AD specific)
           const claims = profile?._json || {};
 
           const user: AuthUser = {
@@ -133,13 +166,11 @@ export function configureAuth(app: Express): void {
 
           console.log("[AUTH]   Extracted user:", JSON.stringify(user, null, 2));
 
-          // Validate we got an email
           if (!user.email) {
             console.error("[AUTH] ERROR: No email found in profile");
             return done(new Error("No email found in profile"));
           }
 
-          // Validate email domain
           const allowedDomains = ["tfc.help", "thefamilyconnection.org", "tfc.health"];
           const emailDomain = user.email.split("@")[1]?.toLowerCase();
           console.log("[AUTH]   Email domain:", emailDomain);
@@ -159,7 +190,6 @@ export function configureAuth(app: Express): void {
     )
   );
 
-  // Auth routes
   setupAuthRoutes(app);
 }
 
@@ -240,9 +270,8 @@ function setupAuthRoutes(app: Express): void {
   app.get("/auth/logout", (req: Request, res: Response) => {
     const tenantID = process.env.AZURE_AD_TENANT_ID;
     const isProduction = process.env.NODE_ENV === "production";
-    const postLogoutRedirect = isProduction
-      ? "https://tfc-crm-2026.fly.dev/auth/login"
-      : "http://localhost:3000/auth/login";
+    const baseUrl = process.env.APP_URL || (isProduction ? "https://tfc-crm-2026.fly.dev" : "http://localhost:3000");
+    const postLogoutRedirect = `${baseUrl}/auth/login`;
 
     req.logout((err) => {
       if (err) {
@@ -292,6 +321,9 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
 
 // Middleware to skip auth for specific paths
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
+  if (isAuthDisabled()) {
+    return next();
+  }
   // Paths that don't require authentication
   const publicPaths = [
     "/auth/login",
