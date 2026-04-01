@@ -674,37 +674,79 @@ export function generateIntakeContactId(): number {
 
 /**
  * Insert a new contact created via /api/intake.
- * Writes directly to sync_contacts — no n8n, no Excel.
+ * Writes directly to sync_contacts with full structured fields — no n8n, no Excel.
  */
 export function insertIntakeContact(fields: {
   contactId: number;
   name: string;
   email?: string | null;
   phone?: string | null;
-  notes?: string | null;
+  lastNote?: string | null;
+
   serviceRequested?: string | null;
+  requestingFor?: string | null;
+  reasonForSeeking?: string | null;
+  reasonForTherapy?: string | null;
+  detailedReason?: string | null;
+  formCompletedBy?: string | null;
   modality?: string | null;
+  referralSource?: string | null;
+  priorServices?: string | null;
+  priorProvider?: string | null;
+  preferredContact?: string | null;
+  custody?: string | null;
+  flags?: string | null;
+  priority?: string | null;
+
+  insurancePayer?: string | null;
+  insurancePlan?: string | null;
+  insuranceId?: string | null;
+
+  patientDob?: string | null;
+  gender?: string | null;
+
+  streetAddress?: string | null;
   city?: string | null;
+  state?: string | null;
+  zipCode?: string | null;
+  county?: string | null;
 }): void {
   const db = getDatabase();
-  const now = new Date().toISOString();
-  const today = now.split("T")[0];
-
-  const lastNote = fields.notes
-    ? `STG ${now}\n${fields.notes}`
-    : null;
+  const today = new Date().toISOString().split("T")[0];
 
   db.prepare(`
     INSERT INTO sync_contacts (
       contact_id, name, email, phone,
-      status, status_code, service_requested, modality, city,
+      status, status_code, service_requested,
       date_added, days_on_waitlist, assigned_to,
+
+      requesting_for, reason_for_seeking, reason_for_therapy, detailed_reason,
+      form_completed_by, modality, referral_source, prior_services,
+      prior_provider, preferred_contact, custody, flags, priority,
+
+      insurance_payer, insurance_plan, insurance_id,
+
+      patient_dob, gender,
+
+      street_address, city, state, zip_code, county,
+
       last_contact, last_note,
       synced_at, sync_hash
     ) VALUES (
       ?, ?, ?, ?,
-      'New', 0, ?, ?, ?,
+      'New -- No Outreach', 100, ?,
       ?, 0, NULL,
+
+      ?, ?, ?, ?,
+      ?, ?, ?, ?,
+      ?, ?, ?, ?, ?,
+
+      ?, ?, ?,
+
+      ?, ?,
+
+      ?, ?, ?, ?, ?,
+
       ?, ?,
       datetime('now'), ?
     )
@@ -714,11 +756,37 @@ export function insertIntakeContact(fields: {
     fields.email || null,
     fields.phone || null,
     fields.serviceRequested || null,
+    today,
+
+    fields.requestingFor || null,
+    fields.reasonForSeeking || null,
+    fields.reasonForTherapy || null,
+    fields.detailedReason || null,
+    fields.formCompletedBy || null,
     fields.modality || null,
+    fields.referralSource || null,
+    fields.priorServices || null,
+    fields.priorProvider || null,
+    fields.preferredContact || null,
+    fields.custody || null,
+    fields.flags || null,
+    fields.priority || null,
+
+    fields.insurancePayer || null,
+    fields.insurancePlan || null,
+    fields.insuranceId || null,
+
+    fields.patientDob || null,
+    fields.gender || null,
+
+    fields.streetAddress || null,
     fields.city || null,
+    fields.state || null,
+    fields.zipCode || null,
+    fields.county || null,
+
     today,
-    today,
-    lastNote,
+    fields.lastNote || null,
     `intake-${fields.contactId}`,
   );
 
