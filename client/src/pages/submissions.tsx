@@ -12,6 +12,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
 import { Loader2, RefreshCw, ExternalLink, Code2, FileText, Inbox } from "lucide-react";
 
 interface FormSubmission {
@@ -41,6 +42,19 @@ function formatRelativeTime(iso: string): string {
 
 function formatExactTime(iso: string): string {
   return new Date(iso + "Z").toLocaleString();
+}
+
+function getSourceLabel(source: string): { label: string; variant: "secondary" | "default" | "outline" } {
+  switch (source) {
+    case "rfs_v2":
+      return { label: "New RFS Form", variant: "default" };
+    case "rfs_legacy":
+      return { label: "Old RFS Form", variant: "secondary" };
+    case "rfs":
+      return { label: "Old RFS Form", variant: "secondary" };
+    default:
+      return { label: source || "Unknown", variant: "outline" };
+  }
 }
 
 function buildSummary(payload: Record<string, unknown>): string {
@@ -160,11 +174,19 @@ export default function Submissions() {
             {submissions.map((sub) => (
               <Card key={sub.id} className="overflow-hidden">
                 <CardContent className="px-4 py-3 space-y-2">
-                  {/* Top row: name + timestamp */}
+                  {/* Top row: name + source badge + timestamp */}
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-2 min-w-0">
                       <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                       <span className="font-medium text-sm truncate">{sub.name}</span>
+                      {(() => {
+                        const src = getSourceLabel(sub.source);
+                        return (
+                          <Badge variant={src.variant} className="text-[10px] px-1.5 py-0 shrink-0">
+                            {src.label}
+                          </Badge>
+                        );
+                      })()}
                     </div>
                     <span
                       className="text-xs text-muted-foreground flex-shrink-0 tabular-nums"

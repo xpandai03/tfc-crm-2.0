@@ -3130,7 +3130,7 @@ export async function registerRoutes(
       // Immutable audit log — capture raw submission before any processing
       try {
         insertFormSubmission({
-          source: "rfs",
+          source: "rfs_v2",
           contactId,
           name: b.name.trim(),
           payload: b,
