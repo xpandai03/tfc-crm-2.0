@@ -569,7 +569,7 @@ export function WaitlistListView({
                       })()}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {contact.serviceRequested || "—"}
+                      {contact.requestingFor ?? contact.serviceRequested ?? "—"}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {formatDateForDisplay(contact.dateAdded)}

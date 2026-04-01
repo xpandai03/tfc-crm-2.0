@@ -148,7 +148,7 @@ export function DraggableCard({ contact, onAddNote, isDragging = false, currentU
             </Button>
           </div>
           <p className="text-xs text-muted-foreground mt-1 truncate">
-            {contact.serviceRequested}
+            {contact.requestingFor ?? contact.serviceRequested}
           </p>
           <div className="flex items-center justify-between mt-2">
             <div className="flex items-center gap-1 text-xs text-muted-foreground">
