@@ -36,7 +36,10 @@ import {
   insertIntakeContact,
   insertFormSubmission,
   getRecentSubmissions,
+  normalizeDateValue,
+  insertMigrationContacts,
   type SyncPayloadContact,
+  type MigrationContact,
 } from "./sync/db";
 import * as XLSX from "xlsx";
 import * as path from "path";
@@ -3689,6 +3692,227 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[submissions] Error fetching submissions:", error);
       return res.status(500).json({ error: "Failed to fetch submissions" });
+    }
+  });
+
+  // ============================================================================
+  // Migration API (one-time Excel → CRM import)
+  // ============================================================================
+
+  const MIGRATE_API_KEY = process.env.MIGRATE_API_KEY || "";
+  const VALID_MIGRATE_STATUS_CODES = [100, 101, 102, 103, 104, 200, 201, 202, 203, 204, 205, 300, 400];
+
+  const STATUS_LABELS: Record<number, string> = {
+    100: "New — No Outreach",
+    101: "Waiting — Initial Contact",
+    102: "Waiting — On Waitlist",
+    103: "Waiting — Needs Follow-up",
+    104: "Waiting — Pending Paperwork",
+    200: "Ready to Schedule",
+    201: "Scheduling — New Assignment",
+    202: "Scheduling — Assigned",
+    203: "Scheduling — Attempted",
+    204: "Scheduling — PM Review",
+    205: "Scheduled",
+    300: "Active",
+    400: "Insurance Not Accepted",
+  };
+
+  app.post("/api/migrate", async (req, res) => {
+    console.log("[MIGRATE ENDPOINT HIT]", { dryRun: req.query.dryRun, bodySize: JSON.stringify(req.body || {}).length });
+    try {
+      // Step 2: Security — require X-Migrate-Key header
+      if (!MIGRATE_API_KEY) {
+        return res.status(500).json({ error: "MIGRATE_API_KEY not configured on server" });
+      }
+      const providedKey = req.headers["x-migrate-key"];
+      if (providedKey !== MIGRATE_API_KEY) {
+        return res.status(401).json({ error: "Invalid or missing X-Migrate-Key header" });
+      }
+
+      const dryRun = req.query.dryRun === "true";
+      const { contacts } = req.body;
+
+      if (!Array.isArray(contacts) || contacts.length === 0) {
+        return res.status(400).json({ error: "Request body must contain a non-empty contacts array" });
+      }
+
+      // Validation + normalization pass
+      const validContacts: MigrationContact[] = [];
+      const errors: Array<{ contactId: number | null; field: string; message: string }> = [];
+      const stats = {
+        statusDistribution: {} as Record<number, number>,
+        missingFields: {} as Record<string, number>,
+        dateParsing: { dobSuccess: 0, dobFailed: 0, dateAddedSuccess: 0, dateAddedFailed: 0 },
+        insuranceVariants: {} as Record<string, number>,
+      };
+
+      for (let i = 0; i < contacts.length; i++) {
+        const raw = contacts[i];
+        const rowLabel = raw.contactId ?? `row-${i}`;
+        let rowValid = true;
+
+        // Required fields
+        if (raw.contactId === undefined || raw.contactId === null || typeof raw.contactId !== "number") {
+          errors.push({ contactId: rowLabel, field: "contactId", message: "Missing or non-numeric contactId" });
+          rowValid = false;
+        }
+        if (!raw.name || typeof raw.name !== "string" || raw.name.trim() === "") {
+          errors.push({ contactId: rowLabel, field: "name", message: "Missing or empty name" });
+          rowValid = false;
+        }
+
+        // Status code validation
+        const statusCode = typeof raw.statusCode === "number" ? raw.statusCode : null;
+        if (statusCode !== null && !VALID_MIGRATE_STATUS_CODES.includes(statusCode)) {
+          errors.push({ contactId: rowLabel, field: "statusCode", message: `Invalid status code: ${statusCode}` });
+          rowValid = false;
+        }
+
+        // Date normalization: patientDob (M/D/YYYY → YYYY-MM-DD)
+        let patientDob: string | null = null;
+        if (raw.patientDob) {
+          patientDob = normalizeDateValue(raw.patientDob);
+          if (patientDob) {
+            stats.dateParsing.dobSuccess++;
+          } else {
+            stats.dateParsing.dobFailed++;
+            errors.push({ contactId: rowLabel, field: "patientDob", message: `Failed to parse DOB: "${raw.patientDob}"` });
+          }
+        }
+
+        // Date normalization: dateAdded
+        let dateAdded: string | null = null;
+        if (raw.dateAdded) {
+          dateAdded = normalizeDateValue(raw.dateAdded);
+          if (dateAdded) {
+            stats.dateParsing.dateAddedSuccess++;
+          } else {
+            stats.dateParsing.dateAddedFailed++;
+            errors.push({ contactId: rowLabel, field: "dateAdded", message: `Failed to parse dateAdded: "${raw.dateAdded}"` });
+          }
+        }
+
+        // Track stats
+        if (statusCode !== null) {
+          stats.statusDistribution[statusCode] = (stats.statusDistribution[statusCode] || 0) + 1;
+        }
+
+        // Track missing optional fields
+        const optionalFields = [
+          "email", "phone", "insurancePayer", "patientDob", "dateAdded",
+          "reasonForTherapy", "lastNote", "assignedTo", "gender",
+          "streetAddress", "city", "state", "zipCode",
+        ];
+        for (const f of optionalFields) {
+          if (!raw[f] || (typeof raw[f] === "string" && raw[f].trim() === "")) {
+            stats.missingFields[f] = (stats.missingFields[f] || 0) + 1;
+          }
+        }
+
+        // Track insurance variants
+        if (raw.insurancePayer && typeof raw.insurancePayer === "string" && raw.insurancePayer.trim() !== "") {
+          const payer = raw.insurancePayer.trim();
+          stats.insuranceVariants[payer] = (stats.insuranceVariants[payer] || 0) + 1;
+        }
+
+        // Compute age from DOB
+        let age: number | null = null;
+        if (patientDob) {
+          const dobDate = new Date(patientDob);
+          const now = new Date();
+          age = now.getFullYear() - dobDate.getFullYear();
+          const monthDiff = now.getMonth() - dobDate.getMonth();
+          if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < dobDate.getDate())) {
+            age--;
+          }
+        }
+
+        if (rowValid) {
+          const status = statusCode !== null ? (STATUS_LABELS[statusCode] || String(statusCode)) : null;
+          validContacts.push({
+            contactId: raw.contactId,
+            name: raw.name.trim(),
+            email: raw.email?.trim() || null,
+            phone: raw.phone?.trim() || null,
+            status,
+            statusCode,
+            serviceRequested: raw.serviceRequested?.trim() || null,
+            daysOnWaitlist: typeof raw.daysOnWaitlist === "number" ? raw.daysOnWaitlist : null,
+            dateAdded,
+            assignedTo: raw.assignedTo?.trim() || null,
+            requestingFor: raw.requestingFor?.trim() || null,
+            reasonForSeeking: raw.reasonForSeeking?.trim() || null,
+            reasonForTherapy: raw.reasonForTherapy?.trim() || null,
+            detailedReason: raw.detailedReason?.trim() || null,
+            formCompletedBy: raw.formCompletedBy?.trim() || null,
+            modality: raw.modality?.trim() || null,
+            priorServices: raw.priorServices?.trim() || null,
+            priorProvider: raw.priorProvider?.trim() || null,
+            insurancePayer: raw.insurancePayer?.trim() || null,
+            insurancePlan: raw.insurancePlan?.trim() || null,
+            insuranceId: raw.insuranceId?.trim() || null,
+            patientDob,
+            gender: raw.gender?.trim() || null,
+            age,
+            streetAddress: raw.streetAddress?.trim() || null,
+            city: raw.city?.trim() || null,
+            state: raw.state?.trim() || null,
+            zipCode: raw.zipCode?.trim() || null,
+            rfsLink: raw.rfsLink?.trim() || null,
+            lastNote: raw.lastNote || null,
+            flags: raw.flags?.trim() || null,
+          });
+        }
+      }
+
+      // Dry run: return validation results only
+      if (dryRun) {
+        console.log("[MIGRATION] Dry run complete", {
+          total: contacts.length,
+          valid: validContacts.length,
+          invalid: contacts.length - validContacts.length,
+          errors: errors.length,
+        });
+        return res.json({
+          dryRun: true,
+          total: contacts.length,
+          valid: validContacts.length,
+          invalid: contacts.length - validContacts.length,
+          errors,
+          stats,
+        });
+      }
+
+      // Real migration: insert into DB
+      const result = insertMigrationContacts(validContacts);
+
+      console.log("[MIGRATION]", {
+        total: contacts.length,
+        valid: validContacts.length,
+        migrated: result.migrated,
+        skipped: result.skipped,
+        errors: result.errors.length + errors.length,
+      });
+
+      return res.json({
+        success: true,
+        total: contacts.length,
+        valid: validContacts.length,
+        migrated: result.migrated,
+        skipped: result.skipped,
+        errors: [
+          ...errors,
+          ...result.errors.map((e) => ({ contactId: e.contactId, field: "db", message: e.message })),
+        ],
+        stats,
+      });
+    } catch (error) {
+      console.error("[MIGRATION] Fatal error:", error);
+      return res.status(500).json({
+        error: "Migration failed",
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   });
 

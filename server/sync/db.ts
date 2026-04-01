@@ -33,7 +33,7 @@ function toValidIsoDate(s: string): string | null {
 }
 
 /** Normalize Excel serial dates (e.g. 32211) to ISO string (YYYY-MM-DD) at ingestion time. */
-function normalizeDateValue(value: unknown): string | null {
+export function normalizeDateValue(value: unknown): string | null {
   if (value === undefined || value === null) return null;
   const s = String(value).trim();
   if (s === "") return null;
@@ -1139,4 +1139,107 @@ export function getRecentSubmissions(limit: number = 50): FormSubmission[] {
     ...r,
     payload: JSON.parse(r.payload),
   }));
+}
+
+// ============================================================================
+// Migration Operations (one-time Excel → CRM import)
+// ============================================================================
+
+export interface MigrationContact {
+  contactId: number;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  status: string | null;
+  statusCode: number | null;
+  serviceRequested: string | null;
+  daysOnWaitlist: number | null;
+  dateAdded: string | null;
+  assignedTo: string | null;
+  requestingFor: string | null;
+  reasonForSeeking: string | null;
+  reasonForTherapy: string | null;
+  detailedReason: string | null;
+  formCompletedBy: string | null;
+  modality: string | null;
+  priorServices: string | null;
+  priorProvider: string | null;
+  insurancePayer: string | null;
+  insurancePlan: string | null;
+  insuranceId: string | null;
+  patientDob: string | null;
+  gender: string | null;
+  age: number | null;
+  streetAddress: string | null;
+  city: string | null;
+  state: string | null;
+  zipCode: string | null;
+  rfsLink: string | null;
+  lastNote: string | null;
+  flags: string | null;
+}
+
+/**
+ * Insert migration contacts using INSERT OR IGNORE.
+ * Skips rows where contact_id already exists — safe to re-run.
+ * Returns per-row results for reporting.
+ */
+export function insertMigrationContacts(
+  contacts: MigrationContact[]
+): { migrated: number; skipped: number; errors: Array<{ contactId: number; message: string }> } {
+  const db = getDatabase();
+  let migrated = 0;
+  let skipped = 0;
+  const errors: Array<{ contactId: number; message: string }> = [];
+
+  const insertStmt = db.prepare(`
+    INSERT OR IGNORE INTO sync_contacts (
+      contact_id, name, email, phone, status, status_code,
+      service_requested, days_on_waitlist, date_added, assigned_to,
+      requesting_for, reason_for_seeking, reason_for_therapy, detailed_reason,
+      form_completed_by, modality, referral_source, prior_services,
+      prior_provider, preferred_contact, custody, flags, priority,
+      insurance_payer, insurance_plan, insurance_id, insurance_status,
+      referral_auth, referral_status,
+      patient_dob, gender, age,
+      street_address, city, state, zip_code, county,
+      rfs_link, document_link,
+      last_contact, last_note,
+      synced_at, sync_hash
+    ) VALUES (
+      @contactId, @name, @email, @phone, @status, @statusCode,
+      @serviceRequested, @daysOnWaitlist, @dateAdded, @assignedTo,
+      @requestingFor, @reasonForSeeking, @reasonForTherapy, @detailedReason,
+      @formCompletedBy, @modality, NULL, @priorServices,
+      @priorProvider, NULL, NULL, @flags, NULL,
+      @insurancePayer, @insurancePlan, @insuranceId, NULL,
+      NULL, NULL,
+      @patientDob, @gender, @age,
+      @streetAddress, @city, @state, @zipCode, NULL,
+      @rfsLink, NULL,
+      NULL, @lastNote,
+      datetime('now'), @syncHash
+    )
+  `);
+
+  const runAll = db.transaction(() => {
+    for (const c of contacts) {
+      try {
+        const result = insertStmt.run({
+          ...c,
+          syncHash: `migrate-${c.contactId}`,
+        });
+        if (result.changes > 0) migrated++;
+        else skipped++;
+      } catch (err) {
+        errors.push({
+          contactId: c.contactId,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  });
+
+  runAll();
+  return { migrated, skipped, errors };
 }
