@@ -2,7 +2,7 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { MessageSquare, Flag, RefreshCw, Info, Mail, ChevronDown, ChevronUp, Download, UserPlus } from "lucide-react";
+import { MessageSquare, Flag, RefreshCw, Info, Mail, ChevronDown, ChevronUp, Download, UserPlus, Trash2 } from "lucide-react";
 import type { TimelineEvent } from "@/lib/timeline";
 import { formatRelativeTime, formatFullDate } from "@/lib/timeline";
 import { SnapshotPreviewModal } from "@/components/ui/snapshot-preview-modal";
@@ -10,6 +10,7 @@ import { SnapshotPreviewModal } from "@/components/ui/snapshot-preview-modal";
 interface TimelineEventCardProps {
   event: TimelineEvent;
   className?: string;
+  onDelete?: (event: TimelineEvent) => void;
 }
 
 const MAX_CONTENT_LENGTH = 280;
@@ -76,9 +77,11 @@ function getEventStyles(event: TimelineEvent) {
   }
 }
 
-export function TimelineEventCard({ event, className }: TimelineEventCardProps) {
+export function TimelineEventCard({ event, className, onDelete }: TimelineEventCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isSnapshotOpen, setIsSnapshotOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const isDeletable = onDelete && (event.type === "note" || event.type === "assignment");
 
   const Icon = getEventIcon(event);
   const styles = getEventStyles(event);
@@ -115,9 +118,41 @@ export function TimelineEventCard({ event, className }: TimelineEventCardProps) 
                 </span>
               )}
             </div>
-            <span className="text-xs text-muted-foreground shrink-0">
-              {relativeTime}
-            </span>
+            <div className="flex items-center gap-1 shrink-0">
+              <span className="text-xs text-muted-foreground">
+                {relativeTime}
+              </span>
+              {isDeletable && !confirmDelete && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 w-5 p-0 text-muted-foreground/50 hover:text-red-500"
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              )}
+              {isDeletable && confirmDelete && (
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="h-5 px-1.5 text-[10px]"
+                    onClick={() => { onDelete(event); setConfirmDelete(false); }}
+                  >
+                    Delete
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-5 px-1.5 text-[10px]"
+                    onClick={() => setConfirmDelete(false)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Content */}

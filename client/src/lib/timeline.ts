@@ -31,6 +31,9 @@ export interface TimelineEvent {
   // Snapshot download
   snapshotId?: number;
 
+  // Assignment specific (for deletion)
+  assignmentId?: number;
+
   // Metadata
   source?: "live" | "mock" | "derived";
 }
@@ -362,6 +365,7 @@ export function buildTimelineEvents(
           timestamp: parsedDate || "",
           content,
           author: a.assignedByInitials,
+          assignmentId: a.id,
           source: "derived",
         });
       });

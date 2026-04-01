@@ -50,7 +50,7 @@ import {
   RefreshCw,
   Download,
 } from "lucide-react";
-import { getContactSnapshot, updateContactStatus, addNoteToContact, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, syncContactFromExcel, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
+import { getContactSnapshot, updateContactStatus, addNoteToContact, deleteNote, deleteAssignment as deleteAssignmentApi, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, syncContactFromExcel, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
 import { ReminderModal } from "@/components/ui/reminder-modal";
 import { AssignProviderModal } from "@/components/ui/assign-provider-modal";
 import { SendEmailModal } from "@/components/ui/send-email-modal";
@@ -59,7 +59,7 @@ import { useDataSource } from "@/lib/data-source-context";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import type { ContactSnapshot, WaitlistContact } from "@shared/schema";
-import { buildTimelineEvents, formatFullDate, type EmailSnapshotMeta } from "@/lib/timeline";
+import { buildTimelineEvents, formatFullDate, type EmailSnapshotMeta, type TimelineEvent } from "@/lib/timeline";
 import { ProviderMatchingModal } from "@/components/ui/provider-matching-modal";
 import { CreateTnModal } from "@/components/ui/create-tn-modal";
 import { cn, formatDate, formatDob } from "@/lib/utils";
@@ -608,6 +608,28 @@ export default function ContactDetail() {
     }
   }, [contact, contactData?._source, snapshotsData?.snapshots, assignments]);
 
+  // Handle deleting timeline events (notes or assignments)
+  const handleDeleteTimelineEvent = async (event: TimelineEvent) => {
+    if (!contact) return;
+    try {
+      if (event.type === "note" && event.content) {
+        await deleteNote(contact.contactId, event.content);
+        toast({ title: "Note deleted" });
+      } else if (event.type === "assignment" && event.assignmentId) {
+        await deleteAssignmentApi(event.assignmentId);
+        toast({ title: "Assignment removed" });
+      } else {
+        return;
+      }
+      // Refresh data
+      queryClient.invalidateQueries({ queryKey: ["/api/contact", String(contact.contactId)] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assignments", contact.contactId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"] });
+    } catch (err) {
+      toast({ title: "Failed to delete", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
+    }
+  };
+
   // Derive "Last Contact" date from most recent note in timeline
   // Falls back to contact.lastContact if no timeline notes exist
   const derivedLastContact = useMemo(() => {
@@ -937,7 +959,7 @@ export default function ContactDetail() {
 
                 {/* Contact Timeline (wrapped in error boundary) */}
                 <TimelineErrorBoundary contactName={displayName}>
-                  <Timeline events={timelineEvents} />
+                  <Timeline events={timelineEvents} onDeleteEvent={handleDeleteTimelineEvent} />
                 </TimelineErrorBoundary>
               </CardContent>
             </Card>
