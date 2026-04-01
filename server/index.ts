@@ -34,6 +34,17 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
+// CORS: allow intake form (and other cross-origin clients) to reach /api/*
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 // CRITICAL: Prevent ALL caching for API routes
 // This prevents 304 responses that could serve stale fallback data
 app.use("/api", (_req, res, next) => {
