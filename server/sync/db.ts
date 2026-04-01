@@ -657,6 +657,75 @@ export function getSyncContactCount(): number {
 }
 
 // ============================================================================
+// Direct Intake Operations (bypasses n8n/Excel entirely)
+// ============================================================================
+
+/**
+ * Generate a unique contact_id for direct-intake contacts.
+ * Uses 900_000+ range to avoid collision with n8n-sourced IDs (typically < 100k).
+ */
+export function generateIntakeContactId(): number {
+  const db = getDatabase();
+  const row = db.prepare(
+    `SELECT MAX(contact_id) as maxId FROM sync_contacts WHERE contact_id >= 900000`
+  ).get() as { maxId: number | null };
+  return (row.maxId ?? 899999) + 1;
+}
+
+/**
+ * Insert a new contact created via /api/intake.
+ * Writes directly to sync_contacts — no n8n, no Excel.
+ */
+export function insertIntakeContact(fields: {
+  contactId: number;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  notes?: string | null;
+  serviceRequested?: string | null;
+  modality?: string | null;
+  city?: string | null;
+}): void {
+  const db = getDatabase();
+  const now = new Date().toISOString();
+  const today = now.split("T")[0];
+
+  const lastNote = fields.notes
+    ? `STG ${now}\n${fields.notes}`
+    : null;
+
+  db.prepare(`
+    INSERT INTO sync_contacts (
+      contact_id, name, email, phone,
+      status, status_code, service_requested, modality, city,
+      date_added, days_on_waitlist, assigned_to,
+      last_contact, last_note,
+      synced_at, sync_hash
+    ) VALUES (
+      ?, ?, ?, ?,
+      'New', 0, ?, ?, ?,
+      ?, 0, NULL,
+      ?, ?,
+      datetime('now'), ?
+    )
+  `).run(
+    fields.contactId,
+    fields.name,
+    fields.email || null,
+    fields.phone || null,
+    fields.serviceRequested || null,
+    fields.modality || null,
+    fields.city || null,
+    today,
+    today,
+    lastNote,
+    `intake-${fields.contactId}`,
+  );
+
+  console.log(`[sync-db] Intake contact inserted: ${fields.contactId} (${fields.name})`);
+}
+
+// ============================================================================
 // Write-Through Operations
 // ============================================================================
 

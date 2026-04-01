@@ -32,6 +32,8 @@ import {
   appendSyncContactNote,
   enrichSyncContact,
   upsertSingleContact,
+  generateIntakeContactId,
+  insertIntakeContact,
   type SyncPayloadContact,
 } from "./sync/db";
 import * as XLSX from "xlsx";
@@ -62,8 +64,12 @@ function shouldReadFromSync(): boolean {
   if (READ_SOURCE === "n8n") return false;
   if (READ_SOURCE === "sync") return true;
   // "auto": use sync if it has enough data (>= 50 rows prevents partial-cache issues)
+  // Exception: if n8n is disabled, always prefer sync (even with few rows)
   try {
     const count = getSyncContactCount();
+    if (isN8nDisabled(WAITLIST_BOARD_URL)) {
+      return count > 0;
+    }
     if (count > 0 && count < 50) {
       console.log(`[sync] Cache has only ${count} rows — falling back to n8n (minimum 50 required)`);
       return false;
@@ -3057,6 +3063,43 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error clearing attention flag:", error);
       return res.status(500).json({ error: "Failed to clear attention flag" });
+    }
+  });
+
+  // ============================================================================
+  // Direct Intake API (Form → CRM DB, no Excel/n8n in the path)
+  // ============================================================================
+
+  app.post("/api/intake", async (req, res) => {
+    try {
+      const { name, email, phone, notes, serviceRequested, modality, city } = req.body;
+
+      if (!name || typeof name !== "string" || !name.trim()) {
+        return res.status(400).json({ error: "name is required" });
+      }
+
+      const contactId = generateIntakeContactId();
+
+      insertIntakeContact({
+        contactId,
+        name: name.trim(),
+        email: email?.trim() || null,
+        phone: phone?.trim() || null,
+        notes: notes?.trim() || null,
+        serviceRequested: serviceRequested?.trim() || null,
+        modality: modality?.trim() || null,
+        city: city?.trim() || null,
+      });
+
+      boardCache = null;
+
+      console.log(`[INTAKE] New contact created: ${contactId} (${name.trim()})`);
+
+      return res.json({ success: true, contactId });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Intake failed";
+      console.error("[INTAKE] Error:", message);
+      return res.status(500).json({ error: message });
     }
   });
 
