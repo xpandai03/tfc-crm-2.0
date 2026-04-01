@@ -8,6 +8,7 @@ interface TimelineProps {
   events: TimelineEvent[];
   isLoading?: boolean;
   className?: string;
+  onDeleteEvent?: (event: TimelineEvent) => void;
 }
 
 function TimelineSkeleton() {
@@ -44,7 +45,7 @@ function EmptyTimeline() {
   );
 }
 
-export function Timeline({ events, isLoading, className }: TimelineProps) {
+export function Timeline({ events, isLoading, className, onDeleteEvent }: TimelineProps) {
   if (isLoading) {
     return <TimelineSkeleton />;
   }
@@ -83,7 +84,7 @@ export function Timeline({ events, isLoading, className }: TimelineProps) {
                 {/* Connecting dot on the timeline */}
                 <div className="absolute left-[-21px] top-3 w-1.5 h-1.5 rounded-full bg-muted-foreground/40" />
 
-                <TimelineEventCard event={event} />
+                <TimelineEventCard event={event} onDelete={onDeleteEvent} />
               </div>
             ))}
           </div>

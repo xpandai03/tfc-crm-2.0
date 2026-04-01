@@ -95,6 +95,16 @@ export async function addNoteToContact(
   return response.json();
 }
 
+export async function deleteNote(contactId: number, noteContent: string): Promise<{ success: boolean }> {
+  const response = await apiRequest("POST", "/api/delete-note", { contactId, noteContent });
+  return response.json();
+}
+
+export async function deleteAssignment(assignmentId: number): Promise<{ success: boolean }> {
+  const response = await apiRequest("DELETE", `/api/assignments/${assignmentId}`);
+  return response.json();
+}
+
 export interface CreateReminderParams {
   contactId: number;
   contactName: string;

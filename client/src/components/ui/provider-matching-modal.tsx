@@ -213,10 +213,10 @@ export function ProviderMatchingModal({
           </Alert>
         )}
 
-        {/* Results - scrollable area with explicit max height */}
-        <div className="flex-1 min-h-0">
+        {/* Results - scrollable area */}
+        <div className="flex-1 min-h-0 overflow-hidden">
           {hasMatches ? (
-            <ScrollArea className="h-[calc(85vh-220px)] pr-4">
+            <ScrollArea className="h-full pr-4">
               <div className="space-y-3 pb-1">
                 {matches.map((match, index) => (
                   <ProviderMatchCard
@@ -226,6 +226,48 @@ export function ProviderMatchingModal({
                   />
                 ))}
               </div>
+
+              {/* v2 Comparison Panel (dev only — inside scroll area) */}
+              {v2Results && v2Results.matches.length > 0 && (
+                <div className="mt-3 rounded-md border border-dashed border-violet-300 dark:border-violet-700 bg-violet-50/50 dark:bg-violet-950/20 px-3 py-2 text-[10px] font-mono text-violet-700 dark:text-violet-300 space-y-1">
+                  <div className="font-semibold text-[11px]">v2 Shadow Comparison</div>
+                  <div className="grid grid-cols-2 gap-x-4">
+                    <div>
+                      <span className="text-violet-500">v1 #1:</span>{" "}
+                      {matches[0]?.provider.name ?? "—"}{" "}
+                      <span className="text-violet-400">({matches[0]?.score ?? 0})</span>
+                    </div>
+                    <div>
+                      <span className="text-violet-500">v2 #1:</span>{" "}
+                      {v2Results.matches[0]?.provider.name ?? "—"}{" "}
+                      <span className="text-violet-400">({v2Results.matches[0]?.score ?? 0})</span>
+                    </div>
+                    <div>
+                      <span className="text-violet-500">v1 #2:</span>{" "}
+                      {matches[1]?.provider.name ?? "—"}{" "}
+                      <span className="text-violet-400">({matches[1]?.score ?? 0})</span>
+                    </div>
+                    <div>
+                      <span className="text-violet-500">v2 #2:</span>{" "}
+                      {v2Results.matches[1]?.provider.name ?? "—"}{" "}
+                      <span className="text-violet-400">({v2Results.matches[1]?.score ?? 0})</span>
+                    </div>
+                    <div>
+                      <span className="text-violet-500">v1 #3:</span>{" "}
+                      {matches[2]?.provider.name ?? "—"}{" "}
+                      <span className="text-violet-400">({matches[2]?.score ?? 0})</span>
+                    </div>
+                    <div>
+                      <span className="text-violet-500">v2 #3:</span>{" "}
+                      {v2Results.matches[2]?.provider.name ?? "—"}{" "}
+                      <span className="text-violet-400">({v2Results.matches[2]?.score ?? 0})</span>
+                    </div>
+                  </div>
+                  <div className="text-violet-400 pt-0.5">
+                    Context: {formatContextSummaryV2(v2Results.context)}
+                  </div>
+                </div>
+              )}
             </ScrollArea>
           ) : (
             <div className="flex flex-col items-center justify-center py-12 text-center">
@@ -240,48 +282,6 @@ export function ProviderMatchingModal({
             </div>
           )}
         </div>
-
-        {/* v2 Comparison Panel (dev only — not user-facing) */}
-        {v2Results && v2Results.matches.length > 0 && (
-          <div className="flex-shrink-0 rounded-md border border-dashed border-violet-300 dark:border-violet-700 bg-violet-50/50 dark:bg-violet-950/20 px-3 py-2 text-[10px] font-mono text-violet-700 dark:text-violet-300 space-y-1">
-            <div className="font-semibold text-[11px]">v2 Shadow Comparison</div>
-            <div className="grid grid-cols-2 gap-x-4">
-              <div>
-                <span className="text-violet-500">v1 #1:</span>{" "}
-                {matches[0]?.provider.name ?? "—"}{" "}
-                <span className="text-violet-400">({matches[0]?.score ?? 0})</span>
-              </div>
-              <div>
-                <span className="text-violet-500">v2 #1:</span>{" "}
-                {v2Results.matches[0]?.provider.name ?? "—"}{" "}
-                <span className="text-violet-400">({v2Results.matches[0]?.score ?? 0})</span>
-              </div>
-              <div>
-                <span className="text-violet-500">v1 #2:</span>{" "}
-                {matches[1]?.provider.name ?? "—"}{" "}
-                <span className="text-violet-400">({matches[1]?.score ?? 0})</span>
-              </div>
-              <div>
-                <span className="text-violet-500">v2 #2:</span>{" "}
-                {v2Results.matches[1]?.provider.name ?? "—"}{" "}
-                <span className="text-violet-400">({v2Results.matches[1]?.score ?? 0})</span>
-              </div>
-              <div>
-                <span className="text-violet-500">v1 #3:</span>{" "}
-                {matches[2]?.provider.name ?? "—"}{" "}
-                <span className="text-violet-400">({matches[2]?.score ?? 0})</span>
-              </div>
-              <div>
-                <span className="text-violet-500">v2 #3:</span>{" "}
-                {v2Results.matches[2]?.provider.name ?? "—"}{" "}
-                <span className="text-violet-400">({v2Results.matches[2]?.score ?? 0})</span>
-              </div>
-            </div>
-            <div className="text-violet-400 pt-0.5">
-              Context: {formatContextSummaryV2(v2Results.context)}
-            </div>
-          </div>
-        )}
 
         {/* Footer */}
         <div className="flex-shrink-0 pt-4 border-t flex items-center justify-between">

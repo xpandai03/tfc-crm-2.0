@@ -18,7 +18,7 @@ import {
 } from "./therapy-notes";
 import type { TnAgentPayload, TnAgentResponse } from "./therapy-notes";
 import { saveEmailSnapshot, getEmailSnapshot, getSnapshotsForContact } from "./email-snapshots";
-import { createAssignment, getAssignmentsByContact } from "./assignments/db";
+import { createAssignment, getAssignmentsByContact, deleteAssignment } from "./assignments/db";
 import {
   syncContacts as syncContactsToDb,
   recordSyncError,
@@ -30,6 +30,7 @@ import {
   updateSyncContactStatus,
   updateSyncContactAssignment,
   appendSyncContactNote,
+  removeSyncContactNote,
   enrichSyncContact,
   upsertSingleContact,
   generateIntakeContactId,
@@ -3432,6 +3433,46 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error creating assignment:", error);
       return res.status(500).json({ error: "Failed to create assignment" });
+    }
+  });
+
+  // Delete a provider assignment
+  app.delete("/api/assignments/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) {
+        return res.status(400).json({ error: "id must be a number" });
+      }
+      const deleted = deleteAssignment(id);
+      if (!deleted) {
+        return res.status(404).json({ error: "Assignment not found" });
+      }
+      return res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting assignment:", error);
+      return res.status(500).json({ error: "Failed to delete assignment" });
+    }
+  });
+
+  // Delete a note from a contact's timeline
+  app.post("/api/delete-note", async (req, res) => {
+    try {
+      const { contactId, noteContent } = req.body;
+      if (!contactId || typeof contactId !== "number") {
+        return res.status(400).json({ error: "contactId (number) is required" });
+      }
+      if (!noteContent || typeof noteContent !== "string") {
+        return res.status(400).json({ error: "noteContent (string) is required" });
+      }
+      const removed = removeSyncContactNote(contactId, noteContent);
+      if (!removed) {
+        return res.status(404).json({ error: "Note not found" });
+      }
+      boardCache = null;
+      return res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting note:", error);
+      return res.status(500).json({ error: "Failed to delete note" });
     }
   });
 

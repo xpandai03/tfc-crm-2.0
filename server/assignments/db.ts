@@ -140,3 +140,17 @@ export function getLatestAssignment(contactId: number): ProviderAssignment | nul
 
   return (stmt.get(contactId) as ProviderAssignment) || null;
 }
+
+/**
+ * Delete an assignment by ID
+ */
+export function deleteAssignment(assignmentId: number): boolean {
+  const db = getDatabase();
+  const result = db.prepare(
+    `DELETE FROM contact_provider_assignments WHERE id = ?`
+  ).run(assignmentId);
+  if (result.changes > 0) {
+    console.log(`[assignments-db] Deleted assignment ${assignmentId}`);
+  }
+  return result.changes > 0;
+}

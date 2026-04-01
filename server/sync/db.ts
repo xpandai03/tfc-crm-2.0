@@ -864,6 +864,40 @@ export function appendSyncContactNote(
 }
 
 /**
+ * Remove a note block from a contact's last_note field.
+ * Notes are stored as a concatenated text blob.
+ * Matches by finding the noteContent substring and removing it.
+ */
+export function removeSyncContactNote(
+  contactId: number,
+  noteContent: string
+): boolean {
+  const db = getDatabase();
+  const existing = db.prepare(
+    `SELECT last_note FROM sync_contacts WHERE contact_id = ?`
+  ).get(contactId) as { last_note: string | null } | undefined;
+
+  if (!existing?.last_note) return false;
+
+  const trimmed = noteContent.trim();
+  if (!existing.last_note.includes(trimmed)) return false;
+
+  // Remove the matched content and clean up whitespace
+  const updated = existing.last_note
+    .replace(trimmed, "")
+    .replace(/\n{3,}/g, "\n\n") // collapse multiple blank lines
+    .trim() || null;
+
+  db.prepare(`
+    UPDATE sync_contacts
+    SET last_note = ?, synced_at = datetime('now')
+    WHERE contact_id = ?
+  `).run(updated, contactId);
+
+  return true;
+}
+
+/**
  * Enrich a sync contact with detailed data (from n8n contact snapshot).
  * Updates only non-null fields — preserves existing board data.
  */
