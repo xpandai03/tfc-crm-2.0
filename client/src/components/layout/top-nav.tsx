@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Home, Users, BarChart3, UserCheck } from "lucide-react";
+import { Home, Users, BarChart3, UserCheck, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDataSource } from "@/lib/data-source-context";
 import { UserMenu } from "./user-menu";
@@ -9,6 +9,7 @@ const navItems = [
   { href: "/waitlist", label: "Waitlist", icon: Users },
   { href: "/insights", label: "Insights", icon: BarChart3 },
   { href: "/providers", label: "Providers", icon: UserCheck, beta: true },
+  { href: "/submissions", label: "Submissions", icon: FileText },
 ];
 
 // Format relative time for last sync

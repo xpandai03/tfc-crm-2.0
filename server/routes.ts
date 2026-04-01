@@ -34,6 +34,8 @@ import {
   upsertSingleContact,
   generateIntakeContactId,
   insertIntakeContact,
+  insertFormSubmission,
+  getRecentSubmissions,
   type SyncPayloadContact,
 } from "./sync/db";
 import * as XLSX from "xlsx";
@@ -3098,6 +3100,18 @@ export async function registerRoutes(
       if (s(b.notes)) lines.push(`Notes: ${s(b.notes)}`);
       const lastNote = lines.join("\n");
 
+      // Immutable audit log — capture raw submission before any processing
+      try {
+        insertFormSubmission({
+          source: "rfs",
+          contactId,
+          name: b.name.trim(),
+          payload: b,
+        });
+      } catch (err) {
+        console.error("[INTAKE] Failed to log form submission (non-fatal):", err);
+      }
+
       insertIntakeContact({
         contactId,
         name: b.name.trim(),
@@ -3661,6 +3675,20 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[therapy-notes] Error in create endpoint:", error);
       return res.status(500).json({ error: "Failed to start TherapyNotes creation" });
+    }
+  });
+
+  // ============================================================================
+  // Submissions API (immutable audit log)
+  // ============================================================================
+
+  app.get("/api/submissions", async (_req, res) => {
+    try {
+      const submissions = getRecentSubmissions(50);
+      return res.json({ submissions });
+    } catch (error) {
+      console.error("[submissions] Error fetching submissions:", error);
+      return res.status(500).json({ error: "Failed to fetch submissions" });
     }
   });
 

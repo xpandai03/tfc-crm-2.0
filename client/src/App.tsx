@@ -10,6 +10,7 @@ import Waitlist from "@/pages/waitlist";
 import ContactDetail from "@/pages/contact-detail";
 import Insights from "@/pages/insights";
 import Providers from "@/pages/providers";
+import Submissions from "@/pages/submissions";
 import Login from "@/pages/login";
 import NotFound from "@/pages/not-found";
 
@@ -21,6 +22,7 @@ function Router() {
       <Route path="/contact/:id" component={ContactDetail} />
       <Route path="/insights" component={Insights} />
       <Route path="/providers" component={Providers} />
+      <Route path="/submissions" component={Submissions} />
       <Route component={NotFound} />
     </Switch>
   );
