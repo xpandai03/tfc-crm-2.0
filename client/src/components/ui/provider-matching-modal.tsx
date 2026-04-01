@@ -24,6 +24,10 @@ import {
   computeProviderMatches,
   formatContextSummary,
 } from "@/lib/provider-matching";
+import {
+  computeProviderMatchesV2,
+  formatContextSummaryV2,
+} from "@/lib/provider-matching-v2";
 import { useProviders } from "@/lib/provider-api";
 import { isInsuranceAcceptedByTFC, normalizeInsurance } from "@/lib/insurance-utils";
 import type { ContactSnapshot } from "@shared/schema";
@@ -45,9 +49,47 @@ export function ProviderMatchingModal({
   // Compute matches when contact or providers change
   const matchResults = useMemo(() => {
     if (!contact) return null;
-    // Pass providers to matching algorithm (uses live data with insurance)
     return computeProviderMatches(contact, providers);
   }, [contact, providers]);
+
+  // v2 shadow run — comparison only, not displayed to users
+  const v2Results = useMemo(() => {
+    if (!contact) return null;
+    return computeProviderMatchesV2(contact, providers);
+  }, [contact, providers]);
+
+  // Log comparison when both results are available
+  useMemo(() => {
+    if (!matchResults || !v2Results || !contact) return;
+    const v1Top = matchResults.matches.slice(0, 5).map((m) => ({
+      name: m.provider.name,
+      score: m.score,
+      tier: m.tier,
+    }));
+    const v2Top = v2Results.matches.slice(0, 5).map((m) => ({
+      name: m.provider.name,
+      score: m.score,
+      tier: m.tier,
+    }));
+    const v1Names = v1Top.map((m) => m.name);
+    const v2Names = v2Top.map((m) => m.name);
+    const topChanged = v1Names[0] !== v2Names[0];
+    const orderChanged = v1Names.join(",") !== v2Names.join(",");
+    console.log(
+      `%c[MATCHING COMPARISON] ${contact.name}`,
+      topChanged ? "color: #ef4444; font-weight: bold" : "color: #3b82f6",
+      {
+        v1Context: formatContextSummary(matchResults.context),
+        v2Context: formatContextSummaryV2(v2Results.context),
+        v1Top5: v1Top,
+        v2Top5: v2Top,
+        topMatchChanged: topChanged,
+        orderChanged,
+        v1Warnings: matchResults.warnings,
+        v2Warnings: v2Results.warnings,
+      }
+    );
+  }, [matchResults, v2Results, contact]);
 
   // Show loading state while fetching providers
   if (isOpen && isLoading) {
@@ -198,6 +240,48 @@ export function ProviderMatchingModal({
             </div>
           )}
         </div>
+
+        {/* v2 Comparison Panel (dev only — not user-facing) */}
+        {v2Results && v2Results.matches.length > 0 && (
+          <div className="flex-shrink-0 rounded-md border border-dashed border-violet-300 dark:border-violet-700 bg-violet-50/50 dark:bg-violet-950/20 px-3 py-2 text-[10px] font-mono text-violet-700 dark:text-violet-300 space-y-1">
+            <div className="font-semibold text-[11px]">v2 Shadow Comparison</div>
+            <div className="grid grid-cols-2 gap-x-4">
+              <div>
+                <span className="text-violet-500">v1 #1:</span>{" "}
+                {matches[0]?.provider.name ?? "—"}{" "}
+                <span className="text-violet-400">({matches[0]?.score ?? 0})</span>
+              </div>
+              <div>
+                <span className="text-violet-500">v2 #1:</span>{" "}
+                {v2Results.matches[0]?.provider.name ?? "—"}{" "}
+                <span className="text-violet-400">({v2Results.matches[0]?.score ?? 0})</span>
+              </div>
+              <div>
+                <span className="text-violet-500">v1 #2:</span>{" "}
+                {matches[1]?.provider.name ?? "—"}{" "}
+                <span className="text-violet-400">({matches[1]?.score ?? 0})</span>
+              </div>
+              <div>
+                <span className="text-violet-500">v2 #2:</span>{" "}
+                {v2Results.matches[1]?.provider.name ?? "—"}{" "}
+                <span className="text-violet-400">({v2Results.matches[1]?.score ?? 0})</span>
+              </div>
+              <div>
+                <span className="text-violet-500">v1 #3:</span>{" "}
+                {matches[2]?.provider.name ?? "—"}{" "}
+                <span className="text-violet-400">({matches[2]?.score ?? 0})</span>
+              </div>
+              <div>
+                <span className="text-violet-500">v2 #3:</span>{" "}
+                {v2Results.matches[2]?.provider.name ?? "—"}{" "}
+                <span className="text-violet-400">({v2Results.matches[2]?.score ?? 0})</span>
+              </div>
+            </div>
+            <div className="text-violet-400 pt-0.5">
+              Context: {formatContextSummaryV2(v2Results.context)}
+            </div>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="flex-shrink-0 pt-4 border-t flex items-center justify-between">

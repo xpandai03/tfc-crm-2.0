@@ -248,6 +248,20 @@ export function initSyncTables(): void {
     INSERT OR IGNORE INTO sync_meta (id) VALUES (1);
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS form_submissions (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      source      TEXT NOT NULL DEFAULT 'rfs',
+      contact_id  INTEGER,
+      name        TEXT NOT NULL,
+      payload     TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_form_submissions_created
+      ON form_submissions(created_at DESC);
+  `);
+
   console.log("[sync-db] Sync tables initialized");
 }
 
@@ -1073,4 +1087,56 @@ export function upsertSingleContact(contact: SyncPayloadContact): void {
   );
 
   console.log(`[sync-db] Upserted single contact ${id} (no delete of other rows)`);
+}
+
+// ============================================================================
+// Form Submissions (immutable audit log)
+// ============================================================================
+
+export interface FormSubmission {
+  id: number;
+  createdAt: string;
+  source: string;
+  contactId: number | null;
+  name: string;
+  payload: Record<string, unknown>;
+}
+
+export function insertFormSubmission(fields: {
+  source: string;
+  contactId: number;
+  name: string;
+  payload: unknown;
+}): void {
+  const db = getDatabase();
+  db.prepare(`
+    INSERT INTO form_submissions (source, contact_id, name, payload)
+    VALUES (?, ?, ?, ?)
+  `).run(
+    fields.source,
+    fields.contactId,
+    fields.name,
+    JSON.stringify(fields.payload),
+  );
+}
+
+export function getRecentSubmissions(limit: number = 50): FormSubmission[] {
+  const db = getDatabase();
+  const rows = db.prepare(`
+    SELECT
+      id,
+      created_at  AS createdAt,
+      source,
+      contact_id  AS contactId,
+      name,
+      payload
+    FROM form_submissions
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(limit) as Array<Omit<FormSubmission, "payload"> & { payload: string }>;
+
+  return rows.map((r) => ({
+    ...r,
+    payload: JSON.parse(r.payload),
+  }));
 }
