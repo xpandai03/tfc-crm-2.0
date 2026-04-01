@@ -93,16 +93,24 @@ export function PriorityCard({
   // Intake decision data for hover display
   const insurance = normalizeInsurance(contact?.insurancePayer);
   const modality = formatModality(contact?.modality);
-  const service = contact?.serviceRequested || "Unknown";
+  const service = (contact as any)?.requestingFor?.trim() || contact?.serviceRequested?.trim() || "Unknown";
 
-  // Format reasonForTherapy MCQ array for hover display
+  // Format reasonForTherapy MCQ for hover display (may be array or comma-separated string)
   const reasonDisplay = (() => {
-    const reasons = contact?.reasonForTherapy;
-    if (!reasons || !Array.isArray(reasons) || reasons.length === 0) return null;
-    const valid = reasons.map(r => r?.trim()).filter(Boolean);
-    if (valid.length === 0) return null;
-    if (valid.length <= 2) return valid.join(", ");
-    return `${valid[0]}, ${valid[1]} +${valid.length - 2} more`;
+    const raw: unknown = contact?.reasonForTherapy;
+    if (Array.isArray(raw) && raw.length > 0) {
+      const valid = (raw as string[]).map(r => r?.trim()).filter(Boolean);
+      if (valid.length === 0) return null;
+      if (valid.length <= 2) return valid.join(", ");
+      return `${valid[0]}, ${valid[1]} +${valid.length - 2} more`;
+    }
+    if (typeof raw === "string" && raw.trim()) {
+      const parts = raw.split(",").map(s => s.trim()).filter(Boolean);
+      if (parts.length === 0) return null;
+      if (parts.length <= 2) return parts.join(", ");
+      return `${parts[0]}, ${parts[1]} +${parts.length - 2} more`;
+    }
+    return null;
   })();
 
   // Format DOB for display — handles Excel serials, ISO, US formats
@@ -155,7 +163,7 @@ export function PriorityCard({
                   {contactName}
                 </p>
                 <p className="text-xs text-muted-foreground truncate mt-0.5">
-                  {contact?.serviceRequested || "—"}
+                  {(contact as any)?.requestingFor ?? contact?.serviceRequested ?? "—"}
                 </p>
               </div>
             </div>
