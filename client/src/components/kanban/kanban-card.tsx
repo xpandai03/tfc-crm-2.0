@@ -71,7 +71,7 @@ export function KanbanCard({ contact, currentUserEmail }: KanbanCardProps) {
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground">
-              {contact.serviceRequested}
+              {contact.requestingFor ?? contact.serviceRequested}
             </p>
             {/* Ownership row - always visible */}
             <div className="flex items-center justify-between gap-2 pt-1 border-t border-border/30">

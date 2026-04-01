@@ -126,6 +126,7 @@ export const waitlistContactSchema = z.object({
   status: z.enum(contactStatuses).optional(), // Legacy string status (deprecated)
   statusCode: z.number(), // REQUIRED - authoritative status from Excel
   serviceRequested: z.string(),
+  requestingFor: z.string().nullable().optional(), // "Myself", "My Child", "My Family", "My Partner & Myself"
   daysOnWaitlist: z.number(),
   dateAdded: z.string().nullable(),
   assignedTo: z.string().nullable().optional(), // Staff email address (e.g., "jsmith@tfc.help")
