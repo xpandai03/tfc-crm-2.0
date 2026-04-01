@@ -3072,28 +3072,71 @@ export async function registerRoutes(
 
   app.post("/api/intake", async (req, res) => {
     try {
-      const { name, email, phone, notes, serviceRequested, modality, city } = req.body;
+      const b = req.body;
 
-      if (!name || typeof name !== "string" || !name.trim()) {
+      if (!b.name || typeof b.name !== "string" || !b.name.trim()) {
         return res.status(400).json({ error: "name is required" });
       }
 
       const contactId = generateIntakeContactId();
+      const now = new Date().toISOString();
+      const s = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+
+      // reasonForTherapy may arrive as string[] from the form — join to comma-separated
+      const reasonForTherapy = Array.isArray(b.reasonForTherapy)
+        ? b.reasonForTherapy.join(", ")
+        : s(b.reasonForTherapy);
+
+      // Build readable last_note for timeline display
+      const lines: string[] = [`Intake ${now}`];
+      if (s(b.requestingFor)) lines.push(`Requesting For: ${s(b.requestingFor)}`);
+      if (s(b.reasonForSeeking)) lines.push(`Reason: ${s(b.reasonForSeeking)}`);
+      if (reasonForTherapy) lines.push(`Therapy Type: ${reasonForTherapy}`);
+      if (s(b.modality)) lines.push(`Modality: ${s(b.modality)}`);
+      if (s(b.insurancePayer)) lines.push(`Insurance: ${s(b.insurancePayer)}`);
+      if (s(b.referralSource)) lines.push(`Referral: ${s(b.referralSource)}`);
+      if (s(b.notes)) lines.push(`Notes: ${s(b.notes)}`);
+      const lastNote = lines.join("\n");
 
       insertIntakeContact({
         contactId,
-        name: name.trim(),
-        email: email?.trim() || null,
-        phone: phone?.trim() || null,
-        notes: notes?.trim() || null,
-        serviceRequested: serviceRequested?.trim() || null,
-        modality: modality?.trim() || null,
-        city: city?.trim() || null,
+        name: b.name.trim(),
+        email: s(b.email),
+        phone: s(b.phone),
+        lastNote,
+
+        serviceRequested: s(b.serviceRequested) || reasonForTherapy,
+        requestingFor: s(b.requestingFor),
+        reasonForSeeking: s(b.reasonForSeeking),
+        reasonForTherapy,
+        detailedReason: s(b.detailedReason),
+        formCompletedBy: s(b.formCompletedBy),
+        modality: s(b.modality),
+        referralSource: s(b.referralSource),
+        priorServices: s(b.priorServices),
+        priorProvider: s(b.priorProvider),
+        preferredContact: s(b.preferredContact),
+        custody: s(b.custody),
+        flags: s(b.flags),
+        priority: s(b.priority),
+
+        insurancePayer: s(b.insurancePayer),
+        insurancePlan: s(b.insurancePlan),
+        insuranceId: s(b.insuranceId),
+
+        patientDob: s(b.patientDob),
+        gender: s(b.gender),
+
+        streetAddress: s(b.streetAddress),
+        city: s(b.city),
+        state: s(b.state),
+        zipCode: s(b.zipCode),
+        county: s(b.county),
       });
 
       boardCache = null;
 
-      console.log(`[INTAKE] New contact created: ${contactId} (${name.trim()})`);
+      console.log(`[INTAKE] New contact created: ${contactId} (${b.name.trim()})`);
 
       return res.json({ success: true, contactId });
     } catch (error) {
