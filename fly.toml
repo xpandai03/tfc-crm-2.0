@@ -3,13 +3,13 @@
 #
 # See https://fly.io/docs/reference/configuration/
 
-app = 'tfc-crm-2-staging'
-primary_region = 'lax'
+app = 'tfc-crm-2-0'
+primary_region = 'sjc'
 
 [build]
 
 [mounts]
-  source = "tfc_staging_data"
+  source = "tfc_data"
   destination = "/data"
 
 [http_service]
@@ -21,7 +21,6 @@ primary_region = 'lax'
   processes = ['app']
 
 [[vm]]
-  memory = '1gb'
+  memory = '512mb'
   cpu_kind = 'shared'
   cpus = 1
-  memory_mb = 1024
