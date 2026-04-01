@@ -82,7 +82,34 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // Configure authentication (session + passport + auth routes)
+  // Staging-mode detection logging
+  const stagingIndicators: string[] = [];
+  if (!process.env.AZURE_AD_CLIENT_ID || process.env.AZURE_AD_CLIENT_ID === "disabled") {
+    stagingIndicators.push("Azure AD auth BYPASSED");
+  }
+  if (!process.env.RESEND_API_KEY) {
+    stagingIndicators.push("Resend email DISABLED");
+  }
+  if (!process.env.SYNC_API_KEY) {
+    stagingIndicators.push("Sync inbound DISABLED");
+  }
+  const isN8nOff = (url: string | undefined) => !url || url === "disabled" || url?.startsWith("http://localhost:1");
+  if (isN8nOff(process.env.N8N_GET_WAITLIST_BOARD_URL)) {
+    stagingIndicators.push("n8n webhooks DISABLED");
+  }
+  if (isN8nOff(process.env.TN_AGENT_URL) || !process.env.TN_API_KEY) {
+    stagingIndicators.push("TherapyNotes DISABLED");
+  }
+
+  if (stagingIndicators.length > 0) {
+    log("========================================", "staging");
+    log("STAGING MODE DETECTED", "staging");
+    for (const indicator of stagingIndicators) {
+      log(`  → ${indicator}`, "staging");
+    }
+    log("========================================", "staging");
+  }
+
   configureAuth(app);
 
   // Apply auth middleware to protect all routes except /auth/*

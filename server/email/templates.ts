@@ -57,8 +57,9 @@ export function extractFirstName(fullName: string | null | undefined): string {
  * - Layout: Table-based for email client safety
  */
 
-// Production-hosted logo URL for email rendering
-const LOGO_URL = "https://tfc-crm-2026.fly.dev/tfc-logo.jpg";
+const APP_URL = process.env.APP_URL || "https://tfc-crm-2026.fly.dev";
+const LOGO_URL = `${APP_URL}/tfc-logo.jpg`;
+const SURVEY_URL = process.env.SURVEY_URL || "https://customer-feedback-tfc.replit.app";
 
 // Shared email wrapper for consistent branding
 function wrapEmailContent(content: string): string {
@@ -364,7 +365,7 @@ Albuquerque, New Mexico
       <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 20px 0;">
         <tr>
           <td align="center" bgcolor="#1e3a5f" style="border-radius: 6px;">
-            <a href="https://customer-feedback-tfc.replit.app" target="_blank"
+            <a href="${SURVEY_URL}" target="_blank"
                style="display: inline-block; padding: 12px 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 15px; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600;">
               Take the Survey
             </a>
@@ -388,7 +389,7 @@ Your feedback matters to us!
 
 Please take a moment to tell us about your experience by completing our brief survey. It should take about 1-2 minutes.
 
-Take the Survey: https://customer-feedback-tfc.replit.app
+Take the Survey: ${SURVEY_URL}
 
 Thank you so much for your time.
 

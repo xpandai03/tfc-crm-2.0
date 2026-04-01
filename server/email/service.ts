@@ -16,8 +16,8 @@ import {
 } from "./templates";
 import { getProviderEmail, getLocationById } from "./provider-location-config";
 
-// Initialize Resend client
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Initialize Resend client (null if key not configured — staging safety)
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 // From email configuration
 // Uses verified domain hipaacheck.ai for production sends
@@ -205,10 +205,14 @@ export async function sendTemplatedEmail(params: {
     return { success: false, error: `Template not found: ${templateId}` };
   }
 
-  // Check Resend API key
-  if (!process.env.RESEND_API_KEY) {
-    console.error("[email-service] RESEND_API_KEY not configured");
-    return { success: false, error: "Email service not configured" };
+  if (!resend) {
+    console.warn(`[staging] Email send skipped (RESEND_API_KEY not configured) — would have sent "${rendered.templateName}" to ${contact.email}`);
+    return {
+      success: true,
+      renderedHtml: rendered.bodyHtml,
+      renderedSubject: rendered.subject,
+      ccEmails: [],
+    };
   }
 
   try {
@@ -296,7 +300,7 @@ export function validateEmailServiceConfig(): {
   const warnings: string[] = [];
 
   if (!process.env.RESEND_API_KEY) {
-    warnings.push("RESEND_API_KEY not set - email sending will fail");
+    warnings.push("RESEND_API_KEY not set — outbound email disabled (staging-safe)");
   }
 
   // Log the configured sender and reply-to for debugging

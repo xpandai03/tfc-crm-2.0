@@ -51,8 +51,8 @@ const DATA_MODE: DataMode = "live";
 type ReadSource = "auto" | "sync" | "n8n";
 const READ_SOURCE: ReadSource = (process.env.READ_SOURCE as ReadSource) || "auto";
 
-// Shared secret for n8n sync endpoint authentication
-const SYNC_API_KEY = process.env.SYNC_API_KEY || "tfc-sync-2026";
+// Shared secret for n8n sync endpoint authentication (no default — must be set per environment)
+const SYNC_API_KEY = process.env.SYNC_API_KEY || "";
 
 /**
  * Check if we should read from sync cache.
@@ -223,14 +223,11 @@ function excelSerialToMMDDYYYY(serial: number): string {
 }
 
 // ============================================================================
-// HARD-LOCKED n8n URLs - NO ENV VARS FOR CRITICAL ENDPOINTS
+// n8n URLs — ALL driven by environment variables for staging isolation
 // ============================================================================
-// The waitlist board URL MUST be this exact value. No env var fallback.
-// This prevents URL resolution bugs from misconfigured environment variables.
-const WAITLIST_BOARD_URL = "https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-board";
-const WAITLIST_SUMMARY_URL = "https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-summary";
+const WAITLIST_BOARD_URL = process.env.N8N_GET_WAITLIST_BOARD_URL || "https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-board";
+const WAITLIST_SUMMARY_URL = process.env.N8N_GET_WAITLIST_SUMMARY_URL || "https://n8n-familyconnection.agentglu.agency/webhook/get-waitlist-summary";
 
-// Other n8n endpoints (less critical, can use env vars)
 const N8N_ENDPOINTS = {
   contactSnapshot: process.env.N8N_GET_CONTACT_SNAPSHOT_URL || "https://n8n-familyconnection.agentglu.agency/webhook/get-contact-snapshot",
   updateStatus: process.env.N8N_UPDATE_CONTACT_STATUS_URL || "https://n8n-familyconnection.agentglu.agency/webhook/update-contact-status",
@@ -238,6 +235,22 @@ const N8N_ENDPOINTS = {
   assignContact: process.env.N8N_ASSIGN_CONTACT_URL || "https://n8n-familyconnection.agentglu.agency/webhook/assign-contact",
   unassignContact: process.env.N8N_UNASSIGN_CONTACT_URL || "https://n8n-familyconnection.agentglu.agency/webhook/f4414c29-2ae4-4ca3-b400-d6da62ff7812",
 } as const;
+
+function isN8nDisabled(url: string): boolean {
+  return !url || url === "disabled" || url.startsWith("http://localhost:1");
+}
+
+async function safeFetchN8n(
+  url: string,
+  label: string,
+  options: RequestInit,
+): Promise<Response | null> {
+  if (isN8nDisabled(url)) {
+    console.warn(`[staging] Skipping n8n call: ${label} (URL disabled or not configured)`);
+    return null;
+  }
+  return fetch(url, options);
+}
 
 // TherapyNotes integration constants
 const TN_ALLOWED_EMAILS = [
@@ -250,7 +263,7 @@ const TN_ALLOWED_EMAILS = [
   "sandra@tfc.health",
 ];
 const TN_AGENT_URL =
-  "https://axiom-browser-agent-clone-production.up.railway.app/api/tn/create-patient";
+  process.env.TN_AGENT_URL || "https://axiom-browser-agent-clone-production.up.railway.app/api/tn/create-patient";
 
 function parseName(fullName: string): { firstName: string; lastName: string } {
   const parts = fullName.trim().split(/\s+/);
@@ -3054,7 +3067,10 @@ export async function registerRoutes(
   // n8n pushes full Excel snapshot to this endpoint on a cron schedule
   app.post("/api/sync/contacts", async (req, res) => {
     try {
-      // Authenticate with shared secret
+      if (!SYNC_API_KEY) {
+        console.warn("[staging] /api/sync/contacts blocked — SYNC_API_KEY not configured");
+        return res.status(503).json({ error: "Sync not configured for this environment" });
+      }
       const apiKey = req.headers["x-sync-key"] as string;
       if (apiKey !== SYNC_API_KEY) {
         return res.status(401).json({ error: "Invalid sync key" });
@@ -3099,9 +3115,12 @@ export async function registerRoutes(
   // Frontend-triggered full sync (fetches from n8n, updates SQLite cache)
   app.post("/api/sync/trigger", async (_req, res) => {
     try {
+      if (isN8nDisabled(WAITLIST_BOARD_URL)) {
+        console.warn("[staging] /api/sync/trigger skipped — n8n disabled");
+        return res.json({ success: true, synced: 0, skipped: 0, deleted: 0, durationMs: 0, totalContacts: 0, stagingSkipped: true });
+      }
       console.log("[sync-trigger] Frontend-triggered full sync starting...");
 
-      // Fetch all contacts from n8n
       const response = await fetch(WAITLIST_BOARD_URL, {
         method: "POST",
         headers: {
@@ -3162,9 +3181,13 @@ export async function registerRoutes(
         return res.status(400).json({ error: "contactId must be a number" });
       }
 
+      if (isN8nDisabled(WAITLIST_BOARD_URL)) {
+        console.warn(`[staging] Manual sync for contact ${contactId} skipped — n8n disabled`);
+        return res.json({ success: true, stagingSkipped: true });
+      }
+
       console.log(`[sync] Manual sync for contact ${contactId}`);
 
-      // Step 1: Fetch board data to get base record
       let boardContact: Record<string, unknown> | null = null;
       try {
         const boardResponse = await fetch(WAITLIST_BOARD_URL, {
@@ -3461,7 +3484,12 @@ export async function registerRoutes(
           console.log(`[TN DEBUG] API key length:`, process.env.TN_API_KEY?.length ?? 0);
           console.log(`[TN PAYLOAD]`, JSON.stringify(payload));
 
-          // Call TN agent
+          if (isN8nDisabled(TN_AGENT_URL) || !process.env.TN_API_KEY) {
+            console.warn("[staging] TherapyNotes create-patient skipped — TN_AGENT_URL or TN_API_KEY not configured");
+            updateTnStatus(contactId, "failed", { failureReason: "TherapyNotes disabled in this environment" });
+            return res.json({ success: false, error: "TherapyNotes not configured for this environment" });
+          }
+
           let tnResponse: Response;
           try {
             tnResponse = await fetch(TN_AGENT_URL, {
