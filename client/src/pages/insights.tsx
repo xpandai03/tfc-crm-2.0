@@ -227,10 +227,10 @@ export default function Insights() {
       }).length;
     }
 
-    // Service type distribution (active only)
+    // Service type distribution (active only) — grouped by requestingFor (WHO), not reason (WHAT)
     const serviceTypes: Record<string, number> = {};
     for (const c of activeContacts) {
-      const service = c.serviceRequested || "Unknown";
+      const service = (c as any).requestingFor?.trim() || "Unknown";
       serviceTypes[service] = (serviceTypes[service] || 0) + 1;
     }
 
