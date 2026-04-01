@@ -6,6 +6,7 @@ import { Link } from "wouter";
 import { Check, Shield, FileText, Video, Brain, Cake } from "lucide-react";
 import { normalizeInsurance } from "@/lib/insurance-utils";
 import type { WaitlistContact } from "@shared/schema";
+import { computeDaysWaiting } from "@/lib/days-waiting";
 
 interface PriorityCardProps {
   contact: WaitlistContact;
@@ -79,7 +80,7 @@ export function PriorityCard({
   // Defensive: guard against missing contact data
   const contactName = contact?.name || "Unknown";
   const contactId = contact?.contactId;
-  const days = contact?.daysOnWaitlist || 0;
+  const days = computeDaysWaiting(contact?.dateAdded, contact?.daysOnWaitlist);
   const urgency = getUrgencyLevel(days);
   const isTopPriority = position === 1;
   const testIdSlug = contactName.toLowerCase().replace(/\s+/g, '-');

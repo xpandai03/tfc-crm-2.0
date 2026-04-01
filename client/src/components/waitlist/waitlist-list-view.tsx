@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { computeDaysWaiting } from "@/lib/days-waiting";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
@@ -285,7 +286,7 @@ export function WaitlistListView({
 
       switch (sortField) {
         case "daysOnWaitlist":
-          comparison = (a.daysOnWaitlist || 0) - (b.daysOnWaitlist || 0);
+          comparison = computeDaysWaiting(a.dateAdded, a.daysOnWaitlist) - computeDaysWaiting(b.dateAdded, b.daysOnWaitlist);
           break;
         case "dateAdded":
           const dateA = a.dateAdded ? new Date(a.dateAdded).getTime() : 0;
@@ -552,17 +553,20 @@ export function WaitlistListView({
                       </div>
                     </TableCell>
                     <TableCell>
-                      <span
-                        className={cn(
-                          "font-medium",
-                          !isInactive && (contact.daysOnWaitlist || 0) >= 60 && "text-red-600 dark:text-red-400",
-                          !isInactive && (contact.daysOnWaitlist || 0) >= 30 &&
-                            (contact.daysOnWaitlist || 0) < 60 &&
-                            "text-amber-600 dark:text-amber-400"
-                        )}
-                      >
-                        {contact.daysOnWaitlist || 0}
-                      </span>
+                      {(() => {
+                        const dw = computeDaysWaiting(contact.dateAdded, contact.daysOnWaitlist);
+                        return (
+                          <span
+                            className={cn(
+                              "font-medium",
+                              !isInactive && dw >= 60 && "text-red-600 dark:text-red-400",
+                              !isInactive && dw >= 30 && dw < 60 && "text-amber-600 dark:text-amber-400"
+                            )}
+                          >
+                            {dw}
+                          </span>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {contact.serviceRequested || "—"}

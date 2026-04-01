@@ -202,6 +202,29 @@ function deriveDateAddedFromDays(daysOnWaitlist: unknown): string | null {
   return date.toISOString().split("T")[0];
 }
 
+/** Compute days waiting dynamically from dateAdded, falling back to static daysOnWaitlist. */
+function computeDaysWaitingServer(dateAdded: string | null | undefined, fallback?: number | null): number {
+  if (dateAdded) {
+    const isoMatch = dateAdded.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    const usMatch = dateAdded.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    let added: Date | null = null;
+    if (isoMatch) {
+      added = new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
+    } else if (usMatch) {
+      added = new Date(Number(usMatch[3]), Number(usMatch[1]) - 1, Number(usMatch[2]));
+    }
+    if (added && !isNaN(added.getTime())) {
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const addedDay = new Date(added.getFullYear(), added.getMonth(), added.getDate());
+      const diffMs = today.getTime() - addedDay.getTime();
+      if (diffMs < 0) return 0;
+      return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    }
+  }
+  return fallback ?? 0;
+}
+
 function normalizeOrReconstructDateAdded(
   dateValue: unknown,
   daysOnWaitlist: unknown,
@@ -616,7 +639,7 @@ export async function registerRoutes(
               umbrella,
               status: syncContact.status || "intake",
               serviceRequested: syncContact.serviceRequested || "Unknown",
-              daysOnWaitlist: syncContact.daysOnWaitlist ?? 0,
+              daysOnWaitlist: computeDaysWaitingServer(syncContact.dateAdded, syncContact.daysOnWaitlist),
               patientDob: normalizeExcelDate(syncContact.patientDob),
               dateAdded: normalizeOrReconstructDateAdded(syncContact.dateAdded, syncContact.daysOnWaitlist, syncContact.contactId),
               notes,
@@ -700,7 +723,7 @@ export async function registerRoutes(
                 umbrella,
                 status: syncContact.status || "intake",
                 serviceRequested: syncContact.serviceRequested || "Unknown",
-                daysOnWaitlist: syncContact.daysOnWaitlist ?? 0,
+                daysOnWaitlist: computeDaysWaitingServer(syncContact.dateAdded, syncContact.daysOnWaitlist),
                 dateAdded: normalizeOrReconstructDateAdded(syncContact.dateAdded, syncContact.daysOnWaitlist, syncContact.contactId),
                 lastContact: normalizeExcelDate(detailed.lastContact),
                 assignedTo,
@@ -728,7 +751,7 @@ export async function registerRoutes(
             umbrella,
             status: syncContact.status || "intake",
             serviceRequested: syncContact.serviceRequested || "Unknown",
-            daysOnWaitlist: syncContact.daysOnWaitlist ?? 0,
+            daysOnWaitlist: computeDaysWaitingServer(syncContact.dateAdded, syncContact.daysOnWaitlist),
             dateAdded: normalizeOrReconstructDateAdded(syncContact.dateAdded, syncContact.daysOnWaitlist, syncContact.contactId),
             notes: [],
             _source: "sync",
@@ -900,7 +923,7 @@ export async function registerRoutes(
 
             // Waitlist tracking fields (dates normalized from Excel serial - Phase 6.4)
             serviceRequested: contact.serviceRequested || (detailed.requestingFor as string) || "Unknown",
-            daysOnWaitlist: contact.daysOnWaitlist ?? 0,
+            daysOnWaitlist: computeDaysWaitingServer(contact.dateAdded as string | null, contact.daysOnWaitlist as number | null),
             dateAdded: normalizeOrReconstructDateAdded(contact.dateAdded, contact.daysOnWaitlist, Number(contact.contactId)),
             lastContact: normalizeExcelDate(detailed.lastContact),
 
@@ -1502,7 +1525,7 @@ export async function registerRoutes(
         });
 
         const waitDays = activeContacts
-          .map((c) => c.daysOnWaitlist ?? 0)
+          .map((c) => computeDaysWaitingServer(c.dateAdded, c.daysOnWaitlist))
           .filter((d) => d > 0);
         const avgWaitDays = waitDays.length > 0
           ? Math.round(waitDays.reduce((a, b) => a + b, 0) / waitDays.length)
@@ -1511,15 +1534,15 @@ export async function registerRoutes(
         let longestWaitDays = 0;
         let longestWaitingName = "---";
         for (const c of activeContacts) {
-          const d = c.daysOnWaitlist ?? 0;
+          const d = computeDaysWaitingServer(c.dateAdded, c.daysOnWaitlist);
           if (d > longestWaitDays) {
             longestWaitDays = d;
             longestWaitingName = c.name;
           }
         }
 
-        const over30Days = activeContacts.filter((c) => (c.daysOnWaitlist ?? 0) > 30).length;
-        const over60Days = activeContacts.filter((c) => (c.daysOnWaitlist ?? 0) > 60).length;
+        const over30Days = activeContacts.filter((c) => computeDaysWaitingServer(c.dateAdded, c.daysOnWaitlist) > 30).length;
+        const over60Days = activeContacts.filter((c) => computeDaysWaitingServer(c.dateAdded, c.daysOnWaitlist) > 60).length;
         const readyToSchedule = contacts.filter((c) => {
           const sc = c.statusCode ?? 0;
           return sc >= 200 && sc < 203;

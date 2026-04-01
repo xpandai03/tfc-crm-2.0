@@ -8,6 +8,7 @@
 
 import type { WaitlistContact } from "@shared/schema";
 import { isActiveStatus, stringStatusToCode, STATUS_GROUPS } from "./status-config";
+import { computeDaysWaiting } from "./days-waiting";
 
 export interface Insight {
   id: string;
@@ -50,13 +51,13 @@ function generateOutlierInsight(
 
   const activeContacts = contacts.filter(c => isActiveStatus(getStatusCode(c)));
   const outliers = activeContacts
-    .filter(c => (c.daysOnWaitlist || 0) >= avgWaitDays * 2)
-    .sort((a, b) => (b.daysOnWaitlist || 0) - (a.daysOnWaitlist || 0));
+    .filter(c => computeDaysWaiting(c.dateAdded, c.daysOnWaitlist) >= avgWaitDays * 2)
+    .sort((a, b) => computeDaysWaiting(b.dateAdded, b.daysOnWaitlist) - computeDaysWaiting(a.dateAdded, a.daysOnWaitlist));
 
   if (outliers.length === 0) return null;
 
   const longest = outliers[0];
-  const longestDays = longest.daysOnWaitlist || 0;
+  const longestDays = computeDaysWaiting(longest.dateAdded, longest.daysOnWaitlist);
   const longestName = longest.name || "Unknown";
   const longestService = longest.serviceRequested || "Unknown";
 
@@ -82,12 +83,12 @@ function generateOutlierInsight(
 function generateThresholdInsight(contacts: WaitlistContact[]): Insight | null {
   const activeContacts = contacts.filter(c => isActiveStatus(getStatusCode(c)));
   const over60 = activeContacts
-    .filter(c => (c.daysOnWaitlist || 0) >= 60)
-    .sort((a, b) => (b.daysOnWaitlist || 0) - (a.daysOnWaitlist || 0));
+    .filter(c => computeDaysWaiting(c.dateAdded, c.daysOnWaitlist) >= 60)
+    .sort((a, b) => computeDaysWaiting(b.dateAdded, b.daysOnWaitlist) - computeDaysWaiting(a.dateAdded, a.daysOnWaitlist));
 
   if (over60.length === 0) return null;
 
-  const topNames = over60.slice(0, 3).map(c => `${c.name || "Unknown"} (${c.daysOnWaitlist || 0}d)`);
+  const topNames = over60.slice(0, 3).map(c => `${c.name || "Unknown"} (${computeDaysWaiting(c.dateAdded, c.daysOnWaitlist)}d)`);
   const primaryContact = over60[0];
 
   return {
@@ -116,7 +117,7 @@ function generateServiceBottleneckInsight(contacts: WaitlistContact[]): Insight 
       serviceGroups[service] = { count: 0, totalDays: 0 };
     }
     serviceGroups[service].count++;
-    serviceGroups[service].totalDays += contact.daysOnWaitlist || 0;
+    serviceGroups[service].totalDays += computeDaysWaiting(contact.dateAdded, contact.daysOnWaitlist);
   }
 
   // Find service with highest average wait
