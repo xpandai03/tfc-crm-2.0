@@ -7,6 +7,7 @@
  */
 
 import { useMemo } from "react";
+import { computeDaysWaiting } from "@/lib/days-waiting";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
@@ -106,7 +107,7 @@ function PatientMatchCard({
 }) {
   const { contact, score, tier, reasons } = match;
   const tierStyle = tierStyles[tier];
-  const days = contact.daysOnWaitlist || 0;
+  const days = computeDaysWaiting(contact.dateAdded, contact.daysOnWaitlist);
   const urgency = getUrgencyLevel(days);
 
   // Subtitle parts

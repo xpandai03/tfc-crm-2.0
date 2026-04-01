@@ -6,6 +6,7 @@ import { Calendar, Cake } from "lucide-react";
 import type { WaitlistContact } from "@shared/schema";
 import { cn, formatDate, formatDob } from "@/lib/utils";
 import { isActiveStatus } from "@/lib/status-config";
+import { computeDaysWaiting } from "@/lib/days-waiting";
 
 interface KanbanCardProps {
   contact: WaitlistContact;
@@ -13,8 +14,9 @@ interface KanbanCardProps {
 }
 
 export function KanbanCard({ contact, currentUserEmail }: KanbanCardProps) {
-  const isUrgent = contact.daysOnWaitlist > 60;
-  const isWarning = contact.daysOnWaitlist > 30 && contact.daysOnWaitlist <= 60;
+  const daysWaiting = computeDaysWaiting(contact.dateAdded, contact.daysOnWaitlist);
+  const isUrgent = daysWaiting > 60;
+  const isWarning = daysWaiting > 30 && daysWaiting <= 60;
   const isInactive = !isActiveStatus(contact.statusCode);
 
   // DATA INTEGRITY: Log warning if contactId is missing
@@ -65,7 +67,7 @@ export function KanbanCard({ contact, currentUserEmail }: KanbanCardProps) {
                   !isInactive && isWarning && "bg-amber-500/20 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300 border-amber-500/30 dark:border-amber-500/20 shadow-amber-500/20"
                 )}
               >
-                {contact.daysOnWaitlist}d
+                {daysWaiting}d
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground">

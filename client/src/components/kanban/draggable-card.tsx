@@ -11,6 +11,7 @@ import { normalizeInsurance } from "@/lib/insurance-utils";
 import { getAttentionFlags } from "@/lib/api";
 import { Plus, Clock, Shield, Video, FileText, Brain, AlertTriangle, Cake } from "lucide-react";
 import type { WaitlistContact } from "@shared/schema";
+import { computeDaysWaiting } from "@/lib/days-waiting";
 
 /** Normalize modality/location for display (same logic as priority-card) */
 function formatModality(rawModality: string | null | undefined): string {
@@ -52,8 +53,9 @@ export function DraggableCard({ contact, onAddNote, isDragging = false, currentU
   });
   const isFlagged = flagsData?.flags?.some(f => f.contactId === contact.contactId) ?? false;
 
-  const isUrgent = contact.daysOnWaitlist > 60;
-  const isWarning = contact.daysOnWaitlist > 30 && contact.daysOnWaitlist <= 60;
+  const daysWaiting = computeDaysWaiting(contact.dateAdded, contact.daysOnWaitlist);
+  const isUrgent = daysWaiting > 60;
+  const isWarning = daysWaiting > 30 && daysWaiting <= 60;
 
   // Format DOB for display — handles Excel serials, ISO, US formats
   const dobDisplay = (() => {
@@ -151,7 +153,7 @@ export function DraggableCard({ contact, onAddNote, isDragging = false, currentU
           <div className="flex items-center justify-between mt-2">
             <div className="flex items-center gap-1 text-xs text-muted-foreground">
               <Clock className="h-3 w-3" />
-              <span>{contact.daysOnWaitlist}d</span>
+              <span>{daysWaiting}d</span>
             </div>
             <div className="flex items-center gap-1">
               {contact.assignedTo && (

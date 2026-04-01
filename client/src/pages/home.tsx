@@ -16,6 +16,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { AlertTriangle, Clock, CalendarCheck, AlertCircle, CheckCircle2, Inbox, User } from "lucide-react";
 import { getWaitlistSummary, getWaitlistContacts, addNoteToContact, updateContactStatus, getAttentionFlags, triggerFullSync, type WithSource } from "@/lib/api";
+import { computeDaysWaiting } from "@/lib/days-waiting";
 import { useDataSource } from "@/lib/data-source-context";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -331,9 +332,9 @@ export default function Home() {
 
     const totalActive = waitlistContacts.length;
     const avgWaitDays = totalActive > 0
-      ? Math.round(waitlistContacts.reduce((sum, c) => sum + (c.daysOnWaitlist || 0), 0) / totalActive)
+      ? Math.round(waitlistContacts.reduce((sum, c) => sum + computeDaysWaiting(c.dateAdded, c.daysOnWaitlist), 0) / totalActive)
       : 0;
-    const over60Days = waitlistContacts.filter(c => (c.daysOnWaitlist || 0) >= 60).length;
+    const over60Days = waitlistContacts.filter(c => computeDaysWaiting(c.dateAdded, c.daysOnWaitlist) >= 60).length;
     const readyToSchedule = contacts.filter(c => getContactStatusCode(c) === 200).length;
 
     return { totalActive, avgWaitDays, over60Days, readyToSchedule };
@@ -371,13 +372,13 @@ export default function Home() {
 
     // Sort helper: longest waiting first
     const sortByUrgency = (a: WaitlistContact, b: WaitlistContact) =>
-      (b.daysOnWaitlist || 0) - (a.daysOnWaitlist || 0);
+      computeDaysWaiting(b.dateAdded, b.daysOnWaitlist) - computeDaysWaiting(a.dateAdded, a.daysOnWaitlist);
 
     const over60Days = filteredContacts
       .filter(c => {
         const statusCode = getContactStatusCode(c);
         // Only include contacts in WL column (100, 101, 102) for Over 60 Days
-        return (c.daysOnWaitlist || 0) >= 60 && (STATUS_UMBRELLAS.WL.codes as readonly number[]).includes(statusCode);
+        return computeDaysWaiting(c.dateAdded, c.daysOnWaitlist) >= 60 && (STATUS_UMBRELLAS.WL.codes as readonly number[]).includes(statusCode);
       })
       .sort(sortByUrgency);
 
@@ -391,7 +392,7 @@ export default function Home() {
     const needsFollowUp = filteredContacts
       .filter(c => {
         const statusCode = getContactStatusCode(c);
-        const days = c.daysOnWaitlist || 0;
+        const days = computeDaysWaiting(c.dateAdded, c.daysOnWaitlist);
         const isWaiting = (STATUS_GROUPS.waiting as readonly number[]).includes(statusCode);
         return isWaiting && days > 14 && days <= 60;
       })
@@ -535,7 +536,7 @@ export default function Home() {
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
                                   <span className="text-amber-500 text-sm">⚠️</span>
-                                  <span className="text-xs font-bold tabular-nums text-muted-foreground">{contact.daysOnWaitlist}d</span>
+                                  <span className="text-xs font-bold tabular-nums text-muted-foreground">{computeDaysWaiting(contact.dateAdded, contact.daysOnWaitlist)}d</span>
                                 </div>
                               </div>
                             </CardContent>

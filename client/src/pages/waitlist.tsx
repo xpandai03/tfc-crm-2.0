@@ -31,6 +31,7 @@ import { AlertCircle, LayoutGrid, List, User } from "lucide-react";
 import { StatusLegendModal } from "@/components/ui/status-legend-modal";
 import { getWaitlistBoard, updateContactStatus, addNoteToContact, getAttentionFlags } from "@/lib/api";
 import { useDataSource } from "@/lib/data-source-context";
+import { computeDaysWaiting } from "@/lib/days-waiting";
 import { useAuth } from "@/lib/auth-context";
 import {
   PIPELINE_COLUMNS,
@@ -471,7 +472,7 @@ export default function Waitlist() {
     return [...contacts.filter((c) => {
       const statusCode = getContactStatusCode(c);
       return getColumnForStatus(statusCode) === columnId;
-    })].sort((a, b) => (Number(b.daysOnWaitlist) || 0) - (Number(a.daysOnWaitlist) || 0));
+    })].sort((a, b) => computeDaysWaiting(b.dateAdded, b.daysOnWaitlist) - computeDaysWaiting(a.dateAdded, a.daysOnWaitlist));
   };
 
   // Get contacts that don't match any known column (for "Other" column)
@@ -480,7 +481,7 @@ export default function Waitlist() {
     return [...contacts.filter((c) => {
       const statusCode = getContactStatusCode(c);
       return getColumnForStatus(statusCode) === "other";
-    })].sort((a, b) => (Number(b.daysOnWaitlist) || 0) - (Number(a.daysOnWaitlist) || 0));
+    })].sort((a, b) => computeDaysWaiting(b.dateAdded, b.daysOnWaitlist) - computeDaysWaiting(a.dateAdded, a.daysOnWaitlist));
   };
 
   if (isLoading) {

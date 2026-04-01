@@ -10,6 +10,7 @@ import { SyncStatus } from "@/components/ui/sync-status";
 import { FallbackBanner } from "@/components/ui/fallback-banner";
 import { Download, AlertCircle, ChevronRight } from "lucide-react";
 import { getWaitlistSummary, getWaitlistContacts, triggerFullSync, type WithSource } from "@/lib/api";
+import { computeDaysWaiting } from "@/lib/days-waiting";
 import { useDataSource } from "@/lib/data-source-context";
 import { normalizeInsurance } from "@/lib/insurance-utils";
 import {
@@ -190,22 +191,23 @@ export default function Insights() {
     
     // Average wait time (only active contacts)
     const avgWaitDays = totalActive > 0
-      ? Math.round(activeContacts.reduce((sum, c) => sum + (c.daysOnWaitlist || 0), 0) / totalActive)
+      ? Math.round(activeContacts.reduce((sum, c) => sum + computeDaysWaiting(c.dateAdded, c.daysOnWaitlist), 0) / totalActive)
       : 0;
 
     // Longest wait
     let longestWaitDays = 0;
     let longestWaitingName = "---";
     for (const c of activeContacts) {
-      if ((c.daysOnWaitlist || 0) > longestWaitDays) {
-        longestWaitDays = c.daysOnWaitlist || 0;
+      const days = computeDaysWaiting(c.dateAdded, c.daysOnWaitlist);
+      if (days > longestWaitDays) {
+        longestWaitDays = days;
         longestWaitingName = c.name;
       }
     }
 
     // Over 30/60 days (active only)
-    const over30Days = activeContacts.filter(c => (c.daysOnWaitlist || 0) >= 30).length;
-    const over60Days = activeContacts.filter(c => (c.daysOnWaitlist || 0) >= 60).length;
+    const over30Days = activeContacts.filter(c => computeDaysWaiting(c.dateAdded, c.daysOnWaitlist) >= 30).length;
+    const over60Days = activeContacts.filter(c => computeDaysWaiting(c.dateAdded, c.daysOnWaitlist) >= 60).length;
 
     // Ready to schedule (statusCode 200)
     const readyToSchedule = contacts.filter(c => getContactStatusCode(c) === 200).length;

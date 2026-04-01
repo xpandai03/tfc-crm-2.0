@@ -6,6 +6,7 @@
  * algorithm duplication.
  */
 
+import { computeDaysWaiting } from "./days-waiting";
 import {
   computeProviderScore,
   inferAgeGroupFromRequestingFor,
@@ -124,11 +125,12 @@ export function computePatientMatches(
     }
   }
 
-  // Sort: score desc → daysOnWaitlist desc → unassigned first
+  // Sort: score desc → daysWaiting desc → unassigned first
   results.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
-    if (b.contact.daysOnWaitlist !== a.contact.daysOnWaitlist)
-      return b.contact.daysOnWaitlist - a.contact.daysOnWaitlist;
+    const bDays = computeDaysWaiting(b.contact.dateAdded, b.contact.daysOnWaitlist);
+    const aDays = computeDaysWaiting(a.contact.dateAdded, a.contact.daysOnWaitlist);
+    if (bDays !== aDays) return bDays - aDays;
     const aAssigned = a.contact.assignedTo ? 1 : 0;
     const bAssigned = b.contact.assignedTo ? 1 : 0;
     return aAssigned - bAssigned;

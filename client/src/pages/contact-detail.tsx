@@ -1,4 +1,5 @@
 import { useParams, Link } from "wouter";
+import { computeDaysWaiting } from "@/lib/days-waiting";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { PageLayout } from "@/components/layout/page-layout";
@@ -696,7 +697,7 @@ export default function ContactDetail() {
   })();
 
   // Safe access to contact fields with defaults
-  const daysWaiting = contact?.daysOnWaitlist ?? 0;
+  const daysWaiting = computeDaysWaiting(contact?.dateAdded, contact?.daysOnWaitlist);
   const dateAdded = formatDate(contact?.dateAdded);
   const serviceRequested = contact?.serviceRequested || "Unknown Service";
   const contactStatus = contact?.status || "intake";
