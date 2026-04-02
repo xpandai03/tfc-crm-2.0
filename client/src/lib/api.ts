@@ -292,6 +292,22 @@ export async function createAssignment(params: {
 }
 
 // ============================================================================
+// Intake Edit API
+// ============================================================================
+
+export async function updateContactIntake(
+  contactId: number,
+  fields: Record<string, string | null>,
+  author: string
+): Promise<{ success: boolean; contactId: number; updated: string[] }> {
+  const response = await apiRequest("PATCH", `/api/contact/${contactId}`, {
+    fields,
+    author,
+  });
+  return response.json();
+}
+
+// ============================================================================
 // Sync API
 // ============================================================================
 

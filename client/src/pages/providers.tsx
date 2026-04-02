@@ -1,11 +1,22 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageLayout } from "@/components/layout/page-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/page-loader";
-import { AlertCircle, MapPin, FileText, RefreshCw, Shield, Users } from "lucide-react";
+import { AlertCircle, MapPin, FileText, RefreshCw, Shield, Users, Plus, Pencil, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useState } from "react";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import {
   getProviderInsurances,
   hasProviderInsuranceData,
@@ -173,7 +184,7 @@ function AgeGroupSection({
 /**
  * Provider card component
  */
-function ProviderCard({ provider, onFindPatients }: { provider: Provider; onFindPatients: () => void }) {
+function ProviderCard({ provider, onFindPatients, onEdit }: { provider: Provider & { _crmManaged?: boolean; crmId?: number; specialties?: string[]; crmAgeGroups?: string[]; insurances?: string[] }; onFindPatients: () => void; onEdit?: () => void }) {
   const hasAnyCapabilities =
     Object.keys(provider.ageGroups["Adults (18+)"]).length > 0 ||
     Object.keys(provider.ageGroups["Adolescents (12-17)"]).length > 0 ||
@@ -196,12 +207,19 @@ function ProviderCard({ provider, onFindPatients }: { provider: Provider; onFind
               </p>
             )}
           </div>
-          {provider.location && (
-            <Badge variant="outline" className="flex items-center gap-1 shrink-0">
-              <MapPin className="h-3 w-3" />
-              {provider.location}
-            </Badge>
-          )}
+          <div className="flex items-center gap-2 shrink-0">
+            {provider.location && (
+              <Badge variant="outline" className="flex items-center gap-1">
+                <MapPin className="h-3 w-3" />
+                {provider.location}
+              </Badge>
+            )}
+            {onEdit && (
+              <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={onEdit}>
+                <Pencil className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -268,16 +286,162 @@ function ProviderCard({ provider, onFindPatients }: { provider: Provider; onFind
   );
 }
 
+/** Provider form state for create/edit modal */
+interface ProviderFormData {
+  name: string;
+  credentials: string;
+  location: string;
+  specialties: string;
+  ageGroups: string;
+  insurances: string;
+  notes: string;
+}
+
+const EMPTY_FORM: ProviderFormData = {
+  name: "",
+  credentials: "",
+  location: "",
+  specialties: "",
+  ageGroups: "",
+  insurances: "",
+  notes: "",
+};
+
+function ProviderFormModal({
+  isOpen,
+  onClose,
+  editingProvider,
+  onSaved,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  editingProvider: { crmId: number; name: string; credentials: string; location: string; notes: string; specialties?: string[]; crmAgeGroups?: string[]; insurances?: string[] } | null;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [form, setForm] = useState<ProviderFormData>(EMPTY_FORM);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Reset form when modal opens
+  const isEditing = !!editingProvider;
+
+  const resetForm = () => {
+    if (editingProvider) {
+      setForm({
+        name: editingProvider.name,
+        credentials: editingProvider.credentials || "",
+        location: editingProvider.location || "",
+        specialties: editingProvider.specialties?.join(", ") || "",
+        ageGroups: editingProvider.crmAgeGroups?.join(", ") || "",
+        insurances: editingProvider.insurances?.join(", ") || "",
+        notes: editingProvider.notes || "",
+      });
+    } else {
+      setForm(EMPTY_FORM);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!form.name.trim()) {
+      toast({ title: "Name is required", variant: "destructive" });
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const payload = {
+        name: form.name.trim(),
+        credentials: form.credentials.trim(),
+        location: form.location.trim(),
+        specialties: form.specialties ? form.specialties.split(",").map(s => s.trim()).filter(Boolean) : [],
+        ageGroups: form.ageGroups ? form.ageGroups.split(",").map(s => s.trim()).filter(Boolean) : [],
+        insurances: form.insurances ? form.insurances.split(",").map(s => s.trim()).filter(Boolean) : [],
+        notes: form.notes.trim(),
+      };
+
+      if (isEditing && editingProvider) {
+        await apiRequest("PATCH", `/api/providers/${editingProvider.crmId}`, payload);
+        toast({ title: "Provider updated" });
+      } else {
+        await apiRequest("POST", "/api/providers", payload);
+        toast({ title: "Provider created" });
+      }
+
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast({
+        title: isEditing ? "Failed to update provider" : "Failed to create provider",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); else resetForm(); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{isEditing ? "Edit Provider" : "Add New Provider"}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 pt-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs">Name *</Label>
+              <Input value={form.name} onChange={(e) => setForm(p => ({ ...p, name: e.target.value }))} placeholder="Full name" />
+            </div>
+            <div>
+              <Label className="text-xs">Credentials</Label>
+              <Input value={form.credentials} onChange={(e) => setForm(p => ({ ...p, credentials: e.target.value }))} placeholder="e.g. LCSW, LPCC" />
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs">Location</Label>
+            <Input value={form.location} onChange={(e) => setForm(p => ({ ...p, location: e.target.value }))} placeholder="e.g. ABQ, LL, RR" />
+          </div>
+          <div>
+            <Label className="text-xs">Specialties (comma-separated)</Label>
+            <Input value={form.specialties} onChange={(e) => setForm(p => ({ ...p, specialties: e.target.value }))} placeholder="e.g. Anxiety, Trauma, Depression" />
+          </div>
+          <div>
+            <Label className="text-xs">Age Groups (comma-separated)</Label>
+            <Input value={form.ageGroups} onChange={(e) => setForm(p => ({ ...p, ageGroups: e.target.value }))} placeholder="e.g. Adults, Adolescents, Children" />
+          </div>
+          <div>
+            <Label className="text-xs">Accepted Insurances (comma-separated)</Label>
+            <Input value={form.insurances} onChange={(e) => setForm(p => ({ ...p, insurances: e.target.value }))} placeholder="e.g. BCBS, Presbyterian, Tricare" />
+          </div>
+          <div>
+            <Label className="text-xs">Notes</Label>
+            <Textarea value={form.notes} onChange={(e) => setForm(p => ({ ...p, notes: e.target.value }))} placeholder="Additional notes..." className="min-h-[60px]" />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={onClose} disabled={isSaving}>Cancel</Button>
+            <Button onClick={handleSave} disabled={isSaving}>
+              {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {isEditing ? "Save Changes" : "Create Provider"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /**
- * Providers Page (Beta)
+ * Providers Page
  *
- * Read-only visualization of the Provider Skills Spreadsheet.
- * Displays provider data exactly as it appears in Excel.
- * No interpretation, filtering, or matching logic.
+ * Displays providers from the Provider Skills Spreadsheet + CRM-managed providers.
+ * Supports editing CRM providers and creating new ones.
  */
 export default function Providers() {
+  const queryClient = useQueryClient();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<ProviderWithInsurance | null>(null);
+  const [showProviderForm, setShowProviderForm] = useState(false);
+  const [editingProvider, setEditingProvider] = useState<any>(null);
 
   const {
     data,
@@ -371,6 +535,13 @@ export default function Providers() {
               <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
               Refresh
             </Button>
+            <Button
+              size="sm"
+              onClick={() => { setEditingProvider(null); setShowProviderForm(true); }}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add Provider
+            </Button>
           </div>
         </div>
 
@@ -403,11 +574,15 @@ export default function Providers() {
               <Badge variant="secondary">{providersByLocation[location].length}</Badge>
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {providersByLocation[location].map((provider) => (
+              {providersByLocation[location].map((provider: any) => (
                 <ProviderCard
                   key={provider.id}
                   provider={provider}
                   onFindPatients={() => setSelectedProvider(transformApiProvider(provider as any))}
+                  onEdit={provider._crmManaged ? () => {
+                    setEditingProvider(provider);
+                    setShowProviderForm(true);
+                  } : undefined}
                 />
               ))}
             </div>
@@ -429,6 +604,16 @@ export default function Providers() {
         isOpen={selectedProvider !== null}
         onClose={() => setSelectedProvider(null)}
         provider={selectedProvider}
+      />
+
+      {/* Provider Create/Edit Modal */}
+      <ProviderFormModal
+        isOpen={showProviderForm}
+        onClose={() => { setShowProviderForm(false); setEditingProvider(null); }}
+        editingProvider={editingProvider}
+        onSaved={() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/providers"] });
+        }}
       />
     </PageLayout>
   );

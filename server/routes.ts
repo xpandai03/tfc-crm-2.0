@@ -7,6 +7,10 @@ import {
   createIntakeComment,
   getActiveAttentionFlags,
   clearAttentionFlag,
+  getAllCrmProviders,
+  getCrmProviderById,
+  createCrmProvider,
+  updateCrmProvider,
 } from "./reminders";
 import {
   getTnRecord,
@@ -40,6 +44,7 @@ import {
   normalizeDateValue,
   insertMigrationContacts,
   mergeMigrationContacts,
+  updateContactIntakeFields,
   type SyncPayloadContact,
   type MigrationContact,
 } from "./sync/db";
@@ -2205,6 +2210,68 @@ export async function registerRoutes(
     }
   });
 
+  // Update intake fields on a contact (CRM edits)
+  // Only updates safe fields, logs timeline event
+  app.patch("/api/contact/:id", async (req, res) => {
+    try {
+      const contactId = parseInt(req.params.id, 10);
+      if (isNaN(contactId) || contactId <= 0) {
+        return res.status(400).json({ error: "Invalid contact ID" });
+      }
+
+      const { fields, author } = req.body;
+      if (!fields || typeof fields !== "object" || Object.keys(fields).length === 0) {
+        return res.status(400).json({ error: "fields object is required and must not be empty" });
+      }
+      if (!author || typeof author !== "string") {
+        return res.status(400).json({ error: "author (initials) is required" });
+      }
+
+      console.log(`[intake-update] Updating contact ${contactId}`, {
+        author,
+        fieldCount: Object.keys(fields).length,
+        fieldNames: Object.keys(fields),
+      });
+
+      const result = updateContactIntakeFields(contactId, fields);
+
+      if (result.notFound) {
+        return res.status(404).json({ error: "Contact not found", contactId });
+      }
+
+      if (result.updated.length === 0) {
+        return res.json({ success: true, contactId, updated: [], message: "No safe fields to update" });
+      }
+
+      // Log timeline event
+      const changedList = result.updated.join(", ");
+      const timestamp = new Date().toISOString();
+      try {
+        appendSyncContactNote(
+          contactId,
+          `[System] Intake updated by ${author} — fields: ${changedList}`,
+          author,
+          timestamp
+        );
+      } catch (e) {
+        console.warn(`[intake-update] Failed to log timeline event:`, e);
+      }
+
+      // Invalidate board cache so next fetch picks up changes
+      boardCache = null;
+
+      console.log(`[intake-update] Success for contact ${contactId}:`, result.updated);
+      return res.json({
+        success: true,
+        contactId,
+        updated: result.updated,
+      });
+    } catch (error) {
+      console.error("[intake-update] Error:", error);
+      return res.status(500).json({ error: "Failed to update intake fields" });
+    }
+  });
+
   // Create email reminder for a contact
   // Stores in SQLite database, cron job sends emails when due
   app.post("/api/reminders", async (req, res) => {
@@ -2643,7 +2710,38 @@ export async function registerRoutes(
         });
       }
 
-      console.log("[providers] Parsed", providers.length, "providers");
+      console.log("[providers] Parsed", providers.length, "providers from spreadsheet");
+
+      // Merge CRM-managed providers
+      try {
+        const crmProviders = getAllCrmProviders();
+        for (const cp of crmProviders) {
+          providers.push({
+            id: 10000 + cp.id, // offset to avoid ID collisions with spreadsheet
+            nameWithCredentials: cp.credentials ? `${cp.name}, ${cp.credentials}` : cp.name,
+            name: cp.name,
+            credentials: cp.credentials,
+            location: cp.location,
+            ageGroups: {
+              "Adults (18+)": {},
+              "Adolescents (12-17)": {},
+              "Children (6-11)": {},
+              "Children (0-5)": {},
+            },
+            notes: cp.notes,
+            acceptedInsurances: cp.insurances.join(", "),
+            _crmManaged: true,
+            crmId: cp.id,
+            specialties: cp.specialties,
+            crmAgeGroups: cp.ageGroups,
+          });
+        }
+        if (crmProviders.length > 0) {
+          console.log("[providers] Merged", crmProviders.length, "CRM providers");
+        }
+      } catch (e) {
+        console.warn("[providers] Failed to load CRM providers:", e);
+      }
 
       // Update cache
       providerDataCache = {
@@ -2663,6 +2761,70 @@ export async function registerRoutes(
         error: "Failed to fetch provider data",
         message: error instanceof Error ? error.message : "Unknown error",
       });
+    }
+  });
+
+  // Create a new CRM-managed provider
+  app.post("/api/providers", async (req, res) => {
+    try {
+      const { name, credentials, location, specialties, ageGroups, insurances, notes } = req.body;
+
+      if (!name || typeof name !== "string" || name.trim() === "") {
+        return res.status(400).json({ error: "name is required" });
+      }
+
+      const id = createCrmProvider({
+        name,
+        credentials,
+        location,
+        specialties,
+        ageGroups,
+        insurances,
+        notes,
+      });
+
+      // Invalidate provider cache
+      providerDataCache = null;
+
+      console.log(`[providers] Created CRM provider ${id}: ${name}`);
+      return res.json({ success: true, id });
+    } catch (error) {
+      console.error("[providers] Error creating provider:", error);
+      return res.status(500).json({ error: "Failed to create provider" });
+    }
+  });
+
+  // Update a CRM-managed provider
+  app.patch("/api/providers/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id) || id <= 0) {
+        return res.status(400).json({ error: "Invalid provider ID" });
+      }
+
+      const existing = getCrmProviderById(id);
+      if (!existing) {
+        return res.status(404).json({ error: "CRM provider not found" });
+      }
+
+      const { name, credentials, location, specialties, ageGroups, insurances, notes } = req.body;
+      const updated = updateCrmProvider(id, {
+        name,
+        credentials,
+        location,
+        specialties,
+        ageGroups,
+        insurances,
+        notes,
+      });
+
+      // Invalidate provider cache
+      providerDataCache = null;
+
+      return res.json({ success: true, updated });
+    } catch (error) {
+      console.error("[providers] Error updating provider:", error);
+      return res.status(500).json({ error: "Failed to update provider" });
     }
   });
 

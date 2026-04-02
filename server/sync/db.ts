@@ -1375,3 +1375,71 @@ export function mergeMigrationContacts(
   runAll();
   return { inserted, updated, skipped, errors };
 }
+
+// ============================================================================
+// Contact Intake Field Updates (CRM edits)
+// ============================================================================
+
+/** Fields that are safe to update from the CRM UI */
+const SAFE_INTAKE_FIELDS: Record<string, string> = {
+  requestingFor: "requesting_for",
+  reasonForSeeking: "reason_for_seeking",
+  reasonForTherapy: "reason_for_therapy",
+  modality: "modality",
+  formCompletedBy: "form_completed_by",
+  insurancePayer: "insurance_payer",
+  insurancePlan: "insurance_plan",
+  insuranceId: "insurance_id",
+  patientDob: "patient_dob",
+  gender: "gender",
+  streetAddress: "street_address",
+  city: "city",
+  state: "state",
+  zipCode: "zip_code",
+  referralSource: "referral_source",
+  priorServices: "prior_services",
+  priorProvider: "prior_provider",
+  preferredContact: "preferred_contact",
+  rfsLink: "rfs_link",
+};
+
+/**
+ * Update only safe intake fields on an existing contact.
+ * Returns the list of fields that actually changed.
+ */
+export function updateContactIntakeFields(
+  contactId: number,
+  updates: Record<string, string | null>
+): { updated: string[]; notFound: boolean } {
+  const db = getDatabase();
+
+  // Check contact exists
+  const existing = db.prepare(
+    `SELECT contact_id FROM sync_contacts WHERE contact_id = ?`
+  ).get(contactId);
+  if (!existing) return { updated: [], notFound: true };
+
+  // Filter to only safe fields that were actually provided
+  const setClauses: string[] = [];
+  const values: (string | null)[] = [];
+  const updatedFields: string[] = [];
+
+  for (const [camelKey, value] of Object.entries(updates)) {
+    const col = SAFE_INTAKE_FIELDS[camelKey];
+    if (!col) continue; // skip non-safe fields silently
+    setClauses.push(`${col} = ?`);
+    values.push(value ?? null);
+    updatedFields.push(camelKey);
+  }
+
+  if (setClauses.length === 0) return { updated: [], notFound: false };
+
+  setClauses.push(`synced_at = datetime('now')`);
+  values.push(contactId as any);
+
+  db.prepare(
+    `UPDATE sync_contacts SET ${setClauses.join(", ")} WHERE contact_id = ?`
+  ).run(...values);
+
+  return { updated: updatedFields, notFound: false };
+}

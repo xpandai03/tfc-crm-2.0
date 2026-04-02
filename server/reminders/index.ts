@@ -15,7 +15,12 @@ export {
   createIntakeComment,
   getActiveAttentionFlags,
   clearAttentionFlag,
+  getAllCrmProviders,
+  getCrmProviderById,
+  createCrmProvider,
+  updateCrmProvider,
 } from "./db";
+export type { CrmProvider, CreateCrmProviderParams } from "./db";
 export { startReminderCron, triggerReminderProcessing } from "./cron";
 export { sendReminderEmail } from "./email";
 export type { Reminder, CreateReminderParams, IntakeComment, AttentionFlag, CreateIntakeCommentParams } from "./types";

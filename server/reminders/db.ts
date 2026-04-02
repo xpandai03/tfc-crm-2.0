@@ -90,6 +90,23 @@ export function initDatabase(): Database.Database {
       ON attention_flags(cleared_at);
   `);
 
+  // Create crm_providers table for editable/new providers
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS crm_providers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      credentials TEXT NOT NULL DEFAULT '',
+      location TEXT NOT NULL DEFAULT '',
+      specialties TEXT NOT NULL DEFAULT '[]',
+      age_groups TEXT NOT NULL DEFAULT '[]',
+      insurances TEXT NOT NULL DEFAULT '[]',
+      notes TEXT NOT NULL DEFAULT '',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
   console.log("[reminders-db] Database initialized successfully");
   return db;
 }
@@ -371,4 +388,125 @@ export function clearAttentionFlag(contactId: number, clearedByEmail: string): b
     console.log(`[attention-flags] Cleared flag for contact ${contactId} by ${clearedByEmail}`);
   }
   return cleared;
+}
+
+// ============================================================================
+// CRM Providers (editable / user-created providers)
+// ============================================================================
+
+export interface CrmProvider {
+  id: number;
+  name: string;
+  credentials: string;
+  location: string;
+  specialties: string[];   // stored as JSON array
+  ageGroups: string[];     // stored as JSON array
+  insurances: string[];    // stored as JSON array
+  notes: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateCrmProviderParams {
+  name: string;
+  credentials?: string;
+  location?: string;
+  specialties?: string[];
+  ageGroups?: string[];
+  insurances?: string[];
+  notes?: string;
+}
+
+export function getAllCrmProviders(): CrmProvider[] {
+  const db = getDatabase();
+  const rows = db.prepare(`
+    SELECT id, name, credentials, location, specialties, age_groups, insurances, notes,
+           is_active, created_at, updated_at
+    FROM crm_providers
+    WHERE is_active = 1
+    ORDER BY name ASC
+  `).all() as any[];
+
+  return rows.map(row => ({
+    id: row.id,
+    name: row.name,
+    credentials: row.credentials,
+    location: row.location,
+    specialties: JSON.parse(row.specialties || "[]"),
+    ageGroups: JSON.parse(row.age_groups || "[]"),
+    insurances: JSON.parse(row.insurances || "[]"),
+    notes: row.notes,
+    isActive: row.is_active === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+}
+
+export function getCrmProviderById(id: number): CrmProvider | null {
+  const db = getDatabase();
+  const row = db.prepare(`
+    SELECT id, name, credentials, location, specialties, age_groups, insurances, notes,
+           is_active, created_at, updated_at
+    FROM crm_providers WHERE id = ?
+  `).get(id) as any;
+
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    credentials: row.credentials,
+    location: row.location,
+    specialties: JSON.parse(row.specialties || "[]"),
+    ageGroups: JSON.parse(row.age_groups || "[]"),
+    insurances: JSON.parse(row.insurances || "[]"),
+    notes: row.notes,
+    isActive: row.is_active === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function createCrmProvider(params: CreateCrmProviderParams): number {
+  const db = getDatabase();
+  const result = db.prepare(`
+    INSERT INTO crm_providers (name, credentials, location, specialties, age_groups, insurances, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    params.name.trim(),
+    params.credentials?.trim() || "",
+    params.location?.trim() || "",
+    JSON.stringify(params.specialties || []),
+    JSON.stringify(params.ageGroups || []),
+    JSON.stringify(params.insurances || []),
+    params.notes?.trim() || "",
+  );
+  console.log(`[crm-providers] Created provider ${result.lastInsertRowid}: ${params.name}`);
+  return result.lastInsertRowid as number;
+}
+
+export function updateCrmProvider(id: number, updates: Partial<CreateCrmProviderParams>): boolean {
+  const db = getDatabase();
+  const setClauses: string[] = [];
+  const values: any[] = [];
+
+  if (updates.name !== undefined) { setClauses.push("name = ?"); values.push(updates.name.trim()); }
+  if (updates.credentials !== undefined) { setClauses.push("credentials = ?"); values.push(updates.credentials.trim()); }
+  if (updates.location !== undefined) { setClauses.push("location = ?"); values.push(updates.location.trim()); }
+  if (updates.specialties !== undefined) { setClauses.push("specialties = ?"); values.push(JSON.stringify(updates.specialties)); }
+  if (updates.ageGroups !== undefined) { setClauses.push("age_groups = ?"); values.push(JSON.stringify(updates.ageGroups)); }
+  if (updates.insurances !== undefined) { setClauses.push("insurances = ?"); values.push(JSON.stringify(updates.insurances)); }
+  if (updates.notes !== undefined) { setClauses.push("notes = ?"); values.push(updates.notes.trim()); }
+
+  if (setClauses.length === 0) return false;
+
+  setClauses.push("updated_at = datetime('now')");
+  values.push(id);
+
+  const result = db.prepare(
+    `UPDATE crm_providers SET ${setClauses.join(", ")} WHERE id = ? AND is_active = 1`
+  ).run(...values);
+
+  console.log(`[crm-providers] Updated provider ${id}: ${result.changes} rows`);
+  return result.changes > 0;
 }

@@ -10,6 +10,7 @@ import { TimelineErrorBoundary } from "@/components/ui/timeline-error-boundary";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { FallbackBanner } from "@/components/ui/fallback-banner";
@@ -49,8 +50,11 @@ import {
   UserPlus,
   RefreshCw,
   Download,
+  Pencil,
+  Save,
+  X,
 } from "lucide-react";
-import { getContactSnapshot, updateContactStatus, addNoteToContact, deleteNote, deleteAssignment as deleteAssignmentApi, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, syncContactFromExcel, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
+import { getContactSnapshot, updateContactStatus, addNoteToContact, deleteNote, deleteAssignment as deleteAssignmentApi, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, syncContactFromExcel, updateContactIntake, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
 import { ReminderModal } from "@/components/ui/reminder-modal";
 import { AssignProviderModal } from "@/components/ui/assign-provider-modal";
 import { SendEmailModal } from "@/components/ui/send-email-modal";
@@ -144,6 +148,80 @@ export default function ContactDetail() {
   const [showAssignProviderModal, setShowAssignProviderModal] = useState(false);
   const [isCreatingReminder, setIsCreatingReminder] = useState(false);
   const noteTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Intake edit mode state
+  const [isEditingIntake, setIsEditingIntake] = useState(false);
+  const [intakeEdits, setIntakeEdits] = useState<Record<string, string>>({});
+
+  const startEditingIntake = () => {
+    if (!contact) return;
+    setIntakeEdits({
+      requestingFor: contact.requestingFor || "",
+      reasonForSeeking: contact.reasonForSeeking || "",
+      reasonForTherapy: contact.reasonForTherapy || "",
+      modality: contact.modality || "",
+      formCompletedBy: contact.formCompletedBy || "",
+      insurancePayer: contact.insurancePayer || "",
+      insurancePlan: contact.insurancePlan || "",
+      insuranceId: contact.insuranceId || "",
+      patientDob: contact.patientDob || "",
+      gender: contact.gender || "",
+      streetAddress: contact.streetAddress || "",
+      city: contact.city || "",
+      state: contact.state || "",
+      zipCode: contact.zipCode || "",
+      referralSource: contact.referralSource || "",
+      priorServices: contact.priorServices || "",
+      priorProvider: contact.priorProvider || "",
+      preferredContact: contact.preferredContact || "",
+      rfsLink: contact.rfsLink || "",
+    });
+    setIsEditingIntake(true);
+  };
+
+  const cancelEditingIntake = () => {
+    setIsEditingIntake(false);
+    setIntakeEdits({});
+  };
+
+  const updateIntakeMutation = useMutation({
+    mutationFn: (fields: Record<string, string | null>) =>
+      updateContactIntake(contactId!, fields, authorInitials),
+    onSuccess: (data) => {
+      toast({
+        title: "Intake updated",
+        description: `${data.updated.length} field(s) saved`,
+      });
+      setIsEditingIntake(false);
+      setIntakeEdits({});
+      queryClient.invalidateQueries({ queryKey: ["/api/contact", contactId] });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Failed to update intake",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSaveIntake = () => {
+    if (!contact) return;
+    // Only send fields that actually changed
+    const changed: Record<string, string | null> = {};
+    for (const [key, value] of Object.entries(intakeEdits)) {
+      const original = (contact as any)[key] || "";
+      if (value !== original) {
+        changed[key] = value.trim() || null;
+      }
+    }
+    if (Object.keys(changed).length === 0) {
+      toast({ title: "No changes", description: "Nothing was modified" });
+      setIsEditingIntake(false);
+      return;
+    }
+    updateIntakeMutation.mutate(changed);
+  };
 
   // TherapyNotes integration
   const TN_ALLOWED_EMAILS = ["raunek@tfc.health", "dawn@tfc.health", "amanda@tfc.health", "chantel@tfc.health", "jmontano@tfc.health", "lsego@tfc.health", "sandra@tfc.health"];
@@ -984,7 +1062,7 @@ export default function ContactDetail() {
                 }
               />
 
-              {/* Intake Summary - Read-only intake state from Excel row (Phase 6.2) */}
+              {/* Intake Summary - Editable intake state with color-coded sections */}
               <Card className={cn("overflow-visible", isContactFlagged && "ring-2 ring-amber-400/50 dark:ring-amber-500/40")}>
                 {/* Attention Required banner */}
                 {isContactFlagged && (
@@ -1006,227 +1084,310 @@ export default function ContactDetail() {
                   </div>
                 )}
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium flex items-center gap-2">
-                    <FileText className="h-4 w-4" />
-                    Intake Summary
-                  </CardTitle>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
-                    Read-only · From Excel intake form
-                  </p>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="text-sm font-medium flex items-center gap-2">
+                        <FileText className="h-4 w-4" />
+                        Intake Summary
+                      </CardTitle>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        {isEditingIntake ? "Editing · Changes saved to CRM" : "From Excel intake form"}
+                      </p>
+                    </div>
+                    {!isEditingIntake ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={startEditingIntake}
+                      >
+                        <Pencil className="h-3 w-3 mr-1" />
+                        Edit
+                      </Button>
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={cancelEditingIntake}
+                          disabled={updateIntakeMutation.isPending}
+                        >
+                          <X className="h-3 w-3 mr-1" />
+                          Cancel
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={handleSaveIntake}
+                          disabled={updateIntakeMutation.isPending}
+                        >
+                          {updateIntakeMutation.isPending ? (
+                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          ) : (
+                            <Save className="h-3 w-3 mr-1" />
+                          )}
+                          Save
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                 </CardHeader>
-                <CardContent className="space-y-4 text-sm">
-                  {/* Intake Details Section */}
-                  {(contact?.requestingFor || contact?.reasonForSeeking || contact?.reasonForTherapy || contact?.formCompletedBy || contact?.modality) && (
-                    <div className="space-y-2">
-                      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Intake Details</h4>
-                      {contact.requestingFor && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Requesting For:</span>
-                          <p className="font-medium text-foreground">{contact.requestingFor}</p>
+                <CardContent className="space-y-3 text-sm">
+                  {/* Intake Details Section — Blue */}
+                  {(isEditingIntake || contact?.requestingFor || contact?.reasonForSeeking || contact?.reasonForTherapy || contact?.formCompletedBy || contact?.modality) && (
+                    <div className="space-y-2 rounded-md p-2.5 bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/30">
+                      <h4 className="text-xs font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide">Intake Details</h4>
+                      {isEditingIntake ? (
+                        <div className="space-y-2">
+                          <div>
+                            <label className="text-muted-foreground text-xs">Requesting For</label>
+                            <Input className="h-8 text-sm" value={intakeEdits.requestingFor} onChange={(e) => setIntakeEdits(p => ({ ...p, requestingFor: e.target.value }))} />
+                          </div>
+                          <div>
+                            <label className="text-muted-foreground text-xs">Reason</label>
+                            <Input className="h-8 text-sm" value={intakeEdits.reasonForSeeking} onChange={(e) => setIntakeEdits(p => ({ ...p, reasonForSeeking: e.target.value }))} />
+                          </div>
+                          <div>
+                            <label className="text-muted-foreground text-xs">Reason(s) for Therapy</label>
+                            <Input className="h-8 text-sm" value={intakeEdits.reasonForTherapy} onChange={(e) => setIntakeEdits(p => ({ ...p, reasonForTherapy: e.target.value }))} />
+                          </div>
+                          <div>
+                            <label className="text-muted-foreground text-xs">Modality</label>
+                            <Input className="h-8 text-sm" value={intakeEdits.modality} onChange={(e) => setIntakeEdits(p => ({ ...p, modality: e.target.value }))} />
+                          </div>
+                          <div>
+                            <label className="text-muted-foreground text-xs">Form Completed By</label>
+                            <Input className="h-8 text-sm" value={intakeEdits.formCompletedBy} onChange={(e) => setIntakeEdits(p => ({ ...p, formCompletedBy: e.target.value }))} />
+                          </div>
                         </div>
+                      ) : (
+                        <>
+                          {contact?.requestingFor && (
+                            <div><span className="text-muted-foreground text-xs">Requesting For:</span><p className="font-medium text-foreground">{contact.requestingFor}</p></div>
+                          )}
+                          {contact?.reasonForSeeking && (
+                            <div><span className="text-muted-foreground text-xs">Reason:</span><p className="font-medium text-foreground">{contact.reasonForSeeking}</p></div>
+                          )}
+                          {contact?.reasonForTherapy && (
+                            <div><span className="text-muted-foreground text-xs">Reason(s) for Therapy:</span><p className="font-medium text-foreground">{contact.reasonForTherapy}</p></div>
+                          )}
+                          {contact?.modality && (
+                            <div><span className="text-muted-foreground text-xs">Modality:</span><p className="font-medium text-foreground">{contact.modality}</p></div>
+                          )}
+                          {contact?.formCompletedBy && (
+                            <div><span className="text-muted-foreground text-xs">Form Completed By:</span><p className="font-medium text-foreground">{contact.formCompletedBy}</p></div>
+                          )}
+                        </>
                       )}
-                      {contact.reasonForSeeking && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Reason:</span>
-                          <p className="font-medium text-foreground">{contact.reasonForSeeking}</p>
+                    </div>
+                  )}
+
+                  {/* Insurance Section — Green */}
+                  {(isEditingIntake || contact?.insurancePayer || contact?.insurancePlan || contact?.insuranceId || contact?.insuranceStatus) && (
+                    <div className="space-y-2 rounded-md p-2.5 bg-green-50/50 dark:bg-green-950/20 border border-green-100 dark:border-green-900/30">
+                      <h4 className="text-xs font-semibold text-green-700 dark:text-green-400 uppercase tracking-wide">Insurance</h4>
+                      {isEditingIntake ? (
+                        <div className="space-y-2">
+                          <div>
+                            <label className="text-muted-foreground text-xs">Payer</label>
+                            <Input className="h-8 text-sm" value={intakeEdits.insurancePayer} onChange={(e) => setIntakeEdits(p => ({ ...p, insurancePayer: e.target.value }))} />
+                          </div>
+                          <div>
+                            <label className="text-muted-foreground text-xs">Plan</label>
+                            <Input className="h-8 text-sm" value={intakeEdits.insurancePlan} onChange={(e) => setIntakeEdits(p => ({ ...p, insurancePlan: e.target.value }))} />
+                          </div>
+                          <div>
+                            <label className="text-muted-foreground text-xs">Member ID</label>
+                            <Input className="h-8 text-sm" value={intakeEdits.insuranceId} onChange={(e) => setIntakeEdits(p => ({ ...p, insuranceId: e.target.value }))} />
+                          </div>
                         </div>
+                      ) : (
+                        <>
+                          {contact?.insurancePayer && (
+                            <div><span className="text-muted-foreground text-xs">Payer:</span><p className="font-medium text-foreground">{contact.insurancePayer}</p></div>
+                          )}
+                          {contact?.insurancePlan && (
+                            <div><span className="text-muted-foreground text-xs">Plan:</span><p className="font-medium text-foreground">{contact.insurancePlan}</p></div>
+                          )}
+                          {contact?.insuranceId && (
+                            <div><span className="text-muted-foreground text-xs">Member ID:</span><p className="font-medium text-foreground">{contact.insuranceId}</p></div>
+                          )}
+                          {contact?.insuranceStatus && (
+                            <div><span className="text-muted-foreground text-xs">Status:</span><p className="font-medium text-foreground">{contact.insuranceStatus}</p></div>
+                          )}
+                        </>
                       )}
-                      {contact.reasonForTherapy && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Reason(s) for Therapy:</span>
-                          <p className="font-medium text-foreground">{contact.reasonForTherapy}</p>
+                    </div>
+                  )}
+
+                  {/* Referral & History Section */}
+                  {(isEditingIntake || contact?.referralSource || contact?.referralAuth || contact?.referralStatus || contact?.priorServices || contact?.priorProvider) && (
+                    <div className="space-y-2 rounded-md p-2.5 bg-orange-50/50 dark:bg-orange-950/20 border border-orange-100 dark:border-orange-900/30">
+                      <h4 className="text-xs font-semibold text-orange-700 dark:text-orange-400 uppercase tracking-wide">Referral & History</h4>
+                      {isEditingIntake ? (
+                        <div className="space-y-2">
+                          <div>
+                            <label className="text-muted-foreground text-xs">Referral Source</label>
+                            <Input className="h-8 text-sm" value={intakeEdits.referralSource} onChange={(e) => setIntakeEdits(p => ({ ...p, referralSource: e.target.value }))} />
+                          </div>
+                          <div>
+                            <label className="text-muted-foreground text-xs">Prior Services</label>
+                            <Input className="h-8 text-sm" value={intakeEdits.priorServices} onChange={(e) => setIntakeEdits(p => ({ ...p, priorServices: e.target.value }))} />
+                          </div>
+                          <div>
+                            <label className="text-muted-foreground text-xs">Prior Provider</label>
+                            <Input className="h-8 text-sm" value={intakeEdits.priorProvider} onChange={(e) => setIntakeEdits(p => ({ ...p, priorProvider: e.target.value }))} />
+                          </div>
                         </div>
+                      ) : (
+                        <>
+                          {contact?.referralSource && (
+                            <div><span className="text-muted-foreground text-xs">Referral Source:</span><p className="font-medium text-foreground">{contact.referralSource}</p></div>
+                          )}
+                          {contact?.referralAuth && (
+                            <div><span className="text-muted-foreground text-xs">Authorization:</span><p className="font-medium text-foreground">{contact.referralAuth}</p></div>
+                          )}
+                          {contact?.referralStatus && (
+                            <div><span className="text-muted-foreground text-xs">Referral Status:</span><p className="font-medium text-foreground">{contact.referralStatus}</p></div>
+                          )}
+                          {contact?.priorServices && (
+                            <div><span className="text-muted-foreground text-xs">Prior Services:</span><p className="font-medium text-foreground">{contact.priorServices}</p></div>
+                          )}
+                          {contact?.priorProvider && (
+                            <div><span className="text-muted-foreground text-xs">Prior Provider:</span><p className="font-medium text-foreground">{contact.priorProvider}</p></div>
+                          )}
+                        </>
                       )}
-                      {contact.modality && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Modality:</span>
-                          <p className="font-medium text-foreground">{contact.modality}</p>
+                    </div>
+                  )}
+
+                  {/* Demographics Section — Purple */}
+                  {(isEditingIntake || contact?.patientDob || contact?.gender) && (
+                    <div className="space-y-2 rounded-md p-2.5 bg-purple-50/50 dark:bg-purple-950/20 border border-purple-100 dark:border-purple-900/30">
+                      <h4 className="text-xs font-semibold text-purple-700 dark:text-purple-400 uppercase tracking-wide">Demographics</h4>
+                      {isEditingIntake ? (
+                        <div className="space-y-2">
+                          <div>
+                            <label className="text-muted-foreground text-xs">Date of Birth</label>
+                            <Input className="h-8 text-sm" value={intakeEdits.patientDob} onChange={(e) => setIntakeEdits(p => ({ ...p, patientDob: e.target.value }))} placeholder="YYYY-MM-DD" />
+                          </div>
+                          <div>
+                            <label className="text-muted-foreground text-xs">Gender</label>
+                            <Input className="h-8 text-sm" value={intakeEdits.gender} onChange={(e) => setIntakeEdits(p => ({ ...p, gender: e.target.value }))} />
+                          </div>
                         </div>
+                      ) : (
+                        <>
+                          {contact?.patientDob && (
+                            <div><span className="text-muted-foreground text-xs">Date of Birth:</span><p className="font-medium text-foreground">{formatDob(contact.patientDob)}</p></div>
+                          )}
+                          {contact?.gender && (
+                            <div><span className="text-muted-foreground text-xs">Gender:</span><p className="font-medium text-foreground">{contact.gender}</p></div>
+                          )}
+                        </>
                       )}
-                      {contact.formCompletedBy && (
+                    </div>
+                  )}
+
+                  {/* Address Section — Gray */}
+                  {(isEditingIntake || contact?.streetAddress || contact?.city || contact?.state || contact?.zipCode) && (
+                    <div className="space-y-2 rounded-md p-2.5 bg-slate-50/50 dark:bg-slate-950/20 border border-slate-200 dark:border-slate-800/30">
+                      <h4 className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Address</h4>
+                      {isEditingIntake ? (
+                        <div className="space-y-2">
+                          <div>
+                            <label className="text-muted-foreground text-xs">Street</label>
+                            <Input className="h-8 text-sm" value={intakeEdits.streetAddress} onChange={(e) => setIntakeEdits(p => ({ ...p, streetAddress: e.target.value }))} />
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div>
+                              <label className="text-muted-foreground text-xs">City</label>
+                              <Input className="h-8 text-sm" value={intakeEdits.city} onChange={(e) => setIntakeEdits(p => ({ ...p, city: e.target.value }))} />
+                            </div>
+                            <div>
+                              <label className="text-muted-foreground text-xs">State</label>
+                              <Input className="h-8 text-sm" value={intakeEdits.state} onChange={(e) => setIntakeEdits(p => ({ ...p, state: e.target.value }))} />
+                            </div>
+                            <div>
+                              <label className="text-muted-foreground text-xs">Zip</label>
+                              <Input className="h-8 text-sm" value={intakeEdits.zipCode} onChange={(e) => setIntakeEdits(p => ({ ...p, zipCode: e.target.value }))} />
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
                         <div>
-                          <span className="text-muted-foreground text-xs">Form Completed By:</span>
-                          <p className="font-medium text-foreground">{contact.formCompletedBy}</p>
+                          {contact?.streetAddress && (
+                            <p className="font-medium text-foreground">{contact.streetAddress}</p>
+                          )}
+                          {(contact?.city || contact?.state || contact?.zipCode) && (
+                            <p className="font-medium text-foreground">
+                              {[contact.city, contact.state, contact.zipCode].filter(Boolean).join(", ")}
+                            </p>
+                          )}
                         </div>
                       )}
                     </div>
                   )}
 
-                  {/* Insurance Section (Phase 6.3 expanded) */}
-                  {(contact?.insurancePayer || contact?.insurancePlan || contact?.insuranceId || contact?.insuranceStatus) && (
-                    <div className="space-y-2 pt-2 border-t border-border">
-                      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Insurance</h4>
-                      {contact.insurancePayer && (
+                  {/* Preferences */}
+                  {(isEditingIntake || contact?.preferredContact) && (
+                    <div className="space-y-2 rounded-md p-2.5 bg-sky-50/50 dark:bg-sky-950/20 border border-sky-100 dark:border-sky-900/30">
+                      <h4 className="text-xs font-semibold text-sky-700 dark:text-sky-400 uppercase tracking-wide">Preferences</h4>
+                      {isEditingIntake ? (
                         <div>
-                          <span className="text-muted-foreground text-xs">Payer:</span>
-                          <p className="font-medium text-foreground">{contact.insurancePayer}</p>
+                          <label className="text-muted-foreground text-xs">Preferred Contact</label>
+                          <Input className="h-8 text-sm" value={intakeEdits.preferredContact} onChange={(e) => setIntakeEdits(p => ({ ...p, preferredContact: e.target.value }))} />
                         </div>
-                      )}
-                      {contact.insurancePlan && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Plan:</span>
-                          <p className="font-medium text-foreground">{contact.insurancePlan}</p>
-                        </div>
-                      )}
-                      {contact.insuranceId && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Member ID:</span>
-                          <p className="font-medium text-foreground">{contact.insuranceId}</p>
-                        </div>
-                      )}
-                      {contact.insuranceStatus && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Status:</span>
-                          <p className="font-medium text-foreground">{contact.insuranceStatus}</p>
-                        </div>
+                      ) : (
+                        <div><span className="text-muted-foreground text-xs">Preferred Contact:</span><p className="font-medium text-foreground">{contact?.preferredContact}</p></div>
                       )}
                     </div>
                   )}
 
-                  {/* Referral Section (Phase 6.3) */}
-                  {(contact?.referralSource || contact?.referralAuth || contact?.referralStatus || contact?.priorServices || contact?.priorProvider) && (
-                    <div className="space-y-2 pt-2 border-t border-border">
-                      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Referral & History</h4>
-                      {contact.referralSource && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Referral Source:</span>
-                          <p className="font-medium text-foreground">{contact.referralSource}</p>
-                        </div>
-                      )}
-                      {contact.referralAuth && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Authorization:</span>
-                          <p className="font-medium text-foreground">{contact.referralAuth}</p>
-                        </div>
-                      )}
-                      {contact.referralStatus && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Referral Status:</span>
-                          <p className="font-medium text-foreground">{contact.referralStatus}</p>
-                        </div>
-                      )}
-                      {contact.priorServices && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Prior Services:</span>
-                          <p className="font-medium text-foreground">{contact.priorServices}</p>
-                        </div>
-                      )}
-                      {contact.priorProvider && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Prior Provider:</span>
-                          <p className="font-medium text-foreground">{contact.priorProvider}</p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Demographics Section (Phase 6.2) */}
-                  {(contact?.patientDob || contact?.gender) && (
-                    <div className="space-y-2 pt-2 border-t border-border">
-                      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Demographics</h4>
-                      {contact.patientDob && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Date of Birth:</span>
-                          <p className="font-medium text-foreground">{formatDob(contact.patientDob)}</p>
-                        </div>
-                      )}
-                      {contact.gender && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Gender:</span>
-                          <p className="font-medium text-foreground">{contact.gender}</p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Address Section (Phase 6.2) */}
-                  {(contact?.streetAddress || contact?.city || contact?.state || contact?.zipCode) && (
-                    <div className="space-y-2 pt-2 border-t border-border">
-                      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Address</h4>
-                      <div>
-                        {contact.streetAddress && (
-                          <p className="font-medium text-foreground">{contact.streetAddress}</p>
-                        )}
-                        {(contact.city || contact.state || contact.zipCode) && (
-                          <p className="font-medium text-foreground">
-                            {[contact.city, contact.state, contact.zipCode].filter(Boolean).join(", ")}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Contact Preferences Section (Phase 6.2) */}
-                  {contact?.preferredContact && (
-                    <div className="space-y-2 pt-2 border-t border-border">
-                      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Preferences</h4>
-                      <div>
-                        <span className="text-muted-foreground text-xs">Preferred Contact:</span>
-                        <p className="font-medium text-foreground">{contact.preferredContact}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Admin / Flags Section (Phase 6.3) */}
+                  {/* Admin / Flags Section (read-only — not editable) */}
                   {(contact?.custody || contact?.flags || contact?.priority) && (
-                    <div className="space-y-2 pt-2 border-t border-border">
+                    <div className="space-y-2 rounded-md p-2.5 bg-muted/30 border border-border">
                       <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Admin</h4>
                       {contact.custody && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Custody:</span>
-                          <p className="font-medium text-foreground">{contact.custody}</p>
-                        </div>
+                        <div><span className="text-muted-foreground text-xs">Custody:</span><p className="font-medium text-foreground">{contact.custody}</p></div>
                       )}
                       {contact.flags && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Flags:</span>
-                          <p className="font-medium text-foreground text-amber-600">{contact.flags}</p>
-                        </div>
+                        <div><span className="text-muted-foreground text-xs">Flags:</span><p className="font-medium text-foreground text-amber-600">{contact.flags}</p></div>
                       )}
                       {contact.priority && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Priority:</span>
-                          <p className="font-medium text-foreground">{contact.priority}</p>
-                        </div>
+                        <div><span className="text-muted-foreground text-xs">Priority:</span><p className="font-medium text-foreground">{contact.priority}</p></div>
                       )}
                     </div>
                   )}
 
-                  {/* Links Section (Phase 6.3 - CRITICAL) */}
-                  {(contact?.rfsLink || contact?.documentLink) && (
+                  {/* Links Section */}
+                  {(contact?.rfsLink || contact?.documentLink) && !isEditingIntake && (
                     <div className="space-y-2 pt-2 border-t border-border">
                       <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Documents</h4>
                       {contact.rfsLink && (
-                        <div>
-                          <a
-                            href={contact.rfsLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-sm text-primary hover:underline flex items-center gap-1"
-                          >
-                            <FileText className="h-3 w-3" />
-                            Open RFS Form
-                          </a>
-                        </div>
+                        <a href={contact.rfsLink} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline flex items-center gap-1">
+                          <FileText className="h-3 w-3" /> Open RFS Form
+                        </a>
                       )}
                       {contact.documentLink && (
-                        <div>
-                          <a
-                            href={contact.documentLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-sm text-primary hover:underline flex items-center gap-1"
-                          >
-                            <FileText className="h-3 w-3" />
-                            View Documents
-                          </a>
-                        </div>
+                        <a href={contact.documentLink} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline flex items-center gap-1">
+                          <FileText className="h-3 w-3" /> View Documents
+                        </a>
                       )}
+                    </div>
+                  )}
+                  {isEditingIntake && (
+                    <div className="space-y-2 pt-2 border-t border-border">
+                      <div>
+                        <label className="text-muted-foreground text-xs">RFS Link</label>
+                        <Input className="h-8 text-sm" value={intakeEdits.rfsLink} onChange={(e) => setIntakeEdits(p => ({ ...p, rfsLink: e.target.value }))} />
+                      </div>
                     </div>
                   )}
 
                   {/* Download Intake PDF */}
-                  {(contact?.requestingFor || contact?.reasonForSeeking || contact?.reasonForTherapy || contact?.formCompletedBy ||
+                  {!isEditingIntake && (contact?.requestingFor || contact?.reasonForSeeking || contact?.reasonForTherapy || contact?.formCompletedBy ||
                     contact?.modality || contact?.insurancePayer || contact?.referralSource ||
                     contact?.priorServices || contact?.patientDob || contact?.gender ||
                     contact?.streetAddress || contact?.city) && (
@@ -1244,7 +1405,7 @@ export default function ContactDetail() {
                   )}
 
                   {/* Empty state if no intake fields */}
-                  {!contact?.requestingFor && !contact?.reasonForSeeking && !contact?.reasonForTherapy && !contact?.formCompletedBy &&
+                  {!isEditingIntake && !contact?.requestingFor && !contact?.reasonForSeeking && !contact?.reasonForTherapy && !contact?.formCompletedBy &&
                    !contact?.modality && !contact?.insurancePayer && !contact?.referralSource &&
                    !contact?.priorServices && !contact?.patientDob && !contact?.gender &&
                    !contact?.streetAddress && !contact?.city && !contact?.preferredContact &&
