@@ -10,12 +10,11 @@ import { QuickNoteModal } from "@/components/ui/quick-note-modal";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { PageLoader } from "@/components/ui/page-loader";
-import { SyncStatus } from "@/components/ui/sync-status";
 import { FallbackBanner } from "@/components/ui/fallback-banner";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { AlertTriangle, Clock, CalendarCheck, AlertCircle, CheckCircle2, Inbox, User } from "lucide-react";
-import { getWaitlistSummary, getWaitlistContacts, addNoteToContact, updateContactStatus, getAttentionFlags, triggerFullSync, type WithSource } from "@/lib/api";
+import { getWaitlistSummary, getWaitlistContacts, addNoteToContact, updateContactStatus, getAttentionFlags, type WithSource } from "@/lib/api";
 import { computeDaysWaiting } from "@/lib/days-waiting";
 import { useDataSource } from "@/lib/data-source-context";
 import { useAuth } from "@/lib/auth-context";
@@ -72,7 +71,6 @@ export default function Home() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const { updateSummarySource, updateContactsSource, updateSyncTime, lastSyncTime, dataMode, summarySource, contactsSource, isContactsLive, isFullyLive } = useDataSource();
-  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Derive author initials from authenticated user
   const authorInitials = getAuthorInitials(user?.name);
@@ -155,18 +153,6 @@ export default function Home() {
       updateContactsSource(contactsData._source as "mock" | "live" | "fallback");
     }
   }, [contactsData, updateContactsSource]);
-
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    try {
-      await triggerFullSync();
-      await Promise.all([refetchSummary(), refetchContacts()]);
-    } catch (error) {
-      console.error("[home] Sync failed, refetching cache:", error);
-      await Promise.all([refetchSummary(), refetchContacts()]);
-    }
-    setIsRefreshing(false);
-  };
 
   // Phase 3: Mutations for actions
   const { toast } = useToast();
@@ -446,9 +432,6 @@ export default function Home() {
                 : "Viewing demo data"
         }
         variant="info"
-        lastSyncTime={lastSyncTime}
-        onRefresh={handleRefresh}
-        isRefreshing={isRefreshing}
       />
       <div className="space-y-8">
         <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -471,11 +454,6 @@ export default function Home() {
                 Assigned to Me
               </Label>
             </div>
-            <SyncStatus
-              lastSyncTime={lastSyncTime}
-              onRefresh={handleRefresh}
-              isRefreshing={isRefreshing}
-            />
           </div>
         </div>
 

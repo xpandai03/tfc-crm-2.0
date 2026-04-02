@@ -1,7 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { Home, Users, BarChart3, UserCheck, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useDataSource } from "@/lib/data-source-context";
 import { UserMenu } from "./user-menu";
 
 const navItems = [
@@ -12,43 +11,8 @@ const navItems = [
   { href: "/submissions", label: "Submissions", icon: FileText },
 ];
 
-// Format relative time for last sync
-function formatLastSync(date: Date | null): string {
-  if (!date) return "";
-
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffSecs = Math.floor(diffMs / 1000);
-  const diffMins = Math.floor(diffSecs / 60);
-
-  if (diffSecs < 60) return "just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-
-  return date.toLocaleDateString();
-}
-
 export function TopNav() {
   const [location] = useLocation();
-  const { lastSyncTime } = useDataSource();
-
-  const getStatusIndicator = () => {
-    const syncText = lastSyncTime ? formatLastSync(lastSyncTime) : "";
-
-    return (
-      <div className="flex items-center gap-2 text-xs">
-        <div className="h-2 w-2 rounded-full bg-green-500" />
-        <span className="text-green-600 dark:text-green-400 font-medium">Live</span>
-        {syncText && (
-          <span className="text-muted-foreground hidden md:inline">
-            · {syncText}
-          </span>
-        )}
-      </div>
-    );
-  };
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -93,7 +57,10 @@ export function TopNav() {
         </nav>
 
         <div className="flex items-center gap-2 border-l pl-4 ml-2" data-testid="status-data-mode">
-          {getStatusIndicator()}
+          <div className="flex items-center gap-2 text-xs">
+            <div className="h-2 w-2 rounded-full bg-green-500" />
+            <span className="text-green-600 dark:text-green-400 font-medium">Live</span>
+          </div>
         </div>
 
         <div className="flex items-center border-l pl-4 ml-2">

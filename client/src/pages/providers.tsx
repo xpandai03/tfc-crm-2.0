@@ -3,7 +3,7 @@ import { PageLayout } from "@/components/layout/page-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/page-loader";
-import { AlertCircle, MapPin, FileText, RefreshCw, Shield, Users, Plus, Pencil, Loader2 } from "lucide-react";
+import { AlertCircle, MapPin, FileText, Shield, Users, Plus, Pencil, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -438,7 +438,6 @@ function ProviderFormModal({
  */
 export default function Providers() {
   const queryClient = useQueryClient();
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<ProviderWithInsurance | null>(null);
   const [showProviderForm, setShowProviderForm] = useState(false);
   const [editingProvider, setEditingProvider] = useState<any>(null);
@@ -447,17 +446,10 @@ export default function Providers() {
     data,
     isLoading,
     error,
-    refetch,
   } = useQuery<ProvidersResponse>({
     queryKey: ["/api/providers"],
     queryFn: getProviders,
   });
-
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    await refetch();
-    setIsRefreshing(false);
-  };
 
   if (isLoading) {
     return (
@@ -526,15 +518,6 @@ export default function Providers() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleRefresh}
-              disabled={isRefreshing}
-            >
-              <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
-              Refresh
-            </Button>
             <Button
               size="sm"
               onClick={() => { setEditingProvider(null); setShowProviderForm(true); }}
