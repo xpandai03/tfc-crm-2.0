@@ -39,6 +39,7 @@ import {
   getRecentSubmissions,
   normalizeDateValue,
   insertMigrationContacts,
+  mergeMigrationContacts,
   type SyncPayloadContact,
   type MigrationContact,
 } from "./sync/db";
@@ -3795,7 +3796,11 @@ export async function registerRoutes(
       }
 
       const dryRun = req.query.dryRun === "true";
-      const { contacts } = req.body;
+      const { contacts, mode = "insert" } = req.body;
+
+      if (mode !== "insert" && mode !== "merge") {
+        return res.status(400).json({ error: 'mode must be "insert" or "merge"' });
+      }
 
       if (!Array.isArray(contacts) || contacts.length === 0) {
         return res.status(400).json({ error: "Request body must contain a non-empty contacts array" });
@@ -3948,10 +3953,38 @@ export async function registerRoutes(
         });
       }
 
-      // Real migration: insert into DB
+      // Real migration: insert or merge into DB
+      if (mode === "merge") {
+        const result = mergeMigrationContacts(validContacts);
+
+        console.log("[MIGRATION:MERGE]", {
+          total: contacts.length,
+          valid: validContacts.length,
+          inserted: result.inserted,
+          updated: result.updated,
+          skipped: result.skipped,
+          errors: result.errors.length + errors.length,
+        });
+
+        return res.json({
+          success: true,
+          mode: "merge",
+          total: contacts.length,
+          valid: validContacts.length,
+          inserted: result.inserted,
+          updated: result.updated,
+          skipped: result.skipped,
+          errors: [
+            ...errors,
+            ...result.errors.map((e) => ({ contactId: e.contactId, field: "db", message: e.message })),
+          ],
+          stats,
+        });
+      }
+
       const result = insertMigrationContacts(validContacts);
 
-      console.log("[MIGRATION]", {
+      console.log("[MIGRATION:INSERT]", {
         total: contacts.length,
         valid: validContacts.length,
         migrated: result.migrated,
@@ -3961,6 +3994,7 @@ export async function registerRoutes(
 
       return res.json({
         success: true,
+        mode: "insert",
         total: contacts.length,
         valid: validContacts.length,
         migrated: result.migrated,
