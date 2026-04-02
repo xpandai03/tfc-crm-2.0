@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, RefreshCw, ExternalLink, Code2, FileText, Inbox } from "lucide-react";
+import { Loader2, ExternalLink, Code2, FileText, Inbox } from "lucide-react";
 
 interface FormSubmission {
   id: number;
@@ -116,7 +116,7 @@ function RawPayloadModal({
 export default function Submissions() {
   const [selectedSubmission, setSelectedSubmission] = useState<FormSubmission | null>(null);
 
-  const { data, isLoading, refetch, isRefetching } = useQuery<{ submissions: FormSubmission[] }>({
+  const { data, isLoading } = useQuery<{ submissions: FormSubmission[] }>({
     queryKey: ["/api/submissions"],
     queryFn: async () => {
       const res = await fetch("/api/submissions");
@@ -138,15 +138,6 @@ export default function Submissions() {
               Intake form submissions · Newest first
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => refetch()}
-            disabled={isRefetching}
-          >
-            <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${isRefetching ? "animate-spin" : ""}`} />
-            Refresh
-          </Button>
         </div>
 
         {/* Loading */}

@@ -888,16 +888,6 @@ export default function ContactDetail() {
                               </SelectContent>
                             </Select>
                           </div>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={syncFromExcelMutation.isPending}
-                            onClick={() => { if (contactId) syncFromExcelMutation.mutate(contactId); }}
-                            className="h-9"
-                          >
-                            <RefreshCw className={cn("h-4 w-4 mr-1.5", syncFromExcelMutation.isPending && "animate-spin")} />
-                            {syncFromExcelMutation.isPending ? "Syncing..." : "Refresh"}
-                          </Button>
                         </div>
                       )}
                     </div>
@@ -1637,18 +1627,6 @@ export default function ContactDetail() {
                     Assign Provider
                   </Button>
 
-                  <Button
-                    variant="outline"
-                    className="w-full justify-start"
-                    size="sm"
-                    disabled={syncFromExcelMutation.isPending}
-                    onClick={() => {
-                      if (contactId) syncFromExcelMutation.mutate(contactId);
-                    }}
-                  >
-                    <RefreshCw className={`h-4 w-4 mr-2 ${syncFromExcelMutation.isPending ? "animate-spin" : ""}`} />
-                    {syncFromExcelMutation.isPending ? "Syncing..." : "Sync From Excel"}
-                  </Button>
 
                   {canUseTn && (
                     tnRecord?.tnStatus === "created" ? (

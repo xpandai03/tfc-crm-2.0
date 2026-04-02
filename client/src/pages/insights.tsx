@@ -6,10 +6,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/page-loader";
-import { SyncStatus } from "@/components/ui/sync-status";
 import { FallbackBanner } from "@/components/ui/fallback-banner";
 import { Download, AlertCircle, ChevronRight } from "lucide-react";
-import { getWaitlistSummary, getWaitlistContacts, triggerFullSync, type WithSource } from "@/lib/api";
+import { getWaitlistSummary, getWaitlistContacts, type WithSource } from "@/lib/api";
 import { computeDaysWaiting } from "@/lib/days-waiting";
 import { useDataSource } from "@/lib/data-source-context";
 import { normalizeInsurance } from "@/lib/insurance-utils";
@@ -89,8 +88,6 @@ function normalizeModality(rawValue: string | null | undefined): string {
  */
 export default function Insights() {
   const { updateSummarySource, updateContactsSource, updateSyncTime, lastSyncTime, dataMode, summarySource, contactsSource, isContactsLive, isFullyLive } = useDataSource();
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  
   // Drill-down navigation handler - navigates to Waitlist List View with filter applied
   const handleDrillDown = useCallback((filterType: "insurance" | "modality" | "umbrella", value: string) => {
     const encoded = encodeURIComponent(value);
@@ -142,18 +139,6 @@ export default function Insights() {
       updateContactsSource(contactsData._source as "mock" | "live" | "fallback");
     }
   }, [contactsData, updateContactsSource]);
-
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    try {
-      await triggerFullSync();
-      await Promise.all([refetchSummary(), refetchContacts()]);
-    } catch (error) {
-      console.error("[insights] Sync failed, refetching cache:", error);
-      await Promise.all([refetchSummary(), refetchContacts()]);
-    }
-    setIsRefreshing(false);
-  };
 
   // Get the effective status code for a contact (handles both live and mock data)
   const getContactStatusCode = (contact: WaitlistContact): number => {
@@ -412,11 +397,6 @@ export default function Insights() {
             </p>
           </div>
           <div className="flex gap-2">
-            <SyncStatus 
-              lastSyncTime={lastSyncTime} 
-              onRefresh={handleRefresh}
-              isRefreshing={isRefreshing}
-            />
             <Button variant="outline" size="sm" data-testid="button-export">
               <Download className="h-4 w-4 mr-2" />
               Export

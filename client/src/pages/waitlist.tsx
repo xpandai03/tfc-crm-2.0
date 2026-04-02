@@ -20,13 +20,11 @@ import { WaitlistListView } from "@/components/waitlist/waitlist-list-view";
 import { QuickNoteModal } from "@/components/ui/quick-note-modal";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { PageLoader } from "@/components/ui/page-loader";
-import { SyncStatus } from "@/components/ui/sync-status";
 import { FallbackBanner } from "@/components/ui/fallback-banner";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { triggerFullSync } from "@/lib/api";
 import { AlertCircle, LayoutGrid, List, User } from "lucide-react";
 import { StatusLegendModal } from "@/components/ui/status-legend-modal";
 import { getWaitlistBoard, updateContactStatus, addNoteToContact, getAttentionFlags } from "@/lib/api";
@@ -135,8 +133,6 @@ export default function Waitlist() {
       setLocation("/waitlist");
     }
   };
-  const [isRefreshing, setIsRefreshing] = useState(false);
-
   // Task ownership filter state
   const [showOnlyMine, setShowOnlyMine] = useState(false);
 
@@ -211,18 +207,6 @@ export default function Waitlist() {
       updateSyncTime();
     }
   }, [contactsData, updateContactsSource, updateSyncTime]);
-
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    try {
-      await triggerFullSync();
-      await refetchContacts();
-    } catch (error) {
-      console.error("[waitlist] Sync failed, refetching cache:", error);
-      await refetchContacts();
-    }
-    setIsRefreshing(false);
-  };
 
   // Extended mutation variables for better debugging and UX
   type StatusUpdateVars = {
@@ -567,11 +551,6 @@ export default function Waitlist() {
             </div>
 
             <StatusLegendModal />
-            <SyncStatus
-              lastSyncTime={lastSyncTime}
-              onRefresh={handleRefresh}
-              isRefreshing={isRefreshing}
-            />
           </div>
         </div>
 
