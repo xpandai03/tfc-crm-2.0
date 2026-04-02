@@ -10,11 +10,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { LogOut, Upload } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useLocation } from "wouter";
 
 export function UserMenu() {
   const { user, logout } = useAuth();
-  const navigate = useNavigate();
+  const [, setLocation] = useLocation();
 
   if (!user) {
     return null;
@@ -57,7 +57,7 @@ export function UserMenu() {
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              onClick={() => navigate("/admin/migrate")}
+              onClick={() => setLocation("/admin/migrate")}
               className="cursor-pointer"
             >
               <Upload className="mr-2 h-4 w-4" />
