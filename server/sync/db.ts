@@ -1277,3 +1277,101 @@ export function insertMigrationContacts(
   runAll();
   return { migrated, skipped, errors };
 }
+
+/**
+ * Merge migration contacts: insert new rows, update safe fields on existing ones.
+ * NEVER overwrites CRM-native data (notes, assignments, timeline, status, etc.).
+ */
+export function mergeMigrationContacts(
+  contacts: MigrationContact[]
+): { inserted: number; updated: number; skipped: number; errors: Array<{ contactId: number; message: string }> } {
+  const db = getDatabase();
+  let inserted = 0;
+  let updated = 0;
+  let skipped = 0;
+  const errors: Array<{ contactId: number; message: string }> = [];
+
+  const checkStmt = db.prepare(`SELECT contact_id FROM sync_contacts WHERE contact_id = ?`);
+
+  const insertStmt = db.prepare(`
+    INSERT INTO sync_contacts (
+      contact_id, name, email, phone, status, status_code,
+      service_requested, days_on_waitlist, date_added, assigned_to,
+      requesting_for, reason_for_seeking, reason_for_therapy, detailed_reason,
+      form_completed_by, modality, referral_source, prior_services,
+      prior_provider, preferred_contact, custody, flags, priority,
+      insurance_payer, insurance_plan, insurance_id, insurance_status,
+      referral_auth, referral_status,
+      patient_dob, gender, age,
+      street_address, city, state, zip_code, county,
+      rfs_link, document_link,
+      last_contact, last_note,
+      synced_at, sync_hash
+    ) VALUES (
+      @contactId, @name, @email, @phone, @status, @statusCode,
+      @serviceRequested, @daysOnWaitlist, @dateAdded, @assignedTo,
+      @requestingFor, @reasonForSeeking, @reasonForTherapy, @detailedReason,
+      @formCompletedBy, @modality, NULL, @priorServices,
+      @priorProvider, NULL, NULL, @flags, NULL,
+      @insurancePayer, @insurancePlan, @insuranceId, NULL,
+      NULL, NULL,
+      @patientDob, @gender, @age,
+      @streetAddress, @city, @state, @zipCode, NULL,
+      @rfsLink, NULL,
+      NULL, @lastNote,
+      datetime('now'), @syncHash
+    )
+  `);
+
+  const updateStmt = db.prepare(`
+    UPDATE sync_contacts SET
+      name = @name,
+      email = @email,
+      phone = @phone,
+      requesting_for = @requestingFor,
+      reason_for_seeking = @reasonForSeeking,
+      reason_for_therapy = @reasonForTherapy,
+      detailed_reason = @detailedReason,
+      form_completed_by = @formCompletedBy,
+      modality = @modality,
+      prior_services = @priorServices,
+      prior_provider = @priorProvider,
+      insurance_payer = @insurancePayer,
+      insurance_plan = @insurancePlan,
+      insurance_id = @insuranceId,
+      patient_dob = @patientDob,
+      gender = @gender,
+      age = @age,
+      street_address = @streetAddress,
+      city = @city,
+      state = @state,
+      zip_code = @zipCode,
+      rfs_link = @rfsLink,
+      synced_at = datetime('now')
+    WHERE contact_id = @contactId
+  `);
+
+  const runAll = db.transaction(() => {
+    for (const c of contacts) {
+      try {
+        const existing = checkStmt.get(c.contactId);
+        if (!existing) {
+          insertStmt.run({ ...c, syncHash: `migrate-${c.contactId}` });
+          inserted++;
+        } else {
+          const result = updateStmt.run(c);
+          if (result.changes > 0) updated++;
+          else skipped++;
+        }
+      } catch (err) {
+        errors.push({
+          contactId: c.contactId,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  });
+
+  runAll();
+  return { inserted, updated, skipped, errors };
+}
