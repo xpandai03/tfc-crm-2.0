@@ -9,14 +9,21 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { LogOut, User } from "lucide-react";
+import { LogOut, Upload } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 export function UserMenu() {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
 
   if (!user) {
     return null;
   }
+
+  const isAdmin =
+    user.email.endsWith("@tfc.help") ||
+    user.email.endsWith("@tfc.health") ||
+    user.email.endsWith("@thefamilyconnection.org");
 
   // Get initials from name
   const initials = user.name
@@ -46,6 +53,18 @@ export function UserMenu() {
             </p>
           </div>
         </DropdownMenuLabel>
+        {isAdmin && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={() => navigate("/admin/migrate")}
+              className="cursor-pointer"
+            >
+              <Upload className="mr-2 h-4 w-4" />
+              <span>Migrate Data</span>
+            </DropdownMenuItem>
+          </>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={logout} className="cursor-pointer text-destructive focus:text-destructive">
           <LogOut className="mr-2 h-4 w-4" />
