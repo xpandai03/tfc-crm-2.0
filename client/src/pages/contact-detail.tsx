@@ -237,6 +237,23 @@ export default function ContactDetail() {
   });
   const tnRecord = tnData?.record ?? null;
 
+  // Detect legacy TherapyNotes URL from historical notes
+  // Priority: 1) therapy_notes_records table, 2) legacy note URL, 3) none
+  const legacyTnUrl = useMemo(() => {
+    if (tnRecord?.tnStatus === "created") return null; // DB record takes precedence
+    const notes = contact?.notes;
+    if (!notes || !Array.isArray(notes)) return null;
+    const tnUrlPattern = /https?:\/\/(?:www\.)?therapynotes\.com\/[^\s"<>]+/i;
+    // Scan from most recent to oldest
+    for (let i = notes.length - 1; i >= 0; i--) {
+      const content = notes[i]?.content;
+      if (!content) continue;
+      const match = content.match(tnUrlPattern);
+      if (match) return match[0];
+    }
+    return null;
+  }, [contact?.notes, tnRecord?.tnStatus]);
+
   // Refresh activity when TN status reaches terminal state (created/failed)
   const tnStatus = tnRecord?.tnStatus;
   useEffect(() => {
@@ -1681,6 +1698,16 @@ export default function ContactDetail() {
                       >
                         <AlertCircle className="h-4 w-4 mr-2" />
                         Retry TherapyNotes
+                      </Button>
+                    ) : legacyTnUrl ? (
+                      <Button
+                        variant="outline"
+                        className="w-full justify-start border-green-300 text-green-700 hover:bg-green-50"
+                        size="sm"
+                        onClick={() => window.open(legacyTnUrl, "_blank")}
+                      >
+                        <ExternalLink className="h-4 w-4 mr-2" />
+                        Open in TherapyNotes
                       </Button>
                     ) : (
                       <Button
