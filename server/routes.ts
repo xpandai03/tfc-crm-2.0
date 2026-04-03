@@ -3160,10 +3160,11 @@ export async function registerRoutes(
         modality: contact.modality as string | null,
         city: contact.city as string | null,
         serviceRequested: String(contact.serviceRequested || ""),
+        requestingFor: (contact.requestingFor as string) || null,
         eccConsent: contact.eccConsent as boolean | null,
       };
 
-      console.log(`[email-preview] Built contactForEmail: email=${contactForEmail.email}, name=${contactForEmail.name}`);
+      console.log(`[email-preview] contactForEmail: email=${contactForEmail.email}, requestingFor=${contactForEmail.requestingFor}`);
 
       // Sanitize dynamicFields: only allow string values, strip HTML
       const sanitizedFields: Record<string, string> = {};
@@ -3254,6 +3255,7 @@ export async function registerRoutes(
         modality: contact.modality as string | null,
         city: contact.city as string | null,
         serviceRequested: String(contact.serviceRequested || ""),
+        requestingFor: (contact.requestingFor as string) || null,
         eccConsent: contact.eccConsent as boolean | null,
       };
 
@@ -3339,6 +3341,21 @@ export async function registerRoutes(
           console.error("[send-email] Failed to save email snapshot (non-blocking):", snapshotErr);
         }
       }
+
+      // Log email_sent activity
+      logActivity({
+        type: "email_sent",
+        actorEmail: userEmail,
+        entityType: "contact",
+        entityId: String(contactId),
+        entityName: contactForEmail.name,
+        metadata: {
+          contactId,
+          template: templateId,
+          templateName,
+          recipientEmail: contactForEmail.email,
+        },
+      });
 
       // Fire-and-forget: log timeline note AFTER response is sent
       if (DATA_MODE === "live" && sendResult.success) {
@@ -4084,6 +4101,21 @@ export async function registerRoutes(
                 updateTnStatus(contactId, "created", {
                   url: tnResult.tn_patient_url,
                   id: tnResult.tn_patient_id,
+                });
+
+                // Log therapy_notes_created activity
+                const contactName = getSyncContactById(contactId)?.name || `Contact ${contactId}`;
+                logActivity({
+                  type: "therapy_notes_created",
+                  actorEmail: userEmail,
+                  entityType: "contact",
+                  entityId: String(contactId),
+                  entityName: contactName,
+                  metadata: {
+                    contactId,
+                    tnPatientId: tnResult.tn_patient_id,
+                    tnPatientUrl: tnResult.tn_patient_url,
+                  },
                 });
 
                 // Fire-and-forget timeline log

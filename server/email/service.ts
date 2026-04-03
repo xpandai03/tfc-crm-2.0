@@ -38,6 +38,7 @@ export interface ContactForEmail {
   modality?: string | null;
   city?: string | null;
   serviceRequested?: string;
+  requestingFor?: string | null;
   eccConsent?: boolean | null;
 }
 
@@ -67,6 +68,20 @@ export interface SendResult {
 }
 
 /**
+ * Map intake requestingFor field to human-readable therapy type for emails.
+ * Keeps email language safe and semantically correct.
+ */
+function mapServiceType(requestingFor: string | null | undefined): string {
+  if (!requestingFor) return "therapy";
+  const normalized = requestingFor.trim().toLowerCase();
+  if (normalized === "myself") return "therapy";
+  if (normalized === "my child") return "child therapy";
+  if (normalized === "my partner & myself" || normalized === "my partner and myself") return "couples therapy";
+  if (normalized === "my family") return "family therapy";
+  return "therapy";
+}
+
+/**
  * Build variable map from contact data and optional admin-provided dynamic fields
  */
 function buildVariableMap(
@@ -78,7 +93,7 @@ function buildVariableMap(
     name: contact.name || "",
     modality: contact.modality || "your preferred modality",
     city: contact.city || "your area",
-    serviceRequested: contact.serviceRequested || "therapy",
+    serviceRequested: mapServiceType(contact.requestingFor) || contact.serviceRequested || "therapy",
     therapistName: "[Provider Name]",
     appointmentDatetime: "[Appointment Date & Time]",
     appointmentLocationOrModality: contact.modality || "[Location/Modality]",
