@@ -19,6 +19,8 @@ interface FormSubmission {
   id: number;
   createdAt: string;
   source: string;
+  formType: string;
+  submittedAt: string | null;
   contactId: number | null;
   name: string;
   payload: Record<string, unknown>;
@@ -47,32 +49,101 @@ function formatExactTime(iso: string): string {
 function getSourceLabel(source: string): { label: string; variant: "secondary" | "default" | "outline" } {
   switch (source) {
     case "rfs_v2":
-      return { label: "New RFS Form", variant: "default" };
+      return { label: "RFS Form", variant: "default" };
     case "rfs_legacy":
-      return { label: "Old RFS Form", variant: "secondary" };
     case "rfs":
-      return { label: "Old RFS Form", variant: "secondary" };
+      return { label: "RFS (Legacy)", variant: "secondary" };
+    case "consent_form_v1":
+      return { label: "Consent", variant: "secondary" };
+    case "feedback_form_v1":
+      return { label: "Feedback", variant: "outline" };
     default:
       return { label: source || "Unknown", variant: "outline" };
   }
 }
 
-function buildSummary(payload: Record<string, unknown>): string {
-  const parts: string[] = [];
-  const s = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+function getFormTypeBadge(formType: string): { label: string; variant: "secondary" | "default" | "outline" } {
+  switch (formType) {
+    case "intake":
+      return { label: "Intake", variant: "default" };
+    case "Consent":
+      return { label: "Consent", variant: "secondary" };
+    case "Feedback":
+      return { label: "Feedback", variant: "outline" };
+    default:
+      return { label: formType || "Unknown", variant: "outline" };
+  }
+}
 
-  const requesting = s(payload.requestingFor);
-  if (requesting) parts.push(requesting);
+/** Extract a human-readable summary from submission payload based on form type. */
+function getSubmissionSummary(sub: FormSubmission): { title: string; subtitle: string; meta: string } {
+  const p = sub.payload;
+  const s = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : "");
 
-  const therapy = Array.isArray(payload.reasonForTherapy)
-    ? payload.reasonForTherapy.join(", ")
-    : s(payload.reasonForTherapy);
-  if (therapy) parts.push(therapy);
+  // Consent forms
+  if (sub.formType === "Consent" || sub.source === "consent_form_v1") {
+    const patient = s(p.patientName) || s(p.name) || sub.name;
+    const consentType = s(p.formType) || s(p.consentType) || "Consent";
+    const label = consentType.toLowerCase().includes("consent") ? consentType : `${consentType} Consent`;
 
-  const insurance = s(payload.insurancePayer);
-  if (insurance) parts.push(insurance);
+    let secondary = "";
+    if (Array.isArray(p.familyMembers) && p.familyMembers.length > 0) {
+      const names = p.familyMembers.map((m: unknown) =>
+        typeof m === "object" && m && "name" in m ? String((m as Record<string, unknown>).name) : String(m)
+      ).filter(Boolean);
+      if (names.length) secondary = `With: ${names.join(", ")}`;
+    } else if (s(p.partnerName)) {
+      secondary = `With partner: ${s(p.partnerName)}`;
+    }
 
-  return parts.join(" · ") || "No summary available";
+    return { title: patient || "Unknown Patient", subtitle: label, meta: secondary };
+  }
+
+  // Feedback forms
+  if (sub.formType === "Feedback" || sub.source === "feedback_form_v1") {
+    const who = s(p.name) || s(p.submitterName) || sub.name;
+    const feedbackType = s(p.feedbackType) || s(p.type) || "General Feedback";
+    const comment = s(p.comment) || s(p.feedback) || "";
+    return {
+      title: who || "Anonymous",
+      subtitle: feedbackType,
+      meta: comment ? (comment.length > 80 ? comment.slice(0, 80) + "…" : comment) : "",
+    };
+  }
+
+  // Intake / RFS forms (existing behavior, enhanced)
+  if (sub.formType === "intake" || sub.source === "rfs_v2" || sub.source === "rfs" || sub.source === "rfs_legacy") {
+    const who = s(p.name) || sub.name;
+    const parts: string[] = [];
+
+    const requesting = s(p.requestingFor);
+    if (requesting) parts.push(requesting);
+
+    const therapy = Array.isArray(p.reasonForTherapy)
+      ? p.reasonForTherapy.join(", ")
+      : s(p.reasonForTherapy);
+    if (therapy) parts.push(therapy);
+
+    const insurance = s(p.insurancePayer);
+    if (insurance) parts.push(insurance);
+
+    const modality = s(p.modality);
+    if (modality) parts.push(modality);
+
+    return {
+      title: who || "Unknown",
+      subtitle: parts.join(" · ") || "Intake submission",
+      meta: "",
+    };
+  }
+
+  // Generic fallback
+  const who = s(p.patientName) || s(p.name) || sub.name;
+  return {
+    title: who || sub.formType || "Submission",
+    subtitle: who ? `${sub.formType} submission` : "Submission received",
+    meta: "",
+  };
 }
 
 function RawPayloadModal({
@@ -92,7 +163,7 @@ function RawPayloadModal({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-sm">
             <Code2 className="h-4 w-4" />
-            Raw Submission — {submission.name}
+            Raw Submission — {submission.name || submission.formType}
           </DialogTitle>
           <p className="text-xs text-muted-foreground">
             Submitted {formatExactTime(submission.createdAt)} · Source: {submission.source.toUpperCase()}
@@ -135,7 +206,7 @@ export default function Submissions() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Submissions</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Intake form submissions · Newest first
+              All form submissions · Newest first
             </p>
           </div>
         </div>
@@ -154,7 +225,7 @@ export default function Submissions() {
             <Inbox className="h-12 w-12 text-muted-foreground/30 mb-4" />
             <p className="text-sm font-medium text-foreground">No submissions yet</p>
             <p className="text-xs text-muted-foreground mt-1 max-w-xs">
-              Submissions will appear here as intake forms are received.
+              Submissions will appear here as forms are received.
             </p>
           </div>
         )}
@@ -162,66 +233,70 @@ export default function Submissions() {
         {/* Submission list */}
         {!isLoading && submissions.length > 0 && (
           <div className="space-y-3">
-            {submissions.map((sub) => (
-              <Card key={sub.id} className="overflow-hidden">
-                <CardContent className="px-4 py-3 space-y-2">
-                  {/* Top row: name + source badge + timestamp */}
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                      <span className="font-medium text-sm truncate">{sub.name}</span>
-                      {(() => {
-                        const src = getSourceLabel(sub.source);
-                        return (
-                          <Badge variant={src.variant} className="text-[10px] px-1.5 py-0 shrink-0">
-                            {src.label}
-                          </Badge>
-                        );
-                      })()}
+            {submissions.map((sub) => {
+              const summary = getSubmissionSummary(sub);
+              const srcBadge = getSourceLabel(sub.source);
+              const typeBadge = getFormTypeBadge(sub.formType);
+
+              return (
+                <Card key={sub.id} className="overflow-hidden">
+                  <CardContent className="px-4 py-3 space-y-1.5">
+                    {/* Top row: title + badges + timestamp */}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                        <span className="font-medium text-sm truncate">{summary.title}</span>
+                        <Badge variant={typeBadge.variant} className="text-[10px] px-1.5 py-0 shrink-0">
+                          {typeBadge.label}
+                        </Badge>
+                        <Badge variant={srcBadge.variant} className="text-[10px] px-1.5 py-0 shrink-0">
+                          {srcBadge.label}
+                        </Badge>
+                      </div>
+                      <span
+                        className="text-xs text-muted-foreground flex-shrink-0 tabular-nums"
+                        title={formatExactTime(sub.createdAt)}
+                      >
+                        {formatRelativeTime(sub.createdAt)}
+                      </span>
                     </div>
-                    <span
-                      className="text-xs text-muted-foreground flex-shrink-0 tabular-nums"
-                      title={formatExactTime(sub.createdAt)}
-                    >
-                      {formatRelativeTime(sub.createdAt)}
-                    </span>
-                  </div>
 
-                  {/* Summary line */}
-                  <p className="text-xs text-muted-foreground pl-6 line-clamp-2">
-                    {buildSummary(sub.payload)}
-                  </p>
-
-                  {/* Modality if present */}
-                  {typeof sub.payload.modality === "string" && sub.payload.modality.trim() && (
-                    <p className="text-xs text-muted-foreground pl-6">
-                      {String(sub.payload.modality)}
+                    {/* Summary */}
+                    <p className="text-xs text-muted-foreground pl-6 line-clamp-2">
+                      {summary.subtitle}
                     </p>
-                  )}
 
-                  {/* Actions */}
-                  <div className="flex items-center gap-2 pl-6 pt-1">
-                    {sub.contactId && (
-                      <Link href={`/contact/${sub.contactId}`}>
-                        <Button variant="outline" size="sm" className="h-7 text-xs">
-                          <ExternalLink className="h-3 w-3 mr-1" />
-                          View Contact
-                        </Button>
-                      </Link>
+                    {/* Optional meta line */}
+                    {summary.meta && (
+                      <p className="text-xs text-muted-foreground/70 pl-6 line-clamp-1 italic">
+                        {summary.meta}
+                      </p>
                     )}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 text-xs"
-                      onClick={() => setSelectedSubmission(sub)}
-                    >
-                      <Code2 className="h-3 w-3 mr-1" />
-                      View Raw
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+
+                    {/* Actions */}
+                    <div className="flex items-center gap-2 pl-6 pt-1">
+                      {sub.contactId && (
+                        <Link href={`/contact/${sub.contactId}`}>
+                          <Button variant="outline" size="sm" className="h-7 text-xs">
+                            <ExternalLink className="h-3 w-3 mr-1" />
+                            View Contact
+                          </Button>
+                        </Link>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => setSelectedSubmission(sub)}
+                      >
+                        <Code2 className="h-3 w-3 mr-1" />
+                        View Raw
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
 
             <p className="text-xs text-muted-foreground text-center pt-2">
               Showing {submissions.length} submission{submissions.length !== 1 ? "s" : ""}
