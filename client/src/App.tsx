@@ -11,6 +11,7 @@ import ContactDetail from "@/pages/contact-detail";
 import Insights from "@/pages/insights";
 import Providers from "@/pages/providers";
 import Submissions from "@/pages/submissions";
+import ActivityPage from "@/pages/activity";
 import AdminMigrate from "@/pages/admin-migrate";
 import Login from "@/pages/login";
 import NotFound from "@/pages/not-found";
@@ -24,6 +25,7 @@ function Router() {
       <Route path="/insights" component={Insights} />
       <Route path="/providers" component={Providers} />
       <Route path="/submissions" component={Submissions} />
+      <Route path="/activity" component={ActivityPage} />
       <Route path="/admin/migrate" component={AdminMigrate} />
       <Route component={NotFound} />
     </Switch>

@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Home, Users, BarChart3, UserCheck, FileText } from "lucide-react";
+import { Home, Users, BarChart3, UserCheck, FileText, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserMenu } from "./user-menu";
 
@@ -9,6 +9,7 @@ const navItems = [
   { href: "/insights", label: "Insights", icon: BarChart3 },
   { href: "/providers", label: "Providers", icon: UserCheck, beta: true },
   { href: "/submissions", label: "Submissions", icon: FileText },
+  { href: "/activity", label: "Activity", icon: Activity },
 ];
 
 export function TopNav() {

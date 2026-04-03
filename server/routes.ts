@@ -51,6 +51,7 @@ import {
   type SyncPayloadContact,
   type MigrationContact,
 } from "./sync/db";
+import { logActivity, getRecentActivity } from "./activity/db";
 import * as XLSX from "xlsx";
 import * as path from "path";
 
@@ -2016,8 +2017,23 @@ export async function registerRoutes(
           300: "on_hold", 400: "closed",
         };
         try {
+          const prev = getSyncContactById(contactId);
           updateSyncContactStatus(contactId, statusCode, statusCodeToString[statusCode] || "unknown");
           console.log(`[update-status] Sync cache updated for contactId ${contactId}`);
+
+          logActivity({
+            type: "status_changed",
+            actorEmail: (req as any).user?.email || "system",
+            entityType: "contact",
+            entityId: String(contactId),
+            entityName: prev?.name || "",
+            metadata: {
+              from: prev?.statusCode ?? "",
+              fromLabel: prev?.status ?? "",
+              to: statusCode,
+              toLabel: statusCodeToString[statusCode] || "unknown",
+            },
+          });
         } catch (e) {
           console.warn(`[update-status] Failed to update sync cache:`, e);
         }
@@ -2122,8 +2138,18 @@ export async function registerRoutes(
       if (DATA_MODE === "live") {
         // Write-through: update sync cache for instant timeline update
         try {
+          const contact = getSyncContactById(contactId);
           appendSyncContactNote(contactId, note.trim(), author.trim(), timestamp);
           console.log(`[add-note] Sync cache updated for contactId ${contactId}`);
+
+          logActivity({
+            type: "note_added",
+            actorEmail: (req as any).user?.email || "system",
+            entityType: "contact",
+            entityId: String(contactId),
+            entityName: contact?.name || "",
+            metadata: { preview: note.trim().substring(0, 100) },
+          });
         } catch (e) {
           console.warn(`[add-note] Failed to update sync cache:`, e);
         }
@@ -3343,6 +3369,15 @@ export async function registerRoutes(
 
       boardCache = null;
 
+      logActivity({
+        type: "submission_received",
+        actorEmail: "system",
+        entityType: "contact",
+        entityId: String(contactId),
+        entityName: b.name.trim(),
+        metadata: { formType: "Intake", source: "rfs_v2" },
+      });
+
       console.log(`[INTAKE] New contact created: ${contactId} (${b.name.trim()})`);
 
       return res.json({ success: true, contactId });
@@ -3959,6 +3994,15 @@ export async function registerRoutes(
         data,
       });
 
+      logActivity({
+        type: "submission_received",
+        actorEmail: "system",
+        entityType: "submission",
+        entityId: String(id),
+        entityName: typeof name === "string" ? name.trim() : String(data.patientName || data.name || ""),
+        metadata: { formType, source },
+      });
+
       console.log(`[submissions] Ingested: id=${id} formType=${formType} source=${source}`);
       return res.json({ success: true, id });
     } catch (error) {
@@ -4305,6 +4349,21 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[email-snapshots] Error fetching snapshot:", error);
       return res.status(500).json({ error: "Failed to fetch email snapshot" });
+    }
+  });
+
+  // ============================================================================
+  // Activity Timeline
+  // ============================================================================
+
+  app.get("/api/activity", async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(String(req.query.limit)) || 100, 500);
+      const activities = getRecentActivity(limit);
+      return res.json({ activities });
+    } catch (error) {
+      console.error("[activity] Error fetching activity:", error);
+      return res.status(500).json({ error: "Failed to fetch activity" });
     }
   });
 
