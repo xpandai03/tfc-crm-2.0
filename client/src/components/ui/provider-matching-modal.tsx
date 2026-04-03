@@ -214,9 +214,9 @@ export function ProviderMatchingModal({
         )}
 
         {/* Results - scrollable area */}
-        <div className="flex-1 min-h-0 overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-y-auto">
           {hasMatches ? (
-            <ScrollArea className="h-full pr-4">
+            <div className="pr-4">
               <div className="space-y-3 pb-1">
                 {matches.map((match, index) => (
                   <ProviderMatchCard
@@ -268,7 +268,7 @@ export function ProviderMatchingModal({
                   </div>
                 </div>
               )}
-            </ScrollArea>
+            </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <Info className="h-10 w-10 text-muted-foreground/50 mb-3" />
