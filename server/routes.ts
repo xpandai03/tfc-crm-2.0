@@ -48,6 +48,7 @@ import {
   normalizeDateValue,
   insertMigrationContacts,
   mergeMigrationContacts,
+  fullSyncMigrationContacts,
   updateContactIntakeFields,
   getWaitlistExportData,
   WAITLIST_EXPORT_COLUMNS,
@@ -4306,8 +4307,8 @@ export async function registerRoutes(
       const dryRun = req.query.dryRun === "true";
       const { contacts, mode = "insert" } = req.body;
 
-      if (mode !== "insert" && mode !== "merge") {
-        return res.status(400).json({ error: 'mode must be "insert" or "merge"' });
+      if (mode !== "insert" && mode !== "merge" && mode !== "fullsync") {
+        return res.status(400).json({ error: 'mode must be "insert", "merge", or "fullsync"' });
       }
 
       if (!Array.isArray(contacts) || contacts.length === 0) {
@@ -4482,6 +4483,34 @@ export async function registerRoutes(
           inserted: result.inserted,
           updated: result.updated,
           skipped: result.skipped,
+          errors: [
+            ...errors,
+            ...result.errors.map((e) => ({ contactId: e.contactId, field: "db", message: e.message })),
+          ],
+          stats,
+        });
+      }
+
+      if (mode === "fullsync") {
+        const result = fullSyncMigrationContacts(validContacts);
+
+        console.log("[MIGRATION:FULLSYNC]", {
+          total: contacts.length,
+          valid: validContacts.length,
+          inserted: result.inserted,
+          updated: result.updated,
+          unchanged: result.unchanged,
+          errors: result.errors.length + errors.length,
+        });
+
+        return res.json({
+          success: true,
+          mode: "fullsync",
+          total: contacts.length,
+          valid: validContacts.length,
+          inserted: result.inserted,
+          updated: result.updated,
+          unchanged: result.unchanged,
           errors: [
             ...errors,
             ...result.errors.map((e) => ({ contactId: e.contactId, field: "db", message: e.message })),

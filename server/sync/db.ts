@@ -1624,6 +1624,113 @@ export function mergeMigrationContacts(
   return { inserted, updated, skipped, errors };
 }
 
+/**
+ * Full-sync migration: upsert ALL fields from production data.
+ * Updates status, notes, assignments — everything. Production is truth.
+ * Safe to run repeatedly (idempotent via ON CONFLICT upsert).
+ */
+export function fullSyncMigrationContacts(
+  contacts: MigrationContact[]
+): { inserted: number; updated: number; unchanged: number; errors: Array<{ contactId: number; message: string }> } {
+  const db = getDatabase();
+  let inserted = 0;
+  let updated = 0;
+  let unchanged = 0;
+  const errors: Array<{ contactId: number; message: string }> = [];
+
+  const upsertStmt = db.prepare(`
+    INSERT INTO sync_contacts (
+      contact_id, name, email, phone, status, status_code,
+      service_requested, days_on_waitlist, date_added, assigned_to,
+      requesting_for, reason_for_seeking, reason_for_therapy, detailed_reason,
+      form_completed_by, modality, referral_source, prior_services,
+      prior_provider, preferred_contact, custody, flags, priority,
+      insurance_payer, insurance_plan, insurance_id, insurance_status,
+      referral_auth, referral_status,
+      patient_dob, gender, age,
+      street_address, city, state, zip_code, county,
+      rfs_link, document_link,
+      last_contact, last_note,
+      synced_at, sync_hash
+    ) VALUES (
+      @contactId, @name, @email, @phone, @status, @statusCode,
+      @serviceRequested, @daysOnWaitlist, @dateAdded, @assignedTo,
+      @requestingFor, @reasonForSeeking, @reasonForTherapy, @detailedReason,
+      @formCompletedBy, @modality, NULL, @priorServices,
+      @priorProvider, NULL, NULL, @flags, NULL,
+      @insurancePayer, @insurancePlan, @insuranceId, NULL,
+      NULL, NULL,
+      @patientDob, @gender, @age,
+      @streetAddress, @city, @state, @zipCode, NULL,
+      @rfsLink, NULL,
+      NULL, @lastNote,
+      datetime('now'), @syncHash
+    )
+    ON CONFLICT(contact_id) DO UPDATE SET
+      name = excluded.name,
+      email = excluded.email,
+      phone = excluded.phone,
+      status = excluded.status,
+      status_code = excluded.status_code,
+      service_requested = excluded.service_requested,
+      days_on_waitlist = excluded.days_on_waitlist,
+      date_added = excluded.date_added,
+      assigned_to = excluded.assigned_to,
+      requesting_for = excluded.requesting_for,
+      reason_for_seeking = excluded.reason_for_seeking,
+      reason_for_therapy = excluded.reason_for_therapy,
+      detailed_reason = excluded.detailed_reason,
+      form_completed_by = excluded.form_completed_by,
+      modality = excluded.modality,
+      prior_services = excluded.prior_services,
+      prior_provider = excluded.prior_provider,
+      flags = excluded.flags,
+      insurance_payer = excluded.insurance_payer,
+      insurance_plan = excluded.insurance_plan,
+      insurance_id = excluded.insurance_id,
+      patient_dob = excluded.patient_dob,
+      gender = excluded.gender,
+      age = excluded.age,
+      street_address = excluded.street_address,
+      city = excluded.city,
+      state = excluded.state,
+      zip_code = excluded.zip_code,
+      rfs_link = excluded.rfs_link,
+      last_note = excluded.last_note,
+      synced_at = datetime('now'),
+      sync_hash = excluded.sync_hash
+  `);
+
+  const checkStmt = db.prepare(`SELECT sync_hash FROM sync_contacts WHERE contact_id = ?`);
+
+  const runAll = db.transaction(() => {
+    for (const c of contacts) {
+      try {
+        const hash = `fullsync-${c.contactId}-${c.statusCode}-${(c.lastNote || "").length}`;
+        const existing = checkStmt.get(c.contactId) as { sync_hash: string | null } | undefined;
+
+        const result = upsertStmt.run({ ...c, syncHash: hash });
+
+        if (!existing) {
+          inserted++;
+        } else if (result.changes > 0) {
+          updated++;
+        } else {
+          unchanged++;
+        }
+      } catch (err) {
+        errors.push({
+          contactId: c.contactId,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  });
+
+  runAll();
+  return { inserted, updated, unchanged, errors };
+}
+
 // ============================================================================
 // Contact Intake Field Updates (CRM edits)
 // ============================================================================
