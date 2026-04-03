@@ -3979,6 +3979,17 @@ export async function registerRoutes(
         return res.status(500).json({ error: "TherapyNotes API key not configured" });
       }
 
+      // Log therapy_notes_started activity
+      const contactName = req.body.contactName || getSyncContactById(contactId)?.name || `Contact ${contactId}`;
+      logActivity({
+        type: "therapy_notes_started",
+        actorEmail: userEmail,
+        entityType: "contact",
+        entityId: String(contactId),
+        entityName: contactName,
+        metadata: { contactId },
+      });
+
       // Return 202 immediately
       const record = getTnRecord(contactId);
       res.status(202).json({ status: "in_progress", record });
@@ -4146,6 +4157,16 @@ export async function registerRoutes(
           console.error(`[TN] All attempts failed for contact ${contactId}: ${lastError}`);
           updateTnStatus(contactId, "failed", { failureReason: lastError });
 
+          // Log therapy_notes_failed activity
+          logActivity({
+            type: "therapy_notes_failed",
+            actorEmail: userEmail,
+            entityType: "contact",
+            entityId: String(contactId),
+            entityName: getSyncContactById(contactId)?.name || `Contact ${contactId}`,
+            metadata: { contactId, failureReason: lastError, attempts: TN_MAX_RETRIES + 1 },
+          });
+
           // Fire-and-forget timeline log for failure
           const author = userEmail.split("@")[0].substring(0, 3).toUpperCase();
           fetch(N8N_ENDPOINTS.addNote, {
@@ -4162,6 +4183,15 @@ export async function registerRoutes(
           const message = err instanceof Error ? err.message : String(err);
           console.error(`[TN] Unexpected error for contact ${contactId}: ${message}`);
           updateTnStatus(contactId, "failed", { failureReason: message });
+
+          logActivity({
+            type: "therapy_notes_failed",
+            actorEmail: userEmail,
+            entityType: "contact",
+            entityId: String(contactId),
+            entityName: getSyncContactById(contactId)?.name || `Contact ${contactId}`,
+            metadata: { contactId, failureReason: message },
+          });
         }
 
         console.log(`[TN] Final state:`, JSON.stringify(getTnRecord(contactId)));

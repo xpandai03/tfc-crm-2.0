@@ -19,7 +19,9 @@ export type ActivityType =
   | "contact_assigned"
   | "provider_updated"
   | "email_sent"
-  | "therapy_notes_created";
+  | "therapy_notes_started"
+  | "therapy_notes_created"
+  | "therapy_notes_failed";
 
 export interface LogActivityParams {
   type: ActivityType;
@@ -210,8 +212,18 @@ function formatActivitySummary(
       return `Sent ${templateName} to ${name}`;
     }
 
+    case "therapy_notes_started": {
+      return `Started TherapyNotes creation for ${name}`;
+    }
+
     case "therapy_notes_created": {
       return `Created TherapyNotes patient for ${name}`;
+    }
+
+    case "therapy_notes_failed": {
+      const reason = String(metadata.failureReason || "unknown error");
+      const short = reason.length > 80 ? reason.slice(0, 80) + "…" : reason;
+      return `TherapyNotes creation failed for ${name}: ${short}`;
     }
 
     default:
