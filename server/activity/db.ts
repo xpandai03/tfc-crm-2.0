@@ -17,7 +17,9 @@ export type ActivityType =
   | "note_added"
   | "contact_updated"
   | "contact_assigned"
-  | "provider_updated";
+  | "provider_updated"
+  | "email_sent"
+  | "therapy_notes_created";
 
 export interface LogActivityParams {
   type: ActivityType;
@@ -201,6 +203,15 @@ function formatActivitySummary(
         return `Updated provider ${name} (${fieldsUpdated.join(", ")})`;
       }
       return `Updated provider ${name}`;
+    }
+
+    case "email_sent": {
+      const templateName = String(metadata.templateName || metadata.template || "email");
+      return `Sent ${templateName} to ${name}`;
+    }
+
+    case "therapy_notes_created": {
+      return `Created TherapyNotes patient for ${name}`;
     }
 
     default:
