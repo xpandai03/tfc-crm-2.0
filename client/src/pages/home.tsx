@@ -166,45 +166,20 @@ export default function Home() {
     }) => addNoteToContact({ contactId, note, author, timestamp }),
     onMutate: async () => {
       // Create pending toast
-      const toastRef = toast({
-        title: "Adding note...",
-        description: "Saving to Excel",
-      });
-
       // Close modal immediately (optimistic)
       setNoteModalOpen(false);
       setSelectedContact(null);
-
-      return { toastRef };
     },
-    onSuccess: (_, variables, context) => {
-      // Update toast to success
-      if (context?.toastRef) {
-        context.toastRef.update({
-          id: context.toastRef.id,
-          title: "Note added",
-          description: "Note has been saved to Excel.",
-        });
-        setTimeout(() => context.toastRef.dismiss(), 2000);
-      }
+    onSuccess: (_, variables) => {
+      toast({ title: "Note added", description: "Note saved successfully." });
 
       // Mark contact as handled
       setHandledContacts(prev => new Set(prev).add(variables.contactId.toString()));
       // Invalidate to force fresh data from server
       queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"], refetchType: "active" });
     },
-    onError: (error, _variables, context) => {
-      // Update toast to error
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      if (context?.toastRef) {
-        context.toastRef.update({
-          id: context.toastRef.id,
-          title: "Failed to add note",
-          description: errorMessage,
-          variant: "destructive",
-        });
-        setTimeout(() => context.toastRef.dismiss(), 5000);
-      }
+    onError: (error) => {
+      toast({ title: "Failed to add note", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" });
     },
   });
 

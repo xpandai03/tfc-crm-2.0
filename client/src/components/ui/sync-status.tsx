@@ -48,7 +48,7 @@ export function SyncStatus({
     <div className={cn("flex items-center gap-2", className)}>
       {isRefreshing ? (
         <span className="text-xs text-amber-600 dark:text-amber-400 font-medium" data-testid="text-syncing">
-          Syncing from Excel...
+          Refreshing...
         </span>
       ) : lastSyncTime ? (
         <span className="text-xs text-muted-foreground" data-testid="text-last-synced">

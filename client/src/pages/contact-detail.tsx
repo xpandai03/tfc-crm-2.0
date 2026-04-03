@@ -432,71 +432,32 @@ export default function ContactDetail() {
       timestamp: string;
     }) => addNoteToContact({ contactId, note, author, timestamp }),
     onMutate: async (variables) => {
-      // Create pending toast and capture reference
-      const toastRef = toast({
-        title: "Adding note...",
-        description: "Saving to Excel",
-      });
-
-      // Cancel any outgoing refetches
       await queryClient.cancelQueries({ queryKey: ["/api/contact", variables.contactId] });
-
-      // Snapshot current data for rollback
       const previousData = queryClient.getQueryData<WithSource<ContactSnapshot>>(["/api/contact", variables.contactId]);
 
       // Optimistically update cache with new note
       if (previousData) {
-        const optimisticNote = {
-          date: variables.timestamp,
-          content: variables.note,
-          author: variables.author,
-        };
         queryClient.setQueryData<WithSource<ContactSnapshot>>(
           ["/api/contact", variables.contactId],
           {
             ...previousData,
-            notes: [optimisticNote, ...(previousData.notes || [])],
+            notes: [{ date: variables.timestamp, content: variables.note, author: variables.author }, ...(previousData.notes || [])],
           }
         );
       }
-
-      // Clear input immediately (optimistic)
       setNewNote("");
-
-      return { toastRef, previousData };
+      return { previousData };
     },
-    onSuccess: (_data, variables, context) => {
-      // Update toast to success
-      if (context?.toastRef) {
-        context.toastRef.update({
-          id: context.toastRef.id,
-          title: "Note added",
-          description: "Your note has been saved to Excel.",
-        });
-        setTimeout(() => context.toastRef.dismiss(), 2000);
-      }
-
-      // Re-fetch to reconcile with server (refetchType: "active" ensures immediate network refetch)
+    onSuccess: (_data, variables) => {
+      toast({ title: "Note added" });
       queryClient.invalidateQueries({ queryKey: ["/api/contact", variables.contactId], refetchType: "active" });
       queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"], refetchType: "active" });
     },
     onError: (error, variables, context) => {
-      // Rollback on error
       if (context?.previousData) {
         queryClient.setQueryData(["/api/contact", variables.contactId], context.previousData);
       }
-
-      // Update toast to error
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      if (context?.toastRef) {
-        context.toastRef.update({
-          id: context.toastRef.id,
-          title: "Failed to add note",
-          description: errorMessage,
-          variant: "destructive",
-        });
-        setTimeout(() => context.toastRef.dismiss(), 5000);
-      }
+      toast({ title: "Failed to add note", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" });
     },
   });
 
@@ -589,7 +550,7 @@ export default function ContactDetail() {
   const syncFromExcelMutation = useMutation({
     mutationFn: (id: number) => syncContactFromExcel(id),
     onSuccess: () => {
-      toast({ title: "Contact synced", description: "Fresh data loaded from Excel." });
+      toast({ title: "Contact synced", description: "Fresh data loaded." });
       queryClient.invalidateQueries({ queryKey: ["/api/contact", contactId] });
     },
     onError: (error) => {
@@ -991,7 +952,7 @@ export default function ContactDetail() {
               </Card>
             </div>
 
-            {/* Activity Timeline - Parsed from Excel "Notes added by agent" column */}
+            {/* Activity Timeline */}
             <Card className="overflow-visible bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm">
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base font-medium">
@@ -999,7 +960,7 @@ export default function ContactDetail() {
                   Activity Timeline
                 </CardTitle>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Chronological history from Excel notes
+                  Chronological history of notes
                 </p>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1081,7 +1042,7 @@ export default function ContactDetail() {
                         Intake Summary
                       </CardTitle>
                       <p className="text-[10px] text-muted-foreground mt-0.5">
-                        {isEditingIntake ? "Editing · Changes saved to CRM" : "From Excel intake form"}
+                        {isEditingIntake ? "Editing · Changes saved to CRM" : "Intake form data"}
                       </p>
                     </div>
                     {!isEditingIntake ? (
@@ -1413,14 +1374,14 @@ export default function ContactDetail() {
                     Intake Comments
                   </CardTitle>
                   <p className="text-[10px] text-muted-foreground mt-0.5">
-                    Flag issues for Excel correction
+                    Flag issues for review
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {/* Comment input */}
                   <div className="space-y-2">
                     <Textarea
-                      placeholder="Describe what needs correction in Excel..."
+                      placeholder="Describe what needs correction..."
                       value={intakeComment}
                       onChange={(e) => setIntakeComment(e.target.value)}
                       className="min-h-[60px] resize-none text-sm"

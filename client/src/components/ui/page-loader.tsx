@@ -4,7 +4,6 @@ import LoadingLines from "./loading-lines";
 const PHRASES = {
   today: [
     "Gathering your data...",
-    "Checking Excel...",
     "Loading priorities...",
     "Preparing your workspace...",
   ],
@@ -12,7 +11,6 @@ const PHRASES = {
     "Reviewing the waitlist...",
     "Loading contact queue...",
     "Checking statuses...",
-    "Syncing pipeline...",
   ],
   insights: [
     "Analyzing trends...",
@@ -22,9 +20,7 @@ const PHRASES = {
   ],
   providers: [
     "Loading provider data...",
-    "Reading spreadsheet...",
     "Preparing provider list...",
-    "Syncing capabilities...",
   ],
 };
 

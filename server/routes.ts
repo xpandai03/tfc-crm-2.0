@@ -2286,6 +2286,15 @@ export async function registerRoutes(
         console.warn(`[intake-update] Failed to log timeline event:`, e);
       }
 
+      logActivity({
+        type: "contact_updated",
+        actorEmail: (req as any).user?.email || "system",
+        entityType: "contact",
+        entityId: String(contactId),
+        entityName: getSyncContactById(contactId)?.name || "",
+        metadata: { fields: changedList },
+      });
+
       // Invalidate board cache so next fetch picks up changes
       boardCache = null;
 
@@ -2431,8 +2440,18 @@ export async function registerRoutes(
       if (DATA_MODE === "live") {
         // Write-through: update sync cache for instant UI feedback
         try {
+          const contact = getSyncContactById(contactId);
           updateSyncContactAssignment(contactId, assignedTo);
           console.log(`[assign-contact] Sync cache updated for contactId ${contactId}`);
+
+          logActivity({
+            type: "contact_assigned",
+            actorEmail: (req as any).user?.email || "system",
+            entityType: "contact",
+            entityId: String(contactId),
+            entityName: contact?.name || "",
+            metadata: { assignedTo: assignedTo || "unassigned" },
+          });
         } catch (e) {
           console.warn(`[assign-contact] Failed to update sync cache:`, e);
         }
