@@ -51,7 +51,7 @@ import {
   type SyncPayloadContact,
   type MigrationContact,
 } from "./sync/db";
-import { logActivity, getRecentActivity } from "./activity/db";
+import { logActivity, getRecentActivity, getStaffActivitySummary } from "./activity/db";
 import * as XLSX from "xlsx";
 import * as path from "path";
 
@@ -4367,6 +4367,17 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[activity] Error fetching activity:", error);
       return res.status(500).json({ error: "Failed to fetch activity" });
+    }
+  });
+
+  app.get("/api/activity/staff-summary", async (_req, res) => {
+    try {
+      const days = 7;
+      const staff = getStaffActivitySummary(days);
+      return res.json({ staff, days });
+    } catch (error) {
+      console.error("[activity] Error fetching staff summary:", error);
+      return res.status(500).json({ error: "Failed to fetch staff summary" });
     }
   });
 

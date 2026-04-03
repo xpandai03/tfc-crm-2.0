@@ -120,6 +120,30 @@ export function getRecentActivity(limit: number = 100): Activity[] {
 }
 
 // ============================================================================
+// Staff Activity Summary
+// ============================================================================
+
+export interface StaffActivitySummary {
+  user: string;
+  count: number;
+}
+
+/** Get activity counts grouped by user for the last N days. Excludes "system". */
+export function getStaffActivitySummary(days: number = 7): StaffActivitySummary[] {
+  const db = getDatabase();
+  return db.prepare(`
+    SELECT
+      actor_email AS user,
+      COUNT(*) AS count
+    FROM activity_log
+    WHERE actor_email != 'system'
+      AND created_at >= datetime('now', ?)
+    GROUP BY actor_email
+    ORDER BY count DESC
+  `).all(`-${days} days`) as StaffActivitySummary[];
+}
+
+// ============================================================================
 // Summary Formatting (computed at read time, never stored)
 // ============================================================================
 
