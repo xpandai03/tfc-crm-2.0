@@ -760,7 +760,12 @@ export default function ContactDetail() {
   // Safe access to contact fields with defaults
   const daysWaiting = computeDaysWaiting(contact?.dateAdded, contact?.daysOnWaitlist);
   const dateAdded = formatDate(contact?.dateAdded);
-  const serviceRequested = contact?.serviceRequested || "Unknown Service";
+  // Show requesting-for + therapy type (matches waitlist card display)
+  // Falls back to serviceRequested only if both are empty
+  const serviceSubtitle = [
+    contact?.requestingFor,
+    contact?.reasonForTherapy,
+  ].filter(Boolean).join(" · ") || contact?.serviceRequested || "Unknown Service";
   const contactStatus = contact?.status || "intake";
 
   const aiInsight = daysWaiting > 60
@@ -820,7 +825,7 @@ export default function ContactDetail() {
                               {displayName}
                             </h1>
                             <p className="text-muted-foreground">
-                              {serviceRequested}
+                              {serviceSubtitle}
                             </p>
                           </>
                         )}

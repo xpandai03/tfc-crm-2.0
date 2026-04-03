@@ -1055,10 +1055,22 @@ export function appendSyncContactNote(
     `SELECT last_note FROM sync_contacts WHERE contact_id = ?`
   ).get(contactId) as { last_note: string | null } | undefined;
 
-  // Prepend new note to existing (same format n8n uses in Excel)
-  const newEntry = `${author} ${timestamp} ${note}`;
+  // Format note in CRM header format that parseNotesRobust recognizes:
+  // [XX | MM/DD/YYYY, HH:MM AM]
+  const d = new Date(timestamp);
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const year = d.getFullYear();
+  const hours = d.getHours();
+  const minutes = String(d.getMinutes()).padStart(2, "0");
+  const ampm = hours >= 12 ? "PM" : "AM";
+  const hour12 = hours % 12 || 12;
+  const formattedDate = `${month}/${day}/${year}`;
+  const formattedTime = `${hour12}:${minutes} ${ampm}`;
+  const newEntry = `[${author} | ${formattedDate}, ${formattedTime}]\n${note}`;
+
   const updated = existing?.last_note
-    ? `${newEntry}\n${existing.last_note}`
+    ? `${newEntry}\n\n${existing.last_note}`
     : newEntry;
 
   db.prepare(`
