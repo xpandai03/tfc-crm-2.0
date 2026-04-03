@@ -10,7 +10,7 @@ import type { Reminder } from "./types";
 // Initialize Resend client (null if key not configured)
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
-const APP_URL = process.env.APP_URL || "https://tfc-crm-2026.fly.dev";
+const APP_URL = process.env.APP_URL || "https://tfc-crm-2-0.fly.dev";
 
 // From email - must be verified domain in Resend, or use onboarding@resend.dev for testing
 // Use EMAIL_FROM_ADDRESS (same as server/email/service.ts) with RESEND_FROM_EMAIL as fallback

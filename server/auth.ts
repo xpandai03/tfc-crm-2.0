@@ -85,7 +85,7 @@ export function configureAuth(app: Express): void {
   }
 
   const callbackHost = process.env.APP_URL || (isProduction
-    ? "https://tfc-crm-2026.fly.dev"
+    ? "https://tfc-crm-2-0.fly.dev"
     : "http://localhost:3000");
 
   const MemoryStoreSession = MemoryStore(session);
@@ -270,7 +270,7 @@ function setupAuthRoutes(app: Express): void {
   app.get("/auth/logout", (req: Request, res: Response) => {
     const tenantID = process.env.AZURE_AD_TENANT_ID;
     const isProduction = process.env.NODE_ENV === "production";
-    const baseUrl = process.env.APP_URL || (isProduction ? "https://tfc-crm-2026.fly.dev" : "http://localhost:3000");
+    const baseUrl = process.env.APP_URL || (isProduction ? "https://tfc-crm-2-0.fly.dev" : "http://localhost:3000");
     const postLogoutRedirect = `${baseUrl}/auth/login`;
 
     req.logout((err) => {

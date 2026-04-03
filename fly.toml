@@ -1,5 +1,4 @@
-# fly.toml — Staging instance of TFC CRM
-# IMPORTANT: This is the STAGING app. Production is tfc-crm-2026.
+# fly.toml — TFC CRM 2.0 (Production)
 #
 # See https://fly.io/docs/reference/configuration/
 
