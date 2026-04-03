@@ -43,6 +43,18 @@ interface Provider {
     "Children (0-5)": Record<string, string>;
   };
   notes: string;
+  // CRM-managed provider fields
+  _crmManaged?: boolean;
+  crmId?: number;
+  specialties?: string[];
+  crmAgeGroups?: string[];
+  insurances?: string[];
+  // Override fields (spreadsheet providers with CRM edits)
+  _hasOverrides?: boolean;
+  _overrideSpecialties?: string[];
+  _overrideInsurances?: string[];
+  _overridePopulations?: string[];
+  _overrideNotes?: string;
 }
 
 interface ProvidersResponse {
@@ -184,7 +196,7 @@ function AgeGroupSection({
 /**
  * Provider card component
  */
-function ProviderCard({ provider, onFindPatients, onEdit }: { provider: Provider & { _crmManaged?: boolean; crmId?: number; specialties?: string[]; crmAgeGroups?: string[]; insurances?: string[] }; onFindPatients: () => void; onEdit?: () => void }) {
+function ProviderCard({ provider, onFindPatients, onEdit }: { provider: Provider; onFindPatients: () => void; onEdit: () => void }) {
   const hasAnyCapabilities =
     Object.keys(provider.ageGroups["Adults (18+)"]).length > 0 ||
     Object.keys(provider.ageGroups["Adolescents (12-17)"]).length > 0 ||
@@ -192,6 +204,13 @@ function ProviderCard({ provider, onFindPatients, onEdit }: { provider: Provider
     Object.keys(provider.ageGroups["Children (0-5)"]).length > 0;
 
   const hasAnySpecialtyData = hasAnyCapabilities || !!provider.notes;
+
+  // CRM override data (additional specialties, insurances, populations, notes)
+  const overrideSpecialties = provider._overrideSpecialties || provider.specialties || [];
+  const overrideInsurances = provider._overrideInsurances || [];
+  const overridePopulations = provider._overridePopulations || provider.crmAgeGroups || [];
+  const overrideNotes = provider._overrideNotes ?? null;
+  const displayNotes = overrideNotes !== null ? overrideNotes : provider.notes;
 
   return (
     <Card className="overflow-hidden">
@@ -214,11 +233,9 @@ function ProviderCard({ provider, onFindPatients, onEdit }: { provider: Provider
                 {provider.location}
               </Badge>
             )}
-            {onEdit && (
-              <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={onEdit}>
-                <Pencil className="h-3.5 w-3.5" />
-              </Button>
-            )}
+            <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={onEdit}>
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
           </div>
         </div>
       </CardHeader>
@@ -243,21 +260,73 @@ function ProviderCard({ provider, onFindPatients, onEdit }: { provider: Provider
             />
           </>
         )}
-        {!hasAnySpecialtyData && (
+        {!hasAnySpecialtyData && overrideSpecialties.length === 0 && (
           <p className="text-sm text-muted-foreground italic">No specialty data</p>
         )}
 
-        {provider.notes && (
+        {/* CRM override specialties */}
+        {overrideSpecialties.length > 0 && (
           <div className="pt-2 border-t">
-            <div className="flex items-start gap-2">
-              <FileText className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-              <p className="text-sm text-muted-foreground">{provider.notes}</p>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
+              Specialties
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {overrideSpecialties.map((s: string) => (
+                <Badge key={s} variant="secondary" className="text-xs">{s}</Badge>
+              ))}
             </div>
           </div>
         )}
 
-        {/* Accepted Insurances from Provider Insurance Snapshot */}
-        <InsuranceSection providerName={provider.name} />
+        {/* CRM override populations */}
+        {overridePopulations.length > 0 && (
+          <div className="pt-2 border-t">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
+              Populations
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {overridePopulations.map((p: string) => (
+                <Badge key={p} variant="outline" className="text-xs">{p}</Badge>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {displayNotes && (
+          <div className="pt-2 border-t">
+            <div className="flex items-start gap-2">
+              <FileText className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+              <p className="text-sm text-muted-foreground">{displayNotes}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Accepted Insurances: CRM overrides take priority over snapshot */}
+        {overrideInsurances.length > 0 ? (
+          <div className="pt-3 border-t">
+            <div className="flex items-start gap-2">
+              <Shield className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
+                  Accepted Insurances ({overrideInsurances.length})
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {[...overrideInsurances].sort().map((ins: string) => (
+                    <Badge
+                      key={ins}
+                      variant="outline"
+                      className="text-[10px] px-1.5 py-0 h-5 bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800"
+                    >
+                      {ins}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <InsuranceSection providerName={provider.name} />
+        )}
 
         {/* Find Matching Patients */}
         <div className="pt-3 border-t">
@@ -265,8 +334,8 @@ function ProviderCard({ provider, onFindPatients, onEdit }: { provider: Provider
             variant="outline"
             size="sm"
             className="w-full"
-            disabled={!hasAnySpecialtyData}
-            title={!hasAnySpecialtyData ? "Provider must have specialties configured to enable matching" : undefined}
+            disabled={!hasAnySpecialtyData && overrideSpecialties.length === 0}
+            title={!hasAnySpecialtyData && overrideSpecialties.length === 0 ? "Provider must have specialties configured to enable matching" : undefined}
             onClick={(e) => {
               e.preventDefault();
               onFindPatients();
@@ -275,7 +344,7 @@ function ProviderCard({ provider, onFindPatients, onEdit }: { provider: Provider
             <Users className="h-4 w-4 mr-2" />
             Find Matching Patients
           </Button>
-          {!hasAnySpecialtyData && (
+          {!hasAnySpecialtyData && overrideSpecialties.length === 0 && (
             <p className="text-xs text-muted-foreground mt-1.5 text-center">
               Matching unavailable — no specialty data configured
             </p>
@@ -315,26 +384,33 @@ function ProviderFormModal({
 }: {
   isOpen: boolean;
   onClose: () => void;
-  editingProvider: { crmId: number; name: string; credentials: string; location: string; notes: string; specialties?: string[]; crmAgeGroups?: string[]; insurances?: string[] } | null;
+  editingProvider: Provider | null;
   onSaved: () => void;
 }) {
   const { toast } = useToast();
   const [form, setForm] = useState<ProviderFormData>(EMPTY_FORM);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Reset form when modal opens
   const isEditing = !!editingProvider;
+  const isCrmManaged = !!editingProvider?._crmManaged;
 
   const resetForm = () => {
     if (editingProvider) {
+      // For CRM-managed providers, populate all fields
+      // For spreadsheet providers, populate override fields only
+      const overrideSpecialties = editingProvider._overrideSpecialties || editingProvider.specialties || [];
+      const overrideInsurances = editingProvider._overrideInsurances || editingProvider.insurances || [];
+      const overridePopulations = editingProvider._overridePopulations || editingProvider.crmAgeGroups || [];
+      const overrideNotes = editingProvider._overrideNotes ?? (isCrmManaged ? editingProvider.notes : "");
+
       setForm({
         name: editingProvider.name,
         credentials: editingProvider.credentials || "",
         location: editingProvider.location || "",
-        specialties: editingProvider.specialties?.join(", ") || "",
-        ageGroups: editingProvider.crmAgeGroups?.join(", ") || "",
-        insurances: editingProvider.insurances?.join(", ") || "",
-        notes: editingProvider.notes || "",
+        specialties: overrideSpecialties.join(", "),
+        ageGroups: overridePopulations.join(", "),
+        insurances: overrideInsurances.join(", "),
+        notes: overrideNotes || "",
       });
     } else {
       setForm(EMPTY_FORM);
@@ -342,28 +418,50 @@ function ProviderFormModal({
   };
 
   const handleSave = async () => {
-    if (!form.name.trim()) {
+    if (!isEditing && !form.name.trim()) {
       toast({ title: "Name is required", variant: "destructive" });
       return;
     }
 
     setIsSaving(true);
     try {
-      const payload = {
-        name: form.name.trim(),
-        credentials: form.credentials.trim(),
-        location: form.location.trim(),
-        specialties: form.specialties ? form.specialties.split(",").map(s => s.trim()).filter(Boolean) : [],
-        ageGroups: form.ageGroups ? form.ageGroups.split(",").map(s => s.trim()).filter(Boolean) : [],
-        insurances: form.insurances ? form.insurances.split(",").map(s => s.trim()).filter(Boolean) : [],
-        notes: form.notes.trim(),
-      };
+      const specialtiesArr = form.specialties ? form.specialties.split(",").map(s => s.trim()).filter(Boolean) : [];
+      const insurancesArr = form.insurances ? form.insurances.split(",").map(s => s.trim()).filter(Boolean) : [];
+      const populationsArr = form.ageGroups ? form.ageGroups.split(",").map(s => s.trim()).filter(Boolean) : [];
 
       if (isEditing && editingProvider) {
-        await apiRequest("PATCH", `/api/providers/${editingProvider.crmId}`, payload);
+        if (isCrmManaged && editingProvider.crmId) {
+          // CRM-managed provider: use existing PATCH route
+          await apiRequest("PATCH", `/api/providers/${editingProvider.crmId}`, {
+            name: form.name.trim(),
+            credentials: form.credentials.trim(),
+            location: form.location.trim(),
+            specialties: specialtiesArr,
+            ageGroups: populationsArr,
+            insurances: insurancesArr,
+            notes: form.notes.trim(),
+          });
+        } else {
+          // Spreadsheet provider: use override endpoint
+          await apiRequest("PATCH", "/api/providers/override", {
+            providerName: editingProvider.name,
+            specialties: specialtiesArr,
+            insurances: insurancesArr,
+            populations: populationsArr,
+            notes: form.notes.trim(),
+          });
+        }
         toast({ title: "Provider updated" });
       } else {
-        await apiRequest("POST", "/api/providers", payload);
+        await apiRequest("POST", "/api/providers", {
+          name: form.name.trim(),
+          credentials: form.credentials.trim(),
+          location: form.location.trim(),
+          specialties: specialtiesArr,
+          ageGroups: populationsArr,
+          insurances: insurancesArr,
+          notes: form.notes.trim(),
+        });
         toast({ title: "Provider created" });
       }
 
@@ -380,33 +478,45 @@ function ProviderFormModal({
     }
   };
 
+  // For spreadsheet providers, name/credentials/location are read-only (from Excel)
+  const isSpreadsheetEdit = isEditing && !isCrmManaged;
+
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); else resetForm(); }}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>{isEditing ? "Edit Provider" : "Add New Provider"}</DialogTitle>
+          <DialogTitle>{isEditing ? `Edit ${editingProvider?.name || "Provider"}` : "Add New Provider"}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4 pt-2">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs">Name *</Label>
-              <Input value={form.name} onChange={(e) => setForm(p => ({ ...p, name: e.target.value }))} placeholder="Full name" />
-            </div>
-            <div>
-              <Label className="text-xs">Credentials</Label>
-              <Input value={form.credentials} onChange={(e) => setForm(p => ({ ...p, credentials: e.target.value }))} placeholder="e.g. LCSW, LPCC" />
-            </div>
-          </div>
-          <div>
-            <Label className="text-xs">Location</Label>
-            <Input value={form.location} onChange={(e) => setForm(p => ({ ...p, location: e.target.value }))} placeholder="e.g. ABQ, LL, RR" />
-          </div>
+          {!isSpreadsheetEdit && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs">Name *</Label>
+                  <Input value={form.name} onChange={(e) => setForm(p => ({ ...p, name: e.target.value }))} placeholder="Full name" />
+                </div>
+                <div>
+                  <Label className="text-xs">Credentials</Label>
+                  <Input value={form.credentials} onChange={(e) => setForm(p => ({ ...p, credentials: e.target.value }))} placeholder="e.g. LCSW, LPCC" />
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs">Location</Label>
+                <Input value={form.location} onChange={(e) => setForm(p => ({ ...p, location: e.target.value }))} placeholder="e.g. ABQ, LL, RR" />
+              </div>
+            </>
+          )}
+          {isSpreadsheetEdit && (
+            <p className="text-xs text-muted-foreground bg-muted/50 px-3 py-2 rounded-md">
+              Name, credentials, and location are managed in the Provider Skills Spreadsheet. You can customize the fields below.
+            </p>
+          )}
           <div>
             <Label className="text-xs">Specialties (comma-separated)</Label>
-            <Input value={form.specialties} onChange={(e) => setForm(p => ({ ...p, specialties: e.target.value }))} placeholder="e.g. Anxiety, Trauma, Depression" />
+            <Input value={form.specialties} onChange={(e) => setForm(p => ({ ...p, specialties: e.target.value }))} placeholder="e.g. Anxiety, Trauma, EMDR, Depression" />
           </div>
           <div>
-            <Label className="text-xs">Age Groups (comma-separated)</Label>
+            <Label className="text-xs">Populations (comma-separated)</Label>
             <Input value={form.ageGroups} onChange={(e) => setForm(p => ({ ...p, ageGroups: e.target.value }))} placeholder="e.g. Adults, Adolescents, Children" />
           </div>
           <div>
@@ -562,10 +672,10 @@ export default function Providers() {
                   key={provider.id}
                   provider={provider}
                   onFindPatients={() => setSelectedProvider(transformApiProvider(provider as any))}
-                  onEdit={provider._crmManaged ? () => {
+                  onEdit={() => {
                     setEditingProvider(provider);
                     setShowProviderForm(true);
-                  } : undefined}
+                  }}
                 />
               ))}
             </div>

@@ -16,7 +16,8 @@ export type ActivityType =
   | "status_changed"
   | "note_added"
   | "contact_updated"
-  | "contact_assigned";
+  | "contact_assigned"
+  | "provider_updated";
 
 export interface LogActivityParams {
   type: ActivityType;
@@ -192,6 +193,14 @@ function formatActivitySummary(
       if (provider) return `Assigned provider ${provider} → ${name}`;
       if (assignee) return `Assigned ${name} to ${assignee}`;
       return `Unassigned ${name}`;
+    }
+
+    case "provider_updated": {
+      const fieldsUpdated = metadata.fieldsUpdated;
+      if (Array.isArray(fieldsUpdated) && fieldsUpdated.length > 0) {
+        return `Updated provider ${name} (${fieldsUpdated.join(", ")})`;
+      }
+      return `Updated provider ${name}`;
     }
 
     default:

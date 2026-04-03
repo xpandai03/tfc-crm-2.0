@@ -11,6 +11,9 @@ import {
   getCrmProviderById,
   createCrmProvider,
   updateCrmProvider,
+  getAllProviderOverrides,
+  getProviderOverride,
+  upsertProviderOverride,
 } from "./reminders";
 import {
   getTnRecord,
@@ -2731,6 +2734,28 @@ export async function registerRoutes(
 
       console.log("[providers] Parsed", providers.length, "providers from spreadsheet");
 
+      // Apply CRM overrides to spreadsheet providers
+      try {
+        const overrides = getAllProviderOverrides();
+        const overrideMap = new Map(overrides.map(o => [o.providerName, o]));
+        for (const p of providers) {
+          const prov = p as any;
+          const override = overrideMap.get(prov.name);
+          if (override) {
+            prov._hasOverrides = true;
+            if (override.specialties) prov._overrideSpecialties = override.specialties;
+            if (override.insurances) prov._overrideInsurances = override.insurances;
+            if (override.populations) prov._overridePopulations = override.populations;
+            if (override.notes !== null && override.notes !== undefined) prov._overrideNotes = override.notes;
+          }
+        }
+        if (overrides.length > 0) {
+          console.log("[providers] Applied", overrides.length, "provider overrides");
+        }
+      } catch (e) {
+        console.warn("[providers] Failed to load provider overrides:", e);
+      }
+
       // Merge CRM-managed providers
       try {
         const crmProviders = getAllCrmProviders();
@@ -2805,6 +2830,20 @@ export async function registerRoutes(
       // Invalidate provider cache
       providerDataCache = null;
 
+      // Log activity
+      logActivity({
+        type: "provider_updated",
+        actorEmail: (req as any).user?.email || "system",
+        entityType: "provider",
+        entityId: String(id),
+        entityName: name.trim(),
+        metadata: {
+          providerId: id,
+          providerName: name.trim(),
+          fieldsUpdated: ["created"],
+        },
+      });
+
       console.log(`[providers] Created CRM provider ${id}: ${name}`);
       return res.json({ success: true, id });
     } catch (error) {
@@ -2827,6 +2866,17 @@ export async function registerRoutes(
       }
 
       const { name, credentials, location, specialties, ageGroups, insurances, notes } = req.body;
+
+      // Diff fields to know what changed
+      const fieldsUpdated: string[] = [];
+      if (name !== undefined && name.trim() !== existing.name) fieldsUpdated.push("name");
+      if (credentials !== undefined && credentials.trim() !== existing.credentials) fieldsUpdated.push("credentials");
+      if (location !== undefined && location.trim() !== existing.location) fieldsUpdated.push("location");
+      if (specialties !== undefined && JSON.stringify(specialties) !== JSON.stringify(existing.specialties)) fieldsUpdated.push("specialties");
+      if (ageGroups !== undefined && JSON.stringify(ageGroups) !== JSON.stringify(existing.ageGroups)) fieldsUpdated.push("age groups");
+      if (insurances !== undefined && JSON.stringify(insurances) !== JSON.stringify(existing.insurances)) fieldsUpdated.push("insurances");
+      if (notes !== undefined && notes.trim() !== (existing.notes || "")) fieldsUpdated.push("notes");
+
       const updated = updateCrmProvider(id, {
         name,
         credentials,
@@ -2840,9 +2890,77 @@ export async function registerRoutes(
       // Invalidate provider cache
       providerDataCache = null;
 
-      return res.json({ success: true, updated });
+      // Log activity if something actually changed
+      if (updated && fieldsUpdated.length > 0) {
+        logActivity({
+          type: "provider_updated",
+          actorEmail: (req as any).user?.email || "system",
+          entityType: "provider",
+          entityId: String(id),
+          entityName: existing.name,
+          metadata: {
+            providerId: id,
+            providerName: existing.name,
+            fieldsUpdated,
+          },
+        });
+      }
+
+      const updatedProvider = getCrmProviderById(id);
+      return res.json({ success: true, updated, provider: updatedProvider });
     } catch (error) {
       console.error("[providers] Error updating provider:", error);
+      return res.status(500).json({ error: "Failed to update provider" });
+    }
+  });
+
+  // Override fields on a spreadsheet-backed provider (CRM overlay)
+  app.patch("/api/providers/override", async (req, res) => {
+    try {
+      const { providerName, specialties, insurances, populations, notes } = req.body;
+
+      if (!providerName || typeof providerName !== "string" || providerName.trim() === "") {
+        return res.status(400).json({ error: "providerName is required" });
+      }
+
+      const existing = getProviderOverride(providerName.trim());
+
+      // Diff fields for activity log
+      const fieldsUpdated: string[] = [];
+      if (specialties !== undefined && JSON.stringify(specialties) !== JSON.stringify(existing?.specialties)) fieldsUpdated.push("specialties");
+      if (insurances !== undefined && JSON.stringify(insurances) !== JSON.stringify(existing?.insurances)) fieldsUpdated.push("insurances");
+      if (populations !== undefined && JSON.stringify(populations) !== JSON.stringify(existing?.populations)) fieldsUpdated.push("populations");
+      if (notes !== undefined && notes !== (existing?.notes ?? "")) fieldsUpdated.push("notes");
+
+      upsertProviderOverride({
+        providerName: providerName.trim(),
+        specialties,
+        insurances,
+        populations,
+        notes,
+      });
+
+      // Invalidate provider cache
+      providerDataCache = null;
+
+      // Log activity
+      if (fieldsUpdated.length > 0) {
+        logActivity({
+          type: "provider_updated",
+          actorEmail: (req as any).user?.email || "system",
+          entityType: "provider",
+          entityId: providerName.trim(),
+          entityName: providerName.trim(),
+          metadata: {
+            providerName: providerName.trim(),
+            fieldsUpdated,
+          },
+        });
+      }
+
+      return res.json({ success: true, fieldsUpdated });
+    } catch (error) {
+      console.error("[providers] Error updating provider override:", error);
       return res.status(500).json({ error: "Failed to update provider" });
     }
   });
