@@ -54,7 +54,7 @@ import {
   type SyncPayloadContact,
   type MigrationContact,
 } from "./sync/db";
-import { logActivity, getRecentActivity, getStaffActivitySummary } from "./activity/db";
+import { logActivity, getRecentActivity, getStaffActivitySummary, getActivityForContact } from "./activity/db";
 import * as XLSX from "xlsx";
 import * as path from "path";
 
@@ -4654,6 +4654,21 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[activity] Error fetching activity:", error);
       return res.status(500).json({ error: "Failed to fetch activity" });
+    }
+  });
+
+  // Contact-scoped activity (for contact timeline)
+  app.get("/api/activity/contact/:contactId", async (req, res) => {
+    try {
+      const contactId = parseInt(req.params.contactId, 10);
+      if (isNaN(contactId) || contactId <= 0) {
+        return res.status(400).json({ error: "Invalid contactId" });
+      }
+      const activities = getActivityForContact(contactId);
+      return res.json({ activities });
+    } catch (error) {
+      console.error("[activity] Error fetching contact activity:", error);
+      return res.status(500).json({ error: "Failed to fetch contact activity" });
     }
   });
 
