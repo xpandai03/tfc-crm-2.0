@@ -558,6 +558,143 @@ export function getAllSyncContacts(): SyncContact[] {
   return rows;
 }
 
+// ============================================================================
+// Export: Waitlist Snapshot
+// ============================================================================
+
+export interface WaitlistExportRow {
+  contactId: string;
+  name: string;
+  email: string;
+  phone: string;
+  statusCode: string;
+  reasonForTherapy: string;
+  reasonForSeeking: string;
+  insurancePayer: string;
+  insurancePlan: string;
+  patientDob: string;
+  gender: string;
+  streetAddress: string;
+  city: string;
+  state: string;
+  zipCode: string;
+  priorServices: string;
+  priorProvider: string;
+  modality: string;
+  requestingFor: string;
+  formCompletedBy: string;
+  assignedTo: string;
+  flags: string;
+  lastNote: string;
+  createdAt: string;
+  daysOnWaitlist: number;
+  cleanedDateAdded: string;
+}
+
+/**
+ * Returns a complete, flat, deterministic snapshot of all waitlist contacts.
+ * Designed for batch export (n8n → Excel full-replace).
+ *
+ * Guarantees:
+ * - Every row has identical keys
+ * - No null values (empty string defaults)
+ * - No nested objects or arrays
+ * - Sorted by date_added ASC (oldest first)
+ * - Deterministic: identical results across repeated calls (same data)
+ */
+export function getWaitlistExportData(): { total: number; generatedAt: string; rows: WaitlistExportRow[] } {
+  const db = getDatabase();
+  const rows = db.prepare(`
+    SELECT
+      contact_id,
+      name,
+      email,
+      phone,
+      status_code,
+      reason_for_therapy,
+      reason_for_seeking,
+      insurance_payer,
+      insurance_plan,
+      patient_dob,
+      gender,
+      street_address,
+      city,
+      state,
+      zip_code,
+      prior_services,
+      prior_provider,
+      modality,
+      requesting_for,
+      form_completed_by,
+      assigned_to,
+      flags,
+      last_note,
+      date_added,
+      synced_at
+    FROM sync_contacts
+    ORDER BY date_added ASC, contact_id ASC
+  `).all() as Record<string, unknown>[];
+
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const nowMs = now.getTime();
+  const generatedAt = new Date().toISOString();
+
+  const exportRows: WaitlistExportRow[] = rows.map((r) => {
+    const dateAdded = String(r.date_added ?? "");
+    const createdAt = dateAdded || String(r.synced_at ?? "");
+
+    // Compute daysOnWaitlist from dateAdded
+    let daysOnWaitlist = 0;
+    if (dateAdded) {
+      const parsed = new Date(dateAdded);
+      if (!isNaN(parsed.getTime())) {
+        daysOnWaitlist = Math.max(0, Math.floor((nowMs - parsed.getTime()) / 86400000));
+      }
+    }
+
+    // cleanedDateAdded: Excel-friendly YYYY-MM-DD or empty string
+    let cleanedDateAdded = "";
+    if (dateAdded) {
+      const parsed = new Date(dateAdded);
+      if (!isNaN(parsed.getTime())) {
+        cleanedDateAdded = parsed.toISOString().split("T")[0];
+      }
+    }
+
+    return {
+      contactId: String(r.contact_id ?? ""),
+      name: String(r.name ?? ""),
+      email: String(r.email ?? ""),
+      phone: String(r.phone ?? ""),
+      statusCode: String(r.status_code ?? ""),
+      reasonForTherapy: String(r.reason_for_therapy ?? ""),
+      reasonForSeeking: String(r.reason_for_seeking ?? ""),
+      insurancePayer: String(r.insurance_payer ?? ""),
+      insurancePlan: String(r.insurance_plan ?? ""),
+      patientDob: String(r.patient_dob ?? ""),
+      gender: String(r.gender ?? ""),
+      streetAddress: String(r.street_address ?? ""),
+      city: String(r.city ?? ""),
+      state: String(r.state ?? ""),
+      zipCode: String(r.zip_code ?? ""),
+      priorServices: String(r.prior_services ?? ""),
+      priorProvider: String(r.prior_provider ?? ""),
+      modality: String(r.modality ?? ""),
+      requestingFor: String(r.requesting_for ?? ""),
+      formCompletedBy: String(r.form_completed_by ?? ""),
+      assignedTo: String(r.assigned_to ?? ""),
+      flags: String(r.flags ?? ""),
+      lastNote: String(r.last_note ?? ""),
+      createdAt,
+      daysOnWaitlist,
+      cleanedDateAdded,
+    };
+  });
+
+  return { total: exportRows.length, generatedAt, rows: exportRows };
+}
+
 /**
  * Get a single contact by ID from the sync cache.
  */
