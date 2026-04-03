@@ -19,8 +19,11 @@ export {
   getCrmProviderById,
   createCrmProvider,
   updateCrmProvider,
+  getProviderOverride,
+  getAllProviderOverrides,
+  upsertProviderOverride,
 } from "./db";
-export type { CrmProvider, CreateCrmProviderParams } from "./db";
+export type { CrmProvider, CreateCrmProviderParams, ProviderOverride, UpsertOverrideParams } from "./db";
 export { startReminderCron, triggerReminderProcessing } from "./cron";
 export { sendReminderEmail } from "./email";
 export type { Reminder, CreateReminderParams, IntakeComment, AttentionFlag, CreateIntakeCommentParams } from "./types";
