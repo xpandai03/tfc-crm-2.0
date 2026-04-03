@@ -3013,24 +3013,31 @@ export async function registerRoutes(
   }
 
   // POST /api/test-email - Send a test email to verify Resend integration
+  // Auth: session OR X-Sync-Key header (added to publicPostPaths in auth.ts)
   app.post("/api/test-email", async (req, res) => {
     try {
+      // Require X-Sync-Key when not session-authenticated
+      const isSessionAuth = req.isAuthenticated && req.isAuthenticated();
+      const apiKey = req.headers["x-sync-key"] as string;
+      if (!isSessionAuth && (!SYNC_API_KEY || apiKey !== SYNC_API_KEY)) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
       const { to } = req.body;
       const recipient = to?.trim();
 
-      // Safety: only allow @tfc.health addresses for testing
       if (!recipient || !recipient.includes("@")) {
         return res.status(400).json({ error: "Valid 'to' email is required" });
       }
 
       const { Resend } = await import("resend");
-      const apiKey = process.env.RESEND_API_KEY;
-      if (!apiKey) {
+      const resendKey = process.env.RESEND_API_KEY;
+      if (!resendKey) {
         return res.status(503).json({ error: "RESEND_API_KEY not configured" });
       }
 
       const fromEmail = process.env.EMAIL_FROM_ADDRESS || process.env.RESEND_FROM_EMAIL || "no-reply@hipaacheck.ai";
-      const resend = new Resend(apiKey);
+      const resend = new Resend(resendKey);
 
       console.log(`[test-email] Sending test email to ${recipient} from ${fromEmail}`);
 
