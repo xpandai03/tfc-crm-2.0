@@ -14,7 +14,9 @@ import { getDatabase } from "../reminders/db";
 export type ActivityType =
   | "submission_received"
   | "status_changed"
-  | "note_added";
+  | "note_added"
+  | "contact_updated"
+  | "contact_assigned";
 
 export interface LogActivityParams {
   type: ActivityType;
@@ -152,6 +154,18 @@ function formatActivitySummary(
         return `Added note to ${name}: "${short}"`;
       }
       return `Added note to ${name}`;
+    }
+
+    case "contact_updated": {
+      const fields = String(metadata.fields || "");
+      if (fields) return `Updated intake for ${name}: ${fields}`;
+      return `Updated intake for ${name}`;
+    }
+
+    case "contact_assigned": {
+      const assignee = String(metadata.assignedTo || "");
+      if (assignee) return `Assigned ${name} to ${assignee}`;
+      return `Unassigned ${name}`;
     }
 
     default:

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { PageLayout } from "@/components/layout/page-layout";
-import { Loader2, FileText, ArrowRightLeft, MessageSquare, Activity, Inbox } from "lucide-react";
+import { Loader2, FileText, ArrowRightLeft, MessageSquare, Activity, Inbox, UserPlus, Pencil } from "lucide-react";
 
 interface ActivityEvent {
   id: number;
@@ -23,6 +23,10 @@ function getEventIcon(type: string) {
       return <ArrowRightLeft className="h-4 w-4 text-amber-500" />;
     case "note_added":
       return <MessageSquare className="h-4 w-4 text-green-500" />;
+    case "contact_updated":
+      return <Pencil className="h-4 w-4 text-purple-500" />;
+    case "contact_assigned":
+      return <UserPlus className="h-4 w-4 text-cyan-500" />;
     default:
       return <Activity className="h-4 w-4 text-muted-foreground" />;
   }
