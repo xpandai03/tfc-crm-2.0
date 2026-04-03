@@ -3122,11 +3122,16 @@ export async function registerRoutes(
         return res.status(400).json({ error: "templateId (string) is required" });
       }
 
-      // Fetch FULL contact snapshot (not board cache - board doesn't have email)
+      // Read contact from local sync_contacts DB (primary source)
+      // Falls back to n8n snapshot only if local data is missing
       let contact: Record<string, unknown> | null = null;
+      const localContact = getSyncContactById(contactId);
 
-      if (DATA_MODE === "live") {
-        // Always fetch full snapshot for email - board cache doesn't include email field
+      if (localContact && localContact.name) {
+        contact = localContact as unknown as Record<string, unknown>;
+        console.log(`[email-preview] contactId=${contactId} found=true source=local email=${localContact.email || "MISSING"}`);
+      } else if (DATA_MODE === "live") {
+        console.warn(`[email-preview] contactId=${contactId} not in local DB, falling back to n8n`);
         try {
           const snapshotResponse = await fetch(N8N_ENDPOINTS.contactSnapshot, {
             method: "POST",
@@ -3135,23 +3140,15 @@ export async function registerRoutes(
           });
           if (snapshotResponse.ok) {
             const rawData = await snapshotResponse.json();
-            // CRITICAL: n8n response wraps contact data in "contact" object
             contact = rawData.contact || rawData || null;
-            console.log(`[email-preview] Fetched contact ${contactId}, email: ${contact?.email || "MISSING"}`);
           }
         } catch (err) {
-          console.warn("[email-preview] Failed to fetch contact:", err);
-        }
-      } else {
-        // Mock mode - use full mock contact data (includes email)
-        contact = mockContacts.find((_, index) => index + 1 === contactId) || null;
-        if (contact) {
-          // Add contactId to mock data for consistency
-          contact = { ...contact, contactId };
+          console.warn("[email-preview] n8n fallback failed:", err);
         }
       }
 
       if (!contact) {
+        console.error(`[email-preview] contactId=${contactId} found=false`);
         return res.status(404).json({ error: "Contact not found" });
       }
 
@@ -3219,11 +3216,16 @@ export async function registerRoutes(
       // Get authenticated user's email
       const userEmail = (req as unknown as { user?: { email?: string } }).user?.email || "unknown";
 
-      // Fetch FULL contact snapshot (not board cache - board doesn't have email)
+      // Read contact from local sync_contacts DB (primary source)
+      // Falls back to n8n snapshot only if local data is missing
       let contact: Record<string, unknown> | null = null;
+      const localContact = getSyncContactById(contactId);
 
-      if (DATA_MODE === "live") {
-        // Always fetch full snapshot for email - board cache doesn't include email field
+      if (localContact && localContact.name) {
+        contact = localContact as unknown as Record<string, unknown>;
+        console.log(`[send-email] contactId=${contactId} found=true source=local email=${localContact.email || "MISSING"}`);
+      } else if (DATA_MODE === "live") {
+        console.warn(`[send-email] contactId=${contactId} not in local DB, falling back to n8n`);
         try {
           const snapshotResponse = await fetch(N8N_ENDPOINTS.contactSnapshot, {
             method: "POST",
@@ -3232,23 +3234,15 @@ export async function registerRoutes(
           });
           if (snapshotResponse.ok) {
             const rawData = await snapshotResponse.json();
-            // CRITICAL: n8n response wraps contact data in "contact" object
             contact = rawData.contact || rawData || null;
-            console.log(`[send-email] Fetched contact ${contactId}, email: ${contact?.email || "MISSING"}`);
           }
         } catch (err) {
-          console.warn("[send-email] Failed to fetch contact:", err);
-        }
-      } else {
-        // Mock mode - use full mock contact data (includes email)
-        contact = mockContacts.find((_, index) => index + 1 === contactId) || null;
-        if (contact) {
-          // Add contactId to mock data for consistency
-          contact = { ...contact, contactId };
+          console.warn("[send-email] n8n fallback failed:", err);
         }
       }
 
       if (!contact) {
+        console.error(`[send-email] contactId=${contactId} found=false`);
         return res.status(404).json({ error: "Contact not found" });
       }
 
