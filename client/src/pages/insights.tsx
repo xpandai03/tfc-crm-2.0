@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/page-loader";
 import { FallbackBanner } from "@/components/ui/fallback-banner";
-import { Download, AlertCircle, ChevronRight } from "lucide-react";
+import { Download, AlertCircle, ChevronRight, Users } from "lucide-react";
 import { getWaitlistSummary, getWaitlistContacts, type WithSource } from "@/lib/api";
 import { computeDaysWaiting } from "@/lib/days-waiting";
 import { useDataSource } from "@/lib/data-source-context";
@@ -120,6 +120,15 @@ export default function Insights() {
   } = useQuery<{ contacts: WaitlistContact[]; _source?: string }>({
     queryKey: ["/api/waitlist-contacts"],
     queryFn: getWaitlistContacts,
+  });
+
+  const { data: staffData } = useQuery<{ staff: { user: string; count: number }[]; days: number }>({
+    queryKey: ["/api/activity/staff-summary"],
+    queryFn: async () => {
+      const res = await fetch("/api/activity/staff-summary", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch staff activity");
+      return res.json();
+    },
   });
 
   const isLoading = summaryLoading || contactsLoading;
@@ -660,6 +669,50 @@ export default function Insights() {
                 <p className="text-xs text-muted-foreground mt-1">
                   contacts waiting for response
                 </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Admin Staff Activity */}
+          <Card className="overflow-visible">
+            <CardHeader>
+              <CardTitle className="text-base font-medium flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                Staff Activity
+              </CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">
+                Last {staffData?.days ?? 7} days · Excludes system events
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {!staffData?.staff?.length ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">No staff activity recorded yet</p>
+                ) : (
+                  (() => {
+                    const maxCount = staffData.staff[0]?.count ?? 1;
+                    return staffData.staff.map((s: { user: string; count: number }) => {
+                      const name = s.user.split("@")[0];
+                      const displayName = name.charAt(0).toUpperCase() + name.slice(1);
+                      return (
+                        <div key={s.user} className="space-y-1.5">
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-muted-foreground" title={s.user}>
+                              {displayName}
+                            </span>
+                            <span className="font-medium text-foreground">{s.count}</span>
+                          </div>
+                          <div className="h-2 bg-muted/50 backdrop-blur-sm rounded-full overflow-hidden border border-white/20 dark:border-gray-700/30">
+                            <div
+                              className="h-full bg-gradient-to-r from-primary via-primary/90 to-primary rounded-full transition-all duration-500"
+                              style={{ width: `${(s.count / maxCount) * 100}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()
+                )}
               </div>
             </CardContent>
           </Card>
