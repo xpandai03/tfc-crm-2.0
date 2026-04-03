@@ -3012,6 +3012,57 @@ export async function registerRoutes(
     console.log("[email-api] Email service configured correctly");
   }
 
+  // POST /api/test-email - Send a test email to verify Resend integration
+  app.post("/api/test-email", async (req, res) => {
+    try {
+      const { to } = req.body;
+      const recipient = to?.trim();
+
+      // Safety: only allow @tfc.health addresses for testing
+      if (!recipient || !recipient.includes("@")) {
+        return res.status(400).json({ error: "Valid 'to' email is required" });
+      }
+
+      const { Resend } = await import("resend");
+      const apiKey = process.env.RESEND_API_KEY;
+      if (!apiKey) {
+        return res.status(503).json({ error: "RESEND_API_KEY not configured" });
+      }
+
+      const fromEmail = process.env.EMAIL_FROM_ADDRESS || process.env.RESEND_FROM_EMAIL || "no-reply@hipaacheck.ai";
+      const resend = new Resend(apiKey);
+
+      console.log(`[test-email] Sending test email to ${recipient} from ${fromEmail}`);
+
+      const result = await resend.emails.send({
+        from: `TFC CRM Test <${fromEmail}>`,
+        to: [recipient],
+        subject: "TFC CRM - Email System Test",
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h2 style="color: #1e3a5f;">Email System Test</h2>
+            <p>This is a test email from the TFC CRM system.</p>
+            <p><strong>Timestamp:</strong> ${new Date().toLocaleString("en-US", { timeZone: "America/Denver" })}</p>
+            <p><strong>From:</strong> ${fromEmail}</p>
+            <p><strong>Environment:</strong> ${process.env.NODE_ENV || "development"}</p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+            <p style="color: #666; font-size: 12px;">The Family Connection - CRM Email System</p>
+          </div>
+        `,
+        text: `TFC CRM Email System Test\n\nTimestamp: ${new Date().toISOString()}\nFrom: ${fromEmail}\n\nThis is a test email from the TFC CRM system.`,
+      });
+
+      console.log(`[test-email] Success:`, result);
+      return res.json({ success: true, emailId: result.data?.id, from: fromEmail, to: recipient });
+    } catch (error) {
+      console.error("[test-email] Failed:", error);
+      return res.status(500).json({
+        error: "Failed to send test email",
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  });
+
   // GET /api/email-config - Provider list + location list for the Send Email modal
   app.get("/api/email-config", (_req, res) => {
     try {
