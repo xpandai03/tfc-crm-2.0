@@ -2747,6 +2747,18 @@ export async function registerRoutes(
             if (override.insurances) prov._overrideInsurances = override.insurances;
             if (override.populations) prov._overridePopulations = override.populations;
             if (override.notes !== null && override.notes !== undefined) prov._overrideNotes = override.notes;
+            // Merge ageGroup capability overrides onto the provider's ageGroups
+            if (override.ageGroups) {
+              for (const [group, caps] of Object.entries(override.ageGroups)) {
+                if (prov.ageGroups[group]) {
+                  prov.ageGroups[group] = { ...prov.ageGroups[group], ...caps };
+                  // Remove entries with empty values (deselected)
+                  for (const [key, val] of Object.entries(prov.ageGroups[group])) {
+                    if (!val) delete prov.ageGroups[group][key];
+                  }
+                }
+              }
+            }
           }
         }
         if (overrides.length > 0) {
@@ -2917,7 +2929,7 @@ export async function registerRoutes(
   // Override fields on a spreadsheet-backed provider (CRM overlay)
   app.patch("/api/providers/override", async (req, res) => {
     try {
-      const { providerName, specialties, insurances, populations, notes } = req.body;
+      const { providerName, specialties, insurances, populations, notes, ageGroups } = req.body;
 
       if (!providerName || typeof providerName !== "string" || providerName.trim() === "") {
         return res.status(400).json({ error: "providerName is required" });
@@ -2931,6 +2943,7 @@ export async function registerRoutes(
       if (insurances !== undefined && JSON.stringify(insurances) !== JSON.stringify(existing?.insurances)) fieldsUpdated.push("insurances");
       if (populations !== undefined && JSON.stringify(populations) !== JSON.stringify(existing?.populations)) fieldsUpdated.push("populations");
       if (notes !== undefined && notes !== (existing?.notes ?? "")) fieldsUpdated.push("notes");
+      if (ageGroups !== undefined) fieldsUpdated.push("age groups");
 
       upsertProviderOverride({
         providerName: providerName.trim(),
@@ -2938,6 +2951,7 @@ export async function registerRoutes(
         insurances,
         populations,
         notes,
+        ageGroups,
       });
 
       // Invalidate provider cache

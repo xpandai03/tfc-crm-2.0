@@ -3,20 +3,22 @@ import { PageLayout } from "@/components/layout/page-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/page-loader";
-import { AlertCircle, MapPin, FileText, Shield, Users, Plus, Pencil, Loader2 } from "lucide-react";
+import { AlertCircle, MapPin, FileText, Shield, Users, Plus, Pencil, Loader2, Check, X, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useState } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import {
   getProviderInsurances,
   hasProviderInsuranceData,
@@ -355,26 +357,156 @@ function ProviderCard({ provider, onFindPatients, onEdit }: { provider: Provider
   );
 }
 
-/** Provider form state for create/edit modal */
-interface ProviderFormData {
+// ============================================================================
+// Specialty & Insurance definitions (match spreadsheet structure)
+// ============================================================================
+
+type CapState = "" | "x" | "x - Slow";
+const CAP_CYCLE: CapState[] = ["", "x", "x - Slow"];
+
+const AGE_GROUP_SPECIALTIES: Record<string, string[]> = {
+  "Adults (18+)": ["Anger Issues", "Anxiety", "Couples", "Depression", "Family", "Grief", "Trauma", "Stress Management"],
+  "Adolescents (12-17)": ["Anger Issues", "Anxiety", "Depression", "Family", "Grief", "Trauma", "Stress Management"],
+  "Children (6-11)": ["Anger Issues", "Anxiety", "Depression", "Family", "Grief", "Trauma", "Stress Management"],
+  "Children (0-5)": ["Anxiety", "Depression", "Family", "Grief", "Trauma"],
+};
+
+const ALL_INSURANCES = [
+  "Aetna",
+  "BlueCross BlueShield Commercial",
+  "BlueCross BlueShield Turquoise Care",
+  "Carelon",
+  "ChampVA",
+  "ComPsych",
+  "Medicare",
+  "Molina",
+  "Partners Direct Health",
+  "Presbyterian Commercial",
+  "Presbyterian Turquoise Care",
+  "Tricare",
+  "UHC Centennial",
+  "UHC Commercial",
+  "VACCN",
+];
+
+// ============================================================================
+// Interactive Chip Components
+// ============================================================================
+
+/** Clickable specialty chip: cycles through empty → x → x - Slow → empty */
+function SpecialtyChip({ specialty, value, onCycle }: {
+  specialty: string;
+  value: CapState;
+  onCycle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onCycle}
+      className="flex items-center gap-1 group"
+    >
+      <span className="text-xs text-muted-foreground">{specialty}:</span>
+      <span
+        className={cn(
+          "inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium transition-all cursor-pointer select-none",
+          value === "x" && "bg-green-100 text-green-800 border border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800",
+          value === "x - Slow" && "bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800",
+          value === "" && "bg-gray-100 text-gray-400 border border-dashed border-gray-300 dark:bg-gray-800 dark:text-gray-500 dark:border-gray-600",
+        )}
+      >
+        {value || "—"}
+      </span>
+    </button>
+  );
+}
+
+/** Toggleable insurance chip */
+function InsuranceChip({ name, selected, onToggle }: {
+  name: string;
+  selected: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={cn(
+        "inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium transition-all cursor-pointer select-none border",
+        selected
+          ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800"
+          : "bg-gray-50 text-gray-400 border-dashed border-gray-300 dark:bg-gray-800 dark:text-gray-500 dark:border-gray-600",
+      )}
+    >
+      {selected && <Check className="h-3 w-3" />}
+      {name}
+    </button>
+  );
+}
+
+// ============================================================================
+// Provider Edit Modal (card-mirrored layout)
+// ============================================================================
+
+/** Internal state for the edit form */
+interface EditFormState {
+  // CRM-only fields (for new providers)
   name: string;
   credentials: string;
   location: string;
-  specialties: string;
-  ageGroups: string;
-  insurances: string;
+  // Age-group capabilities: { "Adults (18+)": { "Anxiety": "x", "Trauma": "x - Slow" }, ... }
+  ageGroupCaps: Record<string, Record<string, CapState>>;
+  // Selected insurance names
+  selectedInsurances: Set<string>;
+  // Notes
   notes: string;
 }
 
-const EMPTY_FORM: ProviderFormData = {
-  name: "",
-  credentials: "",
-  location: "",
-  specialties: "",
-  ageGroups: "",
-  insurances: "",
-  notes: "",
-};
+function buildInitialState(provider: Provider | null): EditFormState {
+  if (!provider) {
+    // New provider: everything empty
+    const ageGroupCaps: Record<string, Record<string, CapState>> = {};
+    for (const [group, specs] of Object.entries(AGE_GROUP_SPECIALTIES)) {
+      ageGroupCaps[group] = {};
+      for (const s of specs) ageGroupCaps[group][s] = "";
+    }
+    return { name: "", credentials: "", location: "", ageGroupCaps, selectedInsurances: new Set(), notes: "" };
+  }
+
+  // Build caps from provider's existing ageGroups data
+  const ageGroupCaps: Record<string, Record<string, CapState>> = {};
+  for (const [group, specs] of Object.entries(AGE_GROUP_SPECIALTIES)) {
+    ageGroupCaps[group] = {};
+    const existing = provider.ageGroups[group as keyof typeof provider.ageGroups] || {};
+    for (const s of specs) {
+      const raw = existing[s]?.toLowerCase().trim() || "";
+      if (raw.includes("slow")) ageGroupCaps[group][s] = "x - Slow";
+      else if (raw === "x" || raw === "x ") ageGroupCaps[group][s] = "x";
+      else ageGroupCaps[group][s] = "";
+    }
+  }
+
+  // Insurance: use overrides first, then snapshot
+  const overrideInsurances = provider._overrideInsurances || provider.insurances || [];
+  let insuranceSet: Set<string>;
+  if (overrideInsurances.length > 0) {
+    insuranceSet = new Set(overrideInsurances);
+  } else {
+    const snapshot = getProviderInsurances(provider.name);
+    insuranceSet = snapshot ? new Set(snapshot) : new Set();
+  }
+
+  const overrideNotes = provider._overrideNotes;
+  const notes = overrideNotes !== null && overrideNotes !== undefined ? overrideNotes : provider.notes || "";
+
+  return {
+    name: provider.name,
+    credentials: provider.credentials || "",
+    location: provider.location || "",
+    ageGroupCaps,
+    selectedInsurances: insuranceSet,
+    notes,
+  };
+}
 
 function ProviderFormModal({
   isOpen,
@@ -388,79 +520,116 @@ function ProviderFormModal({
   onSaved: () => void;
 }) {
   const { toast } = useToast();
-  const [form, setForm] = useState<ProviderFormData>(EMPTY_FORM);
+  const [state, setState] = useState<EditFormState>(() => buildInitialState(null));
   const [isSaving, setIsSaving] = useState(false);
+  const [insuranceSearch, setInsuranceSearch] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const isEditing = !!editingProvider;
   const isCrmManaged = !!editingProvider?._crmManaged;
+  const isSpreadsheetEdit = isEditing && !isCrmManaged;
 
   const resetForm = () => {
-    if (editingProvider) {
-      // For CRM-managed providers, populate all fields
-      // For spreadsheet providers, populate override fields only
-      const overrideSpecialties = editingProvider._overrideSpecialties || editingProvider.specialties || [];
-      const overrideInsurances = editingProvider._overrideInsurances || editingProvider.insurances || [];
-      const overridePopulations = editingProvider._overridePopulations || editingProvider.crmAgeGroups || [];
-      const overrideNotes = editingProvider._overrideNotes ?? (isCrmManaged ? editingProvider.notes : "");
-
-      setForm({
-        name: editingProvider.name,
-        credentials: editingProvider.credentials || "",
-        location: editingProvider.location || "",
-        specialties: overrideSpecialties.join(", "),
-        ageGroups: overridePopulations.join(", "),
-        insurances: overrideInsurances.join(", "),
-        notes: overrideNotes || "",
-      });
-    } else {
-      setForm(EMPTY_FORM);
-    }
+    setState(buildInitialState(editingProvider));
+    setInsuranceSearch("");
   };
 
+  // Cycle a specialty through empty → x → x - Slow → empty
+  const cycleSpecialty = (group: string, specialty: string) => {
+    setState(prev => {
+      const current = prev.ageGroupCaps[group]?.[specialty] || "";
+      const idx = CAP_CYCLE.indexOf(current as CapState);
+      const next = CAP_CYCLE[(idx + 1) % CAP_CYCLE.length];
+      return {
+        ...prev,
+        ageGroupCaps: {
+          ...prev.ageGroupCaps,
+          [group]: { ...prev.ageGroupCaps[group], [specialty]: next },
+        },
+      };
+    });
+  };
+
+  // Toggle insurance selection
+  const toggleInsurance = (name: string) => {
+    setState(prev => {
+      const next = new Set(prev.selectedInsurances);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return { ...prev, selectedInsurances: next };
+    });
+  };
+
+  // Filter insurances by search
+  const filteredInsurances = useMemo(() => {
+    if (!insuranceSearch.trim()) return ALL_INSURANCES;
+    const q = insuranceSearch.toLowerCase();
+    return ALL_INSURANCES.filter(i => i.toLowerCase().includes(q));
+  }, [insuranceSearch]);
+
   const handleSave = async () => {
-    if (!isEditing && !form.name.trim()) {
+    if (!isEditing && !state.name.trim()) {
       toast({ title: "Name is required", variant: "destructive" });
       return;
     }
 
     setIsSaving(true);
     try {
-      const specialtiesArr = form.specialties ? form.specialties.split(",").map(s => s.trim()).filter(Boolean) : [];
-      const insurancesArr = form.insurances ? form.insurances.split(",").map(s => s.trim()).filter(Boolean) : [];
-      const populationsArr = form.ageGroups ? form.ageGroups.split(",").map(s => s.trim()).filter(Boolean) : [];
+      // Build ageGroups payload: reconstruct the ageGroups object with only non-empty caps
+      const ageGroupsPayload: Record<string, Record<string, string>> = {};
+      for (const [group, caps] of Object.entries(state.ageGroupCaps)) {
+        ageGroupsPayload[group] = {};
+        for (const [spec, val] of Object.entries(caps)) {
+          if (val) ageGroupsPayload[group][spec] = val;
+        }
+      }
+
+      const insurancesArr = [...state.selectedInsurances].sort();
 
       if (isEditing && editingProvider) {
         if (isCrmManaged && editingProvider.crmId) {
-          // CRM-managed provider: use existing PATCH route
+          // CRM-managed: send full payload
+          const specialtiesArr = Object.values(state.ageGroupCaps)
+            .flatMap(g => Object.entries(g).filter(([, v]) => v).map(([s]) => s));
+          const uniqueSpecs = [...new Set(specialtiesArr)];
           await apiRequest("PATCH", `/api/providers/${editingProvider.crmId}`, {
-            name: form.name.trim(),
-            credentials: form.credentials.trim(),
-            location: form.location.trim(),
-            specialties: specialtiesArr,
-            ageGroups: populationsArr,
+            name: state.name.trim(),
+            credentials: state.credentials.trim(),
+            location: state.location.trim(),
+            specialties: uniqueSpecs,
+            ageGroups: [],
             insurances: insurancesArr,
-            notes: form.notes.trim(),
+            notes: state.notes.trim(),
           });
         } else {
-          // Spreadsheet provider: use override endpoint
+          // Spreadsheet: save overrides (ageGroups are saved to the override endpoint)
+          // We need to send the ageGroups capabilities back via the override route
+          // For now, specialties/populations map from the chip selections
+          const specialtiesArr = Object.values(state.ageGroupCaps)
+            .flatMap(g => Object.entries(g).filter(([, v]) => v).map(([s]) => s));
+          const uniqueSpecs = [...new Set(specialtiesArr)];
           await apiRequest("PATCH", "/api/providers/override", {
             providerName: editingProvider.name,
-            specialties: specialtiesArr,
+            specialties: uniqueSpecs,
             insurances: insurancesArr,
-            populations: populationsArr,
-            notes: form.notes.trim(),
+            populations: [],
+            notes: state.notes.trim(),
+            ageGroups: ageGroupsPayload,
           });
         }
         toast({ title: "Provider updated" });
       } else {
+        // Create new CRM provider
+        const specialtiesArr = Object.values(state.ageGroupCaps)
+          .flatMap(g => Object.entries(g).filter(([, v]) => v).map(([s]) => s));
+        const uniqueSpecs = [...new Set(specialtiesArr)];
         await apiRequest("POST", "/api/providers", {
-          name: form.name.trim(),
-          credentials: form.credentials.trim(),
-          location: form.location.trim(),
-          specialties: specialtiesArr,
-          ageGroups: populationsArr,
+          name: state.name.trim(),
+          credentials: state.credentials.trim(),
+          location: state.location.trim(),
+          specialties: uniqueSpecs,
+          ageGroups: [],
           insurances: insurancesArr,
-          notes: form.notes.trim(),
+          notes: state.notes.trim(),
         });
         toast({ title: "Provider created" });
       }
@@ -478,62 +647,123 @@ function ProviderFormModal({
     }
   };
 
-  // For spreadsheet providers, name/credentials/location are read-only (from Excel)
-  const isSpreadsheetEdit = isEditing && !isCrmManaged;
+  const selectedCount = state.selectedInsurances.size;
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); else resetForm(); }}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{isEditing ? `Edit ${editingProvider?.name || "Provider"}` : "Add New Provider"}</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4 pt-2">
-          {!isSpreadsheetEdit && (
-            <>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label className="text-xs">Name *</Label>
-                  <Input value={form.name} onChange={(e) => setForm(p => ({ ...p, name: e.target.value }))} placeholder="Full name" />
-                </div>
-                <div>
-                  <Label className="text-xs">Credentials</Label>
-                  <Input value={form.credentials} onChange={(e) => setForm(p => ({ ...p, credentials: e.target.value }))} placeholder="e.g. LCSW, LPCC" />
-                </div>
-              </div>
+      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+        <DialogHeader className="flex-shrink-0">
+          <DialogTitle>
+            {isEditing ? (
               <div>
-                <Label className="text-xs">Location</Label>
-                <Input value={form.location} onChange={(e) => setForm(p => ({ ...p, location: e.target.value }))} placeholder="e.g. ABQ, LL, RR" />
+                <span>{editingProvider?.name}</span>
+                {editingProvider?.credentials && (
+                  <span className="text-sm font-normal text-muted-foreground ml-2">
+                    {editingProvider.name === "Bentley Carbone" ? "LAMFT" : editingProvider.credentials}
+                  </span>
+                )}
               </div>
-            </>
-          )}
-          {isSpreadsheetEdit && (
-            <p className="text-xs text-muted-foreground bg-muted/50 px-3 py-2 rounded-md">
-              Name, credentials, and location are managed in the Provider Skills Spreadsheet. You can customize the fields below.
-            </p>
-          )}
-          <div>
-            <Label className="text-xs">Specialties (comma-separated)</Label>
-            <Input value={form.specialties} onChange={(e) => setForm(p => ({ ...p, specialties: e.target.value }))} placeholder="e.g. Anxiety, Trauma, EMDR, Depression" />
+            ) : "Add New Provider"}
+          </DialogTitle>
+        </DialogHeader>
+
+        <ScrollArea className="flex-1 -mx-6 px-6">
+          <div className="space-y-5 pb-4">
+            {/* CRM-only: name/credentials/location */}
+            {!isSpreadsheetEdit && !isEditing && (
+              <>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <Label className="text-xs">Name *</Label>
+                    <Input value={state.name} onChange={(e) => setState(p => ({ ...p, name: e.target.value }))} placeholder="Full name" />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Credentials</Label>
+                    <Input value={state.credentials} onChange={(e) => setState(p => ({ ...p, credentials: e.target.value }))} placeholder="e.g. LCSW" />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Location</Label>
+                    <Input value={state.location} onChange={(e) => setState(p => ({ ...p, location: e.target.value }))} placeholder="ABQ, LL, RR" />
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Age Group Specialty Sections */}
+            <div className="space-y-4">
+              <p className="text-xs text-muted-foreground">Click a specialty to cycle: <span className="text-gray-400">— (none)</span> → <span className="text-green-700">x</span> → <span className="text-amber-700">x - Slow</span> → <span className="text-gray-400">—</span></p>
+              {Object.entries(AGE_GROUP_SPECIALTIES).map(([group, specs]) => (
+                <div key={group}>
+                  <p className="text-xs font-semibold text-foreground uppercase tracking-wide mb-2">{group}</p>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1.5">
+                    {specs.map(spec => (
+                      <SpecialtyChip
+                        key={`${group}-${spec}`}
+                        specialty={spec}
+                        value={state.ageGroupCaps[group]?.[spec] || ""}
+                        onCycle={() => cycleSpecialty(group, spec)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Notes */}
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wide">Notes</Label>
+              <Textarea
+                value={state.notes}
+                onChange={(e) => setState(p => ({ ...p, notes: e.target.value }))}
+                placeholder="Additional notes..."
+                className="min-h-[50px] mt-1.5 text-sm"
+              />
+            </div>
+
+            {/* Insurance Multi-Select */}
+            <div>
+              <p className="text-xs font-semibold text-foreground uppercase tracking-wide mb-2">
+                Accepted Insurances {selectedCount > 0 && `(${selectedCount})`}
+              </p>
+              <div className="relative mb-2">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input
+                  ref={searchRef}
+                  value={insuranceSearch}
+                  onChange={(e) => setInsuranceSearch(e.target.value)}
+                  placeholder="Search insurances..."
+                  className="pl-8 h-8 text-sm"
+                />
+                {insuranceSearch && (
+                  <button
+                    type="button"
+                    onClick={() => { setInsuranceSearch(""); searchRef.current?.focus(); }}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2"
+                  >
+                    <X className="h-3.5 w-3.5 text-muted-foreground" />
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {filteredInsurances.map(ins => (
+                  <InsuranceChip
+                    key={ins}
+                    name={ins}
+                    selected={state.selectedInsurances.has(ins)}
+                    onToggle={() => toggleInsurance(ins)}
+                  />
+                ))}
+              </div>
+            </div>
           </div>
-          <div>
-            <Label className="text-xs">Populations (comma-separated)</Label>
-            <Input value={form.ageGroups} onChange={(e) => setForm(p => ({ ...p, ageGroups: e.target.value }))} placeholder="e.g. Adults, Adolescents, Children" />
-          </div>
-          <div>
-            <Label className="text-xs">Accepted Insurances (comma-separated)</Label>
-            <Input value={form.insurances} onChange={(e) => setForm(p => ({ ...p, insurances: e.target.value }))} placeholder="e.g. BCBS, Presbyterian, Tricare" />
-          </div>
-          <div>
-            <Label className="text-xs">Notes</Label>
-            <Textarea value={form.notes} onChange={(e) => setForm(p => ({ ...p, notes: e.target.value }))} placeholder="Additional notes..." className="min-h-[60px]" />
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={onClose} disabled={isSaving}>Cancel</Button>
-            <Button onClick={handleSave} disabled={isSaving}>
-              {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              {isEditing ? "Save Changes" : "Create Provider"}
-            </Button>
-          </div>
+        </ScrollArea>
+
+        <div className="flex justify-end gap-2 pt-3 border-t flex-shrink-0">
+          <Button variant="outline" onClick={onClose} disabled={isSaving}>Cancel</Button>
+          <Button onClick={handleSave} disabled={isSaving}>
+            {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            {isEditing ? "Save Changes" : "Create Provider"}
+          </Button>
         </div>
       </DialogContent>
     </Dialog>
