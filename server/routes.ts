@@ -46,6 +46,7 @@ import {
   mergeMigrationContacts,
   updateContactIntakeFields,
   getWaitlistExportData,
+  WAITLIST_EXPORT_COLUMNS,
   type SyncPayloadContact,
   type MigrationContact,
 } from "./sync/db";
@@ -4264,27 +4265,98 @@ export async function registerRoutes(
   });
 
   // ============================================================================
-  // Export: Waitlist Snapshot (for n8n → Excel full-replace)
+  // Export: Waitlist Snapshot
   // ============================================================================
 
+  // Shared auth check for all export endpoints
+  function checkExportAuth(req: any, res: any): boolean {
+    if (!SYNC_API_KEY) {
+      console.warn("[export] blocked — SYNC_API_KEY not configured");
+      res.status(503).json({ error: "Export not configured for this environment" });
+      return false;
+    }
+    const apiKey = req.headers["x-sync-key"] as string;
+    if (apiKey !== SYNC_API_KEY) {
+      res.status(401).json({ error: "Invalid sync key" });
+      return false;
+    }
+    return true;
+  }
+
+  // JSON export (for n8n or programmatic consumers)
   app.get("/api/export/waitlist", async (req, res) => {
     try {
-      // Authenticate via sync API key (same as n8n sync endpoint)
-      if (!SYNC_API_KEY) {
-        console.warn("[export] /api/export/waitlist blocked — SYNC_API_KEY not configured");
-        return res.status(503).json({ error: "Export not configured for this environment" });
-      }
-      const apiKey = req.headers["x-sync-key"] as string;
-      if (apiKey !== SYNC_API_KEY) {
-        return res.status(401).json({ error: "Invalid sync key" });
-      }
-
+      if (!checkExportAuth(req, res)) return;
       const result = getWaitlistExportData();
-      console.log(`[export] Waitlist snapshot: ${result.total} rows generated at ${result.generatedAt}`);
+      console.log(`[export] JSON: ${result.total} rows`);
       return res.json(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Export failed";
       console.error("[export] Error:", message);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // CSV export (file download)
+  app.get("/api/export/waitlist.csv", async (req, res) => {
+    try {
+      if (!checkExportAuth(req, res)) return;
+      const { rows, total } = getWaitlistExportData();
+      console.log(`[export] CSV: ${total} rows`);
+
+      // Build CSV: header + rows, using canonical column order
+      const escape = (v: unknown): string => {
+        const s = String(v ?? "");
+        if (s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r")) {
+          return '"' + s.replace(/"/g, '""') + '"';
+        }
+        return s;
+      };
+
+      const header = WAITLIST_EXPORT_COLUMNS.map(escape).join(",");
+      const lines = rows.map(row =>
+        WAITLIST_EXPORT_COLUMNS.map(col => escape(row[col])).join(",")
+      );
+
+      const csv = header + "\r\n" + lines.join("\r\n") + "\r\n";
+
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", 'attachment; filename="waitlist-export.csv"');
+      return res.send(csv);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "CSV export failed";
+      console.error("[export] CSV Error:", message);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // Excel export (file download)
+  app.get("/api/export/waitlist.xlsx", async (req, res) => {
+    try {
+      if (!checkExportAuth(req, res)) return;
+      const { rows, total } = getWaitlistExportData();
+      console.log(`[export] XLSX: ${total} rows`);
+
+      // Build worksheet from rows using canonical column order
+      const wsData = rows.map(row =>
+        WAITLIST_EXPORT_COLUMNS.reduce((obj, col) => {
+          obj[col] = row[col];
+          return obj;
+        }, {} as Record<string, unknown>)
+      );
+
+      const ws = XLSX.utils.json_to_sheet(wsData, { header: [...WAITLIST_EXPORT_COLUMNS] });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Waitlist");
+
+      const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", 'attachment; filename="waitlist-export.xlsx"');
+      return res.send(buf);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "XLSX export failed";
+      console.error("[export] XLSX Error:", message);
       return res.status(500).json({ error: message });
     }
   });

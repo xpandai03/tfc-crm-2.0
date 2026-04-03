@@ -331,7 +331,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     "/auth/logout",
     "/api/me", // This handles its own auth check
     "/api/sync/contacts", // n8n sync endpoint (uses X-Sync-Key auth)
-    "/api/export/waitlist", // n8n export endpoint (uses X-Sync-Key auth)
+    "/api/export/",        // all export endpoints (use X-Sync-Key auth)
     "/api/migrate",        // Migration endpoint (uses X-Migrate-Key auth)
   ];
 
@@ -348,9 +348,9 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     return next();
   }
 
-  // Check if path starts with any public path
+  // Check if path matches any public path (exact match, query suffix, or prefix for paths ending in /)
   const isPublicPath = publicPaths.some(
-    (path) => req.path === path || req.path.startsWith(path + "?")
+    (p) => req.path === p || req.path.startsWith(p + "?") || (p.endsWith("/") && req.path.startsWith(p))
   );
 
   if (isPublicPath) {

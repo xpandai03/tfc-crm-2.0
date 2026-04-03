@@ -562,74 +562,100 @@ export function getAllSyncContacts(): SyncContact[] {
 // Export: Waitlist Snapshot
 // ============================================================================
 
-export interface WaitlistExportRow {
-  contactId: string;
-  name: string;
-  email: string;
-  phone: string;
-  statusCode: string;
-  reasonForTherapy: string;
-  reasonForSeeking: string;
-  insurancePayer: string;
-  insurancePlan: string;
-  patientDob: string;
-  gender: string;
-  streetAddress: string;
-  city: string;
-  state: string;
-  zipCode: string;
-  priorServices: string;
-  priorProvider: string;
-  modality: string;
-  requestingFor: string;
-  formCompletedBy: string;
-  assignedTo: string;
-  flags: string;
-  lastNote: string;
-  createdAt: string;
-  daysOnWaitlist: number;
-  cleanedDateAdded: string;
-}
+/**
+ * Canonical column order — matches the operational Agent-Master spreadsheet exactly.
+ * DO NOT reorder, rename, or remove columns without an explicit schema change decision.
+ * Typos and trailing spaces are intentional (they match the real spreadsheet).
+ */
+export const WAITLIST_EXPORT_COLUMNS = [
+  "ContactId",
+  "Type",
+  "Status",
+  "First Name",
+  "Middle Name",
+  "Last Name",
+  "Date Added To Waitlist2",
+  "Days on Waitlist (running)",
+  "Requesting Services For",
+  "Form Completed By",
+  "Notes added by agent",
+  "Patient DOB",
+  "Sex",
+  "Gender Identity",
+  "Street Address",
+  "Apartment/Suite",
+  "City",
+  "State",
+  "Zip Code",
+  "Home Phone",
+  "Mobile Phone",
+  "Email",
+  "Consent Emails",
+  "Desired Modality",
+  "Insurance Type",
+  "Primary Insurance Provider",
+  "Insurance ID Number",
+  "Subscriber Relationship",
+  "Subscriber Name",
+  "Subscriber DOB",
+  "Subscriber ID Number",
+  "Secondary Insurance",
+  "Detailed Reason",
+  "Therapy Issues",
+  "Prior Counseling",
+  "When + Who",
+  "Was TFC?",
+  "Last Outcome",
+  "Digital Signature",
+  "Confirmation Accuracy",
+  "Participant Name ",  // trailing space is intentional (matches spreadsheet)
+  "Participant Email ", // trailing space is intentional
+  "Participant Phone",
+  "RFS LINK",
+  "Date Added To Waitlist",
+  "Date added to waitlist cleaned",
+  "Editor",
+  "Current Status",
+  "Date Removed From Waitlist",
+  "RUN ID",
+  "Computed Addintion day", // typo is intentional (matches spreadsheet)
+  "days on waitlist",
+  "Full name",
+  "Admin Assigned to Contact",
+  "Inactive",
+  "Reason for Therapy MCQ",
+  "Attention Required",
+] as const;
+
+export type WaitlistExportRow = Record<(typeof WAITLIST_EXPORT_COLUMNS)[number], string | number>;
 
 /**
  * Returns a complete, flat, deterministic snapshot of all waitlist contacts.
- * Designed for batch export (n8n → Excel full-replace).
+ * Every row has all 57 columns matching the canonical Agent-Master spreadsheet.
  *
  * Guarantees:
- * - Every row has identical keys
- * - No null values (empty string defaults)
+ * - Every row has identical keys in canonical order
+ * - No null/undefined values ("" for strings, 0 for numbers)
  * - No nested objects or arrays
- * - Sorted by date_added ASC (oldest first)
- * - Deterministic: identical results across repeated calls (same data)
+ * - Sorted by date_added ASC, contact_id ASC (oldest first, deterministic)
  */
-export function getWaitlistExportData(): { total: number; generatedAt: string; rows: WaitlistExportRow[] } {
+export function getWaitlistExportData(): { total: number; generatedAt: string; columns: readonly string[]; rows: WaitlistExportRow[] } {
   const db = getDatabase();
   const rows = db.prepare(`
     SELECT
-      contact_id,
-      name,
-      email,
-      phone,
-      status_code,
-      reason_for_therapy,
-      reason_for_seeking,
-      insurance_payer,
-      insurance_plan,
-      patient_dob,
-      gender,
-      street_address,
-      city,
-      state,
-      zip_code,
-      prior_services,
-      prior_provider,
-      modality,
-      requesting_for,
-      form_completed_by,
-      assigned_to,
-      flags,
-      last_note,
-      date_added,
+      contact_id, name, email, phone,
+      status, status_code,
+      service_requested, days_on_waitlist, date_added,
+      assigned_to, requesting_for, reason_for_seeking,
+      reason_for_therapy, detailed_reason, form_completed_by,
+      modality, referral_source, prior_services, prior_provider,
+      preferred_contact, custody, flags, priority,
+      insurance_payer, insurance_plan, insurance_id,
+      insurance_status, referral_auth, referral_status,
+      patient_dob, gender, age,
+      street_address, city, state, zip_code, county,
+      rfs_link, document_link,
+      last_contact, last_note,
       synced_at
     FROM sync_contacts
     ORDER BY date_added ASC, contact_id ASC
@@ -641,58 +667,86 @@ export function getWaitlistExportData(): { total: number; generatedAt: string; r
   const generatedAt = new Date().toISOString();
 
   const exportRows: WaitlistExportRow[] = rows.map((r) => {
-    const dateAdded = String(r.date_added ?? "");
-    const createdAt = dateAdded || String(r.synced_at ?? "");
+    const s = (v: unknown) => String(v ?? "");
+    const dateAdded = s(r.date_added);
+    const fullName = s(r.name);
+    const nameParts = fullName.trim().split(/\s+/);
+    const firstName = nameParts[0] || "";
+    const lastName = nameParts.slice(1).join(" ") || "";
 
-    // Compute daysOnWaitlist from dateAdded
+    // Compute days on waitlist from dateAdded
     let daysOnWaitlist = 0;
-    if (dateAdded) {
-      const parsed = new Date(dateAdded);
-      if (!isNaN(parsed.getTime())) {
-        daysOnWaitlist = Math.max(0, Math.floor((nowMs - parsed.getTime()) / 86400000));
-      }
-    }
-
-    // cleanedDateAdded: Excel-friendly YYYY-MM-DD or empty string
     let cleanedDateAdded = "";
     if (dateAdded) {
       const parsed = new Date(dateAdded);
       if (!isNaN(parsed.getTime())) {
+        daysOnWaitlist = Math.max(0, Math.floor((nowMs - parsed.getTime()) / 86400000));
         cleanedDateAdded = parsed.toISOString().split("T")[0];
       }
     }
 
     return {
-      contactId: String(r.contact_id ?? ""),
-      name: String(r.name ?? ""),
-      email: String(r.email ?? ""),
-      phone: String(r.phone ?? ""),
-      statusCode: String(r.status_code ?? ""),
-      reasonForTherapy: String(r.reason_for_therapy ?? ""),
-      reasonForSeeking: String(r.reason_for_seeking ?? ""),
-      insurancePayer: String(r.insurance_payer ?? ""),
-      insurancePlan: String(r.insurance_plan ?? ""),
-      patientDob: String(r.patient_dob ?? ""),
-      gender: String(r.gender ?? ""),
-      streetAddress: String(r.street_address ?? ""),
-      city: String(r.city ?? ""),
-      state: String(r.state ?? ""),
-      zipCode: String(r.zip_code ?? ""),
-      priorServices: String(r.prior_services ?? ""),
-      priorProvider: String(r.prior_provider ?? ""),
-      modality: String(r.modality ?? ""),
-      requestingFor: String(r.requesting_for ?? ""),
-      formCompletedBy: String(r.form_completed_by ?? ""),
-      assignedTo: String(r.assigned_to ?? ""),
-      flags: String(r.flags ?? ""),
-      lastNote: String(r.last_note ?? ""),
-      createdAt,
-      daysOnWaitlist,
-      cleanedDateAdded,
-    };
+      "ContactId": s(r.contact_id),
+      "Type": "Contact",
+      "Status": s(r.status_code),
+      "First Name": firstName,
+      "Middle Name": "",
+      "Last Name": lastName,
+      "Date Added To Waitlist2": dateAdded,
+      "Days on Waitlist (running)": daysOnWaitlist,
+      "Requesting Services For": s(r.requesting_for),
+      "Form Completed By": s(r.form_completed_by),
+      "Notes added by agent": s(r.last_note),
+      "Patient DOB": s(r.patient_dob),
+      "Sex": s(r.gender),
+      "Gender Identity": "",
+      "Street Address": s(r.street_address),
+      "Apartment/Suite": "",
+      "City": s(r.city),
+      "State": s(r.state),
+      "Zip Code": s(r.zip_code),
+      "Home Phone": "",
+      "Mobile Phone": s(r.phone),
+      "Email": s(r.email),
+      "Consent Emails": "",
+      "Desired Modality": s(r.modality),
+      "Insurance Type": s(r.insurance_plan),
+      "Primary Insurance Provider": s(r.insurance_payer),
+      "Insurance ID Number": s(r.insurance_id),
+      "Subscriber Relationship": "",
+      "Subscriber Name": "",
+      "Subscriber DOB": "",
+      "Subscriber ID Number": "",
+      "Secondary Insurance": "",
+      "Detailed Reason": s(r.detailed_reason || r.reason_for_seeking),
+      "Therapy Issues": "",
+      "Prior Counseling": s(r.prior_services),
+      "When + Who": s(r.prior_provider),
+      "Was TFC?": "",
+      "Last Outcome": "",
+      "Digital Signature": "",
+      "Confirmation Accuracy": "",
+      "Participant Name ": "",
+      "Participant Email ": "",
+      "Participant Phone": "",
+      "RFS LINK": s(r.rfs_link),
+      "Date Added To Waitlist": dateAdded,
+      "Date added to waitlist cleaned": cleanedDateAdded,
+      "Editor": "",
+      "Current Status": s(r.status),
+      "Date Removed From Waitlist": "",
+      "RUN ID": "",
+      "Computed Addintion day": "",
+      "days on waitlist": daysOnWaitlist,
+      "Full name": fullName,
+      "Admin Assigned to Contact": s(r.assigned_to),
+      "Inactive": "",
+      "Reason for Therapy MCQ": s(r.reason_for_therapy),
+      "Attention Required": s(r.flags),
+    } satisfies WaitlistExportRow;
   });
 
-  return { total: exportRows.length, generatedAt, rows: exportRows };
+  return { total: exportRows.length, generatedAt, columns: WAITLIST_EXPORT_COLUMNS, rows: exportRows };
 }
 
 /**
