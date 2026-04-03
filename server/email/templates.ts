@@ -57,7 +57,7 @@ export function extractFirstName(fullName: string | null | undefined): string {
  * - Layout: Table-based for email client safety
  */
 
-const APP_URL = process.env.APP_URL || "https://tfc-crm-2026.fly.dev";
+const APP_URL = process.env.APP_URL || "https://tfc-crm-2-0.fly.dev";
 const LOGO_URL = `${APP_URL}/tfc-logo.jpg`;
 const SURVEY_URL = process.env.SURVEY_URL || "https://customer-feedback-tfc.replit.app";
 
