@@ -9,6 +9,7 @@ import { initTherapyNotesTable } from "./therapy-notes";
 import { initEmailSnapshotsTable } from "./email-snapshots";
 import { initAssignmentsTable } from "./assignments/db";
 import { initSyncTables } from "./sync/db";
+import { initActivityTable } from "./activity/db";
 
 const app = express();
 const httpServer = createServer(app);
@@ -135,6 +136,7 @@ app.use((req, res, next) => {
     initEmailSnapshotsTable();
     initAssignmentsTable();
     initSyncTables();
+    initActivityTable();
     startReminderCron();
     log("Reminder system initialized");
   } catch (err) {
