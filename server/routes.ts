@@ -4318,6 +4318,40 @@ export async function registerRoutes(
     }
   });
 
+  // Insights PDF report
+  app.get("/api/export/insights.pdf", async (_req, res) => {
+    try {
+      const { computeInsightsMetrics, buildInsightsDocument } = await import("./pdf/insights-template");
+      const metrics = computeInsightsMetrics();
+      const docDefinition = buildInsightsDocument(metrics);
+
+      const pdfmake = require("pdfmake");
+      pdfmake.addFonts(require("pdfmake/standard-fonts/Helvetica"));
+      const pdfDoc = pdfmake.createPdf(docDefinition);
+
+      const now = new Date();
+      const ts = [
+        now.getFullYear(),
+        String(now.getMonth() + 1).padStart(2, "0"),
+        String(now.getDate()).padStart(2, "0"),
+        "-",
+        String(now.getHours()).padStart(2, "0"),
+        String(now.getMinutes()).padStart(2, "0"),
+      ].join("");
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="insights-${ts}.pdf"`);
+      res.setHeader("Cache-Control", "no-cache");
+
+      const stream = await pdfDoc.getStream();
+      stream.pipe(res);
+      stream.end();
+    } catch (error) {
+      console.error("[insights-pdf] Error:", error);
+      return res.status(500).json({ error: "Failed to generate insights PDF" });
+    }
+  });
+
   // ============================================================================
   // Email Snapshots API
   // ============================================================================

@@ -406,9 +406,30 @@ export default function Insights() {
             </p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" data-testid="button-export">
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="button-export"
+              onClick={async () => {
+                try {
+                  const res = await fetch("/api/export/insights.pdf", { credentials: "include" });
+                  if (!res.ok) throw new Error("Export failed");
+                  const blob = await res.blob();
+                  const now = new Date();
+                  const ts = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,"0")}${String(now.getDate()).padStart(2,"0")}-${String(now.getHours()).padStart(2,"0")}${String(now.getMinutes()).padStart(2,"0")}`;
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `insights-${ts}.pdf`;
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  URL.revokeObjectURL(url);
+                } catch { /* silent fail — button click feedback is sufficient */ }
+              }}
+            >
               <Download className="h-4 w-4 mr-2" />
-              Export
+              Export PDF
             </Button>
           </div>
         </div>
