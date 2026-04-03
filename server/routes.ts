@@ -45,6 +45,7 @@ import {
   insertMigrationContacts,
   mergeMigrationContacts,
   updateContactIntakeFields,
+  getWaitlistExportData,
   type SyncPayloadContact,
   type MigrationContact,
 } from "./sync/db";
@@ -4259,6 +4260,32 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[email-snapshots] Error fetching snapshot:", error);
       return res.status(500).json({ error: "Failed to fetch email snapshot" });
+    }
+  });
+
+  // ============================================================================
+  // Export: Waitlist Snapshot (for n8n → Excel full-replace)
+  // ============================================================================
+
+  app.get("/api/export/waitlist", async (req, res) => {
+    try {
+      // Authenticate via sync API key (same as n8n sync endpoint)
+      if (!SYNC_API_KEY) {
+        console.warn("[export] /api/export/waitlist blocked — SYNC_API_KEY not configured");
+        return res.status(503).json({ error: "Export not configured for this environment" });
+      }
+      const apiKey = req.headers["x-sync-key"] as string;
+      if (apiKey !== SYNC_API_KEY) {
+        return res.status(401).json({ error: "Invalid sync key" });
+      }
+
+      const result = getWaitlistExportData();
+      console.log(`[export] Waitlist snapshot: ${result.total} rows generated at ${result.generatedAt}`);
+      return res.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Export failed";
+      console.error("[export] Error:", message);
+      return res.status(500).json({ error: message });
     }
   });
 
