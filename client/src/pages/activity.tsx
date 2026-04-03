@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { PageLayout } from "@/components/layout/page-layout";
-import { Loader2, FileText, ArrowRightLeft, MessageSquare, Activity, Inbox, UserPlus, Pencil, UserCog, Mail, Stethoscope } from "lucide-react";
+import { Loader2, FileText, ArrowRightLeft, MessageSquare, Activity, Inbox, UserPlus, Pencil, UserCog, Mail, Stethoscope, AlertTriangle } from "lucide-react";
 
 interface ActivityEvent {
   id: number;
@@ -31,8 +31,12 @@ function getEventIcon(type: string) {
       return <UserCog className="h-4 w-4 text-indigo-500" />;
     case "email_sent":
       return <Mail className="h-4 w-4 text-blue-500" />;
+    case "therapy_notes_started":
+      return <Stethoscope className="h-4 w-4 text-blue-500" />;
     case "therapy_notes_created":
       return <Stethoscope className="h-4 w-4 text-emerald-500" />;
+    case "therapy_notes_failed":
+      return <AlertTriangle className="h-4 w-4 text-red-500" />;
     default:
       return <Activity className="h-4 w-4 text-muted-foreground" />;
   }
