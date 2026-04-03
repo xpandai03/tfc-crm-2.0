@@ -3972,41 +3972,39 @@ export async function registerRoutes(
       const record = getTnRecord(contactId);
       res.status(202).json({ status: "in_progress", record });
 
-      // Detached async: fetch snapshot → call TN agent → update record
+      // Detached async: read data → validate → call TN agent (with retry) → update record
       (async () => {
+        const TN_MAX_RETRIES = 2;
+        const TN_BASE_DELAY_MS = 3000;
+
         try {
-          console.log(`[therapy-notes] Starting TN creation for contact ${contactId}`);
+          console.log(`[TN] Started for contact ${contactId}`);
 
-          // Fetch contact snapshot from n8n
-          console.log(`[TN DEBUG] Fetching snapshot from n8n for contactId: ${contactId}`);
-          const snapshotResponse = await fetch(N8N_ENDPOINTS.contactSnapshot, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ contactId }),
-          });
+          // ---- Step 1: Get contact data from LOCAL DB (no n8n dependency) ----
+          let snapshot: Record<string, unknown> | null = null;
+          const localContact = getSyncContactById(contactId);
 
-          console.log(`[TN DEBUG] n8n snapshot HTTP status: ${snapshotResponse.status}`);
-          if (!snapshotResponse.ok) {
-            throw new Error(`n8n snapshot returned ${snapshotResponse.status}`);
+          if (localContact && localContact.name) {
+            console.log(`[TN] Using local sync_contacts data for ${contactId}`);
+            snapshot = localContact as unknown as Record<string, unknown>;
+          } else {
+            // Fallback to n8n if local data is missing/incomplete
+            console.warn(`[TN] Local data missing for ${contactId}, falling back to n8n snapshot`);
+            const snapshotResponse = await fetch(N8N_ENDPOINTS.contactSnapshot, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ contactId }),
+            });
+
+            if (!snapshotResponse.ok) {
+              throw new Error(`n8n snapshot returned ${snapshotResponse.status}`);
+            }
+
+            const rawData = await snapshotResponse.json() as Record<string, unknown>;
+            snapshot = (rawData.contact || rawData || {}) as Record<string, unknown>;
           }
 
-          const rawSnapshotText = await snapshotResponse.text();
-          console.log(`[TN DEBUG] n8n snapshot raw response (first 500 chars):`, rawSnapshotText.substring(0, 500));
-
-          let rawData: Record<string, unknown>;
-          try {
-            rawData = JSON.parse(rawSnapshotText);
-          } catch (parseErr) {
-            console.error(`[TN DEBUG] n8n snapshot JSON parse failed:`, parseErr);
-            console.error(`[TN DEBUG] n8n snapshot raw body:`, rawSnapshotText.substring(0, 1000));
-            throw new Error(`n8n snapshot returned invalid JSON`);
-          }
-
-          const snapshot = (rawData.contact || rawData || {}) as Record<string, unknown>;
-          console.log(`[TN DEBUG] Snapshot keys:`, Object.keys(snapshot));
-          console.log(`[TN DEBUG] Snapshot name: "${snapshot.name}", patientDob: "${snapshot.patientDob}", phone: "${snapshot.phone}"`);
-
-          // Map fields to TN agent payload
+          // ---- Step 2: Build payload ----
           const fullName = (snapshot.name as string) || "";
           const { firstName, lastName } = parseName(fullName);
 
@@ -4016,16 +4014,13 @@ export async function registerRoutes(
           if (typeof rawDob === "number" && rawDob > 15000 && rawDob < 80000) {
             dob = excelSerialToMMDDYYYY(rawDob);
           } else if (typeof rawDob === "string" && rawDob.length > 0) {
-            // Handle YYYY-MM-DD → MM/DD/YYYY
             const isoMatch = rawDob.match(/^(\d{4})-(\d{2})-(\d{2})/);
             if (isoMatch) {
               dob = `${isoMatch[2]}/${isoMatch[3]}/${isoMatch[1]}`;
             } else {
-              // Already MM/DD/YYYY or other format — pass through
               dob = rawDob;
             }
           }
-          console.log(`[TN DEBUG] DOB conversion: raw=${JSON.stringify(rawDob)} → "${dob}"`);
 
           const payload: TnAgentPayload = {
             first_name: firstName,
@@ -4040,98 +4035,110 @@ export async function registerRoutes(
             rfs_url: (snapshot.rfsLink as string) || "",
           };
 
-          console.log(`[TN DEBUG] TN_AGENT_URL:`, TN_AGENT_URL);
-          console.log(`[TN DEBUG] API key present:`, !!process.env.TN_API_KEY);
-          console.log(`[TN DEBUG] API key length:`, process.env.TN_API_KEY?.length ?? 0);
-          console.log(`[TN PAYLOAD]`, JSON.stringify(payload));
+          console.log(`[TN] Payload built: ${firstName} ${lastName}, DOB=${dob}`);
+
+          // ---- Step 3: Pre-validate critical fields ----
+          const missingFields: string[] = [];
+          if (!payload.first_name) missingFields.push("first_name");
+          if (!payload.last_name) missingFields.push("last_name");
+          if (!payload.dob) missingFields.push("dob");
+
+          if (missingFields.length > 0) {
+            const reason = `Missing critical fields: ${missingFields.join(", ")}`;
+            console.error(`[TN] Pre-validation failed: ${reason}`);
+            updateTnStatus(contactId, "failed", { failureReason: reason });
+            return;
+          }
 
           if (isN8nDisabled(TN_AGENT_URL) || !process.env.TN_API_KEY) {
-            console.warn("[staging] TherapyNotes create-patient skipped — TN_AGENT_URL or TN_API_KEY not configured");
+            console.warn("[TN] Skipped — TN_AGENT_URL or TN_API_KEY not configured");
             updateTnStatus(contactId, "failed", { failureReason: "TherapyNotes disabled in this environment" });
-            return res.json({ success: false, error: "TherapyNotes not configured for this environment" });
+            return;
           }
 
-          let tnResponse: Response;
-          try {
-            tnResponse = await fetch(TN_AGENT_URL, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "X-API-Key": process.env.TN_API_KEY!,
-              },
-              body: JSON.stringify(payload),
-            });
-          } catch (fetchErr) {
-            console.error(`[TN DEBUG] Fetch to TN agent threw:`, fetchErr);
-            console.error(`[TN DEBUG] Fetch error stack:`, fetchErr instanceof Error ? fetchErr.stack : "no stack");
-            throw fetchErr;
+          // ---- Step 4: Call TN agent with retry ----
+          let lastError = "";
+          for (let attempt = 0; attempt <= TN_MAX_RETRIES; attempt++) {
+            if (attempt > 0) {
+              const delay = TN_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+              console.log(`[TN] Retry ${attempt}/${TN_MAX_RETRIES} after ${delay}ms`);
+              await new Promise(r => setTimeout(r, delay));
+            }
+
+            try {
+              console.log(`[TN] Agent call attempt ${attempt + 1}/${TN_MAX_RETRIES + 1}`);
+
+              const tnResponse = await fetch(TN_AGENT_URL, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-API-Key": process.env.TN_API_KEY!,
+                },
+                body: JSON.stringify(payload),
+              });
+
+              const rawTnText = await tnResponse.text();
+              let tnResult: TnAgentResponse;
+              try {
+                tnResult = JSON.parse(rawTnText) as TnAgentResponse;
+              } catch {
+                throw new Error(`TN agent returned invalid JSON (HTTP ${tnResponse.status})`);
+              }
+
+              if (tnResult.status === "success") {
+                console.log(`[TN] Success: url=${tnResult.tn_patient_url}`);
+                updateTnStatus(contactId, "created", {
+                  url: tnResult.tn_patient_url,
+                  id: tnResult.tn_patient_id,
+                });
+
+                // Fire-and-forget timeline log
+                const author = userEmail.split("@")[0].substring(0, 3).toUpperCase();
+                fetch(N8N_ENDPOINTS.addNote, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    contactId,
+                    note: `[TherapyNotes] Patient created successfully: ${tnResult.tn_patient_url || "N/A"}`,
+                    author,
+                    timestamp: new Date().toISOString(),
+                  }),
+                }).catch((err) => console.error("[TN] Timeline log failed:", err));
+                return; // Success — exit retry loop
+              }
+
+              // Agent returned error — may be retryable
+              lastError = tnResult.failure_reason || "TN agent returned error";
+              console.warn(`[TN] Agent error (attempt ${attempt + 1}): ${lastError}`);
+            } catch (fetchErr) {
+              lastError = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+              console.error(`[TN] Fetch error (attempt ${attempt + 1}): ${lastError}`);
+            }
           }
 
-          console.log(`[TN DEBUG] TN agent HTTP status: ${tnResponse.status}`);
-          console.log(`[TN DEBUG] TN agent response headers content-type:`, tnResponse.headers.get("content-type"));
+          // All retries exhausted
+          console.error(`[TN] All attempts failed for contact ${contactId}: ${lastError}`);
+          updateTnStatus(contactId, "failed", { failureReason: lastError });
 
-          const rawTnText = await tnResponse.text();
-          console.log(`[TN DEBUG] TN agent raw response (first 1000 chars):`, rawTnText.substring(0, 1000));
-
-          let tnResult: TnAgentResponse;
-          try {
-            tnResult = JSON.parse(rawTnText) as TnAgentResponse;
-          } catch (parseErr) {
-            console.error(`[TN DEBUG] TN agent JSON parse failed:`, parseErr);
-            console.error(`[TN DEBUG] TN agent raw body:`, rawTnText.substring(0, 2000));
-            throw new Error(`TN agent returned invalid JSON (HTTP ${tnResponse.status})`);
-          }
-
-          console.log(`[TN DEBUG] TN agent parsed result:`, JSON.stringify(tnResult));
-
-          if (tnResult.status === "success") {
-            console.log(`[TN DEBUG] Writing status=created, url=${tnResult.tn_patient_url}, id=${tnResult.tn_patient_id}`);
-            updateTnStatus(contactId, "created", {
-              url: tnResult.tn_patient_url,
-              id: tnResult.tn_patient_id,
-            });
-
-            // Fire-and-forget timeline log
-            const author = userEmail.split("@")[0].substring(0, 3).toUpperCase();
-            fetch(N8N_ENDPOINTS.addNote, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                contactId,
-                note: `[TherapyNotes] Patient created successfully: ${tnResult.tn_patient_url || "N/A"}`,
-                author,
-                timestamp: new Date().toISOString(),
-              }),
-            }).catch((err) => console.error("[therapy-notes] Timeline log failed:", err));
-          } else {
-            const reason = tnResult.failure_reason || "TN agent returned error";
-            console.log(`[TN DEBUG] Writing status=failed, reason="${reason}", tnResult.status="${tnResult.status}"`);
-            updateTnStatus(contactId, "failed", { failureReason: reason });
-
-            // Fire-and-forget timeline log
-            const author = userEmail.split("@")[0].substring(0, 3).toUpperCase();
-            fetch(N8N_ENDPOINTS.addNote, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                contactId,
-                note: `[TherapyNotes] Patient creation failed: ${reason}`,
-                author,
-                timestamp: new Date().toISOString(),
-              }),
-            }).catch((err) => console.error("[therapy-notes] Timeline log failed:", err));
-          }
+          // Fire-and-forget timeline log for failure
+          const author = userEmail.split("@")[0].substring(0, 3).toUpperCase();
+          fetch(N8N_ENDPOINTS.addNote, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contactId,
+              note: `[TherapyNotes] Patient creation failed after ${TN_MAX_RETRIES + 1} attempts: ${lastError}`,
+              author,
+              timestamp: new Date().toISOString(),
+            }),
+          }).catch((err) => console.error("[TN] Timeline log failed:", err));
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          const stack = err instanceof Error ? err.stack : "no stack";
-          console.error(`[TN DEBUG] Outer catch for contact ${contactId}:`, message);
-          console.error(`[TN DEBUG] Outer catch stack:`, stack);
-          console.log(`[TN DEBUG] Writing status=failed from outer catch, reason="${message}"`);
+          console.error(`[TN] Unexpected error for contact ${contactId}: ${message}`);
           updateTnStatus(contactId, "failed", { failureReason: message });
         }
 
-        // Final state check
-        console.log(`[TN DEBUG] Final TN record state:`, JSON.stringify(getTnRecord(contactId)));
+        console.log(`[TN] Final state:`, JSON.stringify(getTnRecord(contactId)));
       })();
     } catch (error) {
       console.error("[therapy-notes] Error in create endpoint:", error);
