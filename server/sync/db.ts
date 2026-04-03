@@ -376,7 +376,7 @@ export function syncContacts(contacts: SyncPayloadContact[]): {
       rfs_link = excluded.rfs_link,
       document_link = excluded.document_link,
       last_contact = excluded.last_contact,
-      last_note = excluded.last_note,
+      last_note = CASE WHEN sync_contacts.last_note IS NOT NULL AND sync_contacts.last_note != '' THEN sync_contacts.last_note ELSE excluded.last_note END,
       synced_at = datetime('now'),
       sync_hash = excluded.sync_hash
     WHERE excluded.sync_hash != sync_contacts.sync_hash OR sync_contacts.sync_hash IS NULL
@@ -1164,7 +1164,9 @@ export function enrichSyncContact(contactId: number, detailed: Record<string, un
     ["rfs_link", str(detailed.rfsLink ?? detailed.rfs ?? detailed["sharepointLink"] ?? detailed["formLink"])],
     ["document_link", str(detailed.documentLink ?? detailed.documents ?? detailed["fileLink"])],
     ["last_contact", str(detailed.lastContact)],
-    ["last_note", str(detailed.lastNote)],
+    // IMPORTANT: Do NOT overwrite last_note from n8n/Excel enrichment.
+    // CRM-added notes (via appendSyncContactNote) are the source of truth.
+    // Re-enriching would erase notes added through the CRM UI.
   ];
 
   for (const [col, val] of fieldMap) {
@@ -1277,7 +1279,7 @@ export function upsertSingleContact(contact: SyncPayloadContact): void {
       rfs_link = excluded.rfs_link,
       document_link = excluded.document_link,
       last_contact = excluded.last_contact,
-      last_note = excluded.last_note,
+      last_note = CASE WHEN sync_contacts.last_note IS NOT NULL AND sync_contacts.last_note != '' THEN sync_contacts.last_note ELSE excluded.last_note END,
       synced_at = datetime('now'),
       sync_hash = excluded.sync_hash
   `).run(

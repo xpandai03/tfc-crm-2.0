@@ -2155,64 +2155,35 @@ export async function registerRoutes(
         }
         boardCache = null;
 
-        try {
-          // Forward exact payload to n8n - it handles Excel formatting
-          const payload = {
-            contactId,
-            note: note.trim(),
-            author: author.trim(),
-            timestamp,
-          };
+        // CRM write succeeded — return success immediately
+        // n8n/Excel sync is fire-and-forget (side effect, not user-blocking)
+        const noteResponse = {
+          success: true,
+          contactId,
+          note: {
+            date: timestamp,
+            content: `${author}: ${note.trim()}`,
+          },
+        };
 
-          console.log(`[add-note] Sending to n8n:`, payload);
-
-          const response = await fetch(N8N_ENDPOINTS.addNote, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-
-          const responseText = await response.text();
-          console.log(`[add-note] n8n response:`, {
-            status: response.status,
-            body: responseText.substring(0, 200),
-          });
-
-          if (!response.ok) {
-            console.error(`[add-note] n8n returned ${response.status}: ${responseText}`);
-            return res.status(502).json({
-              error: "Failed to add note",
-              message: `n8n returned ${response.status}`,
-              details: responseText.substring(0, 200),
-            });
-          }
-
-          // Parse response if JSON
-          let data = {};
+        // Fire-and-forget: forward to n8n for Excel sync
+        (async () => {
           try {
-            data = JSON.parse(responseText);
-          } catch {
-            // Response might not be JSON - that's OK
+            const payload = { contactId, note: note.trim(), author: author.trim(), timestamp };
+            const response = await fetch(N8N_ENDPOINTS.addNote, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            });
+            if (!response.ok) {
+              console.warn(`[add-note] n8n returned ${response.status} (non-blocking)`);
+            }
+          } catch (e) {
+            console.warn(`[add-note] n8n fire-and-forget failed (non-blocking):`, e);
           }
+        })();
 
-          console.log(`[add-note] Success for contactId ${contactId}`);
-          return res.json({
-            success: true,
-            contactId,
-            note: {
-              date: timestamp,
-              content: `${author}: ${note.trim()}`,
-            },
-            ...data,
-          });
-        } catch (liveError) {
-          const errorMessage = liveError instanceof Error ? liveError.message : "Unknown error";
-          console.error(`[add-note] Live update failed for contactId ${contactId}:`, errorMessage);
-          return res.status(500).json({
-            error: "Failed to add note",
-            message: errorMessage,
-          });
-        }
+        return res.json(noteResponse);
       } else {
         // Mock mode - update by index
         const contact = mockContacts[contactId - 1];
@@ -3644,6 +3615,19 @@ export async function registerRoutes(
         assignmentComment: assignmentComment?.trim() || undefined,
         assignedByEmail: assignedByEmail.trim(),
         assignedByInitials: assignedByInitials.trim(),
+      });
+
+      logActivity({
+        type: "contact_assigned",
+        actorEmail: assignedByEmail.trim(),
+        entityType: "contact",
+        entityId: String(contactId),
+        entityName: contactName.trim(),
+        metadata: {
+          providerName: providerName.trim(),
+          credential: credential.trim(),
+          assignmentType: "provider",
+        },
       });
 
       return res.json({
