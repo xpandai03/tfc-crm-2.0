@@ -7,6 +7,8 @@
 
 import { getAllSyncContacts, type SyncContact } from "../sync/db";
 import { getStaffActivitySummary } from "../activity/db";
+import path from "path";
+import fs from "fs";
 
 type Content = Record<string, unknown>;
 
@@ -111,10 +113,67 @@ export function computeInsightsMetrics(): InsightsMetrics {
   };
 }
 
+function generateInsightsSummary(metrics: InsightsMetrics): string {
+  const sentences: string[] = [];
+
+  // Wait time assessment
+  if (metrics.avgWaitDays >= 40) {
+    sentences.push(
+      `The current waitlist shows elevated wait times, with an average of ${metrics.avgWaitDays} days across ${metrics.totalActive} active clients.`
+    );
+  } else {
+    sentences.push(
+      `The current waitlist has ${metrics.totalActive} active clients with an average wait time of ${metrics.avgWaitDays} days.`
+    );
+  }
+
+  // Backlog risk
+  if (metrics.over60Days > 0) {
+    const pct = Math.round((metrics.over60Days / metrics.totalActive) * 100);
+    sentences.push(
+      `${metrics.over60Days} client${metrics.over60Days === 1 ? "" : "s"} (${pct}%) ${metrics.over60Days === 1 ? "has" : "have"} been waiting over 60 days, indicating potential backlog risk.`
+    );
+  }
+
+  // Top service type
+  if (metrics.serviceTypes.length > 0) {
+    const [topService, topCount] = metrics.serviceTypes[0];
+    sentences.push(
+      `The highest demand is for ${topService.toLowerCase()} services, suggesting a potential need for increased provider availability in this area.`
+    );
+  }
+
+  // Ready to schedule
+  if (metrics.readyToSchedule > 0) {
+    sentences.push(
+      `Immediate scheduling opportunities exist for ${metrics.readyToSchedule} client${metrics.readyToSchedule === 1 ? "" : "s"}.`
+    );
+  }
+
+  return sentences.slice(0, 4).join(" ");
+}
+
+function loadLogoBase64(): string | null {
+  try {
+    const logoPath = path.resolve(__dirname, "../../client/public/tfc-logo.jpg");
+    const buf = fs.readFileSync(logoPath);
+    return `data:image/jpeg;base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
 export function buildInsightsDocument(metrics: InsightsMetrics): Record<string, unknown> {
   const blue = "#2563eb";
+  const lightBlue = "#eff6ff";
   const gray = "#6b7280";
+  const lightGray = "#f9fafb";
   const dark = "#1f2937";
+  const border = "#e5e7eb";
+  const red = "#dc2626";
+  const green = "#16a34a";
+
+  const logoData = loadLogoBase64();
 
   function sectionTitle(text: string): Content {
     return {
@@ -122,7 +181,14 @@ export function buildInsightsDocument(metrics: InsightsMetrics): Record<string, 
       fontSize: 13,
       bold: true,
       color: dark,
-      margin: [0, 18, 0, 8],
+      margin: [0, 24, 0, 10],
+    };
+  }
+
+  function divider(): Content {
+    return {
+      canvas: [{ type: "line", x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, lineColor: border }],
+      margin: [0, 6, 0, 6],
     };
   }
 
@@ -149,69 +215,137 @@ export function buildInsightsDocument(metrics: InsightsMetrics): Record<string, 
       layout: {
         hLineWidth: () => 0,
         vLineWidth: () => 0,
-        paddingTop: () => 4,
-        paddingBottom: () => 4,
+        paddingTop: () => 5,
+        paddingBottom: () => 5,
       },
     };
   }
+
+  // Build header row: logo + title on left, timestamp on right
+  const headerLeft: Content[] = [];
+  if (logoData) {
+    headerLeft.push({ image: logoData, width: 140, margin: [0, 0, 0, 6] });
+  } else {
+    headerLeft.push({ text: "The Family Connection", fontSize: 18, bold: true, color: blue, margin: [0, 0, 0, 6] });
+  }
+  headerLeft.push({ text: "CRM Insights Report", fontSize: 20, bold: true, color: dark });
 
   const content: Content[] = [
     // Header
     {
       columns: [
-        { text: "The Family Connection", fontSize: 18, bold: true, color: blue },
-        { text: `Generated: ${metrics.generatedAt}`, fontSize: 9, color: gray, alignment: "right", margin: [0, 6, 0, 0] },
+        { stack: headerLeft, width: "*" },
+        {
+          stack: [
+            { text: `Generated`, fontSize: 8, color: gray, alignment: "right" },
+            { text: metrics.generatedAt, fontSize: 9, color: dark, alignment: "right", margin: [0, 2, 0, 0] },
+          ],
+          width: 150,
+          margin: [0, 8, 0, 0],
+        },
       ],
+      margin: [0, 0, 0, 4],
     },
-    { text: "CRM Insights Report", fontSize: 22, bold: true, color: dark, margin: [0, 4, 0, 2] },
-    { canvas: [{ type: "line", x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1, lineColor: "#e5e7eb" }], margin: [0, 4, 0, 16] },
 
-    // Summary cards
+    // Header divider
+    { canvas: [{ type: "line", x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1.5, lineColor: blue }], margin: [0, 4, 0, 16] },
+
+    // Summary metric cards
     {
-      columns: [
-        {
-          stack: [
-            { text: "Active Waitlist", fontSize: 9, color: gray },
-            { text: String(metrics.totalActive), fontSize: 28, bold: true, color: dark },
-          ],
-          width: "*",
-        },
-        {
-          stack: [
-            { text: "Avg Wait Time", fontSize: 9, color: gray },
-            { text: `${metrics.avgWaitDays}d`, fontSize: 28, bold: true, color: dark },
-          ],
-          width: "*",
-        },
-        {
-          stack: [
-            { text: "Over 60 Days", fontSize: 9, color: gray },
-            { text: String(metrics.over60Days), fontSize: 28, bold: true, color: "#dc2626" },
-          ],
-          width: "*",
-        },
-        {
-          stack: [
-            { text: "Ready to Schedule", fontSize: 9, color: gray },
-            { text: String(metrics.readyToSchedule), fontSize: 28, bold: true, color: "#16a34a" },
-          ],
-          width: "*",
-        },
-      ],
-      margin: [0, 0, 0, 8],
+      table: {
+        widths: ["*", "*", "*", "*"],
+        body: [[
+          {
+            stack: [
+              { text: "Active Waitlist", fontSize: 8, color: gray, margin: [0, 0, 0, 4] },
+              { text: String(metrics.totalActive), fontSize: 26, bold: true, color: dark },
+            ],
+            fillColor: lightGray,
+            margin: [10, 10, 10, 10],
+          },
+          {
+            stack: [
+              { text: "Avg Wait Time", fontSize: 8, color: gray, margin: [0, 0, 0, 4] },
+              { text: `${metrics.avgWaitDays} days`, fontSize: 26, bold: true, color: dark },
+            ],
+            fillColor: lightGray,
+            margin: [10, 10, 10, 10],
+          },
+          {
+            stack: [
+              { text: "Over 60 Days", fontSize: 8, color: gray, margin: [0, 0, 0, 4] },
+              { text: String(metrics.over60Days), fontSize: 26, bold: true, color: red },
+            ],
+            fillColor: lightGray,
+            margin: [10, 10, 10, 10],
+          },
+          {
+            stack: [
+              { text: "Ready to Schedule", fontSize: 8, color: gray, margin: [0, 0, 0, 4] },
+              { text: String(metrics.readyToSchedule), fontSize: 26, bold: true, color: green },
+            ],
+            fillColor: lightGray,
+            margin: [10, 10, 10, 10],
+          },
+        ]],
+      },
+      layout: {
+        hLineWidth: () => 0,
+        vLineWidth: () => 0,
+        paddingLeft: () => 4,
+        paddingRight: () => 4,
+        paddingTop: () => 0,
+        paddingBottom: () => 0,
+      },
+      margin: [0, 0, 0, 6],
     },
-
-    { canvas: [{ type: "line", x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, lineColor: "#e5e7eb" }], margin: [0, 4, 0, 0] },
 
     // Longest waiting callout
     {
-      text: [
-        { text: "Longest Waiting: ", fontSize: 10, color: gray },
-        { text: metrics.longestWaitingName, fontSize: 10, bold: true, color: dark },
-        { text: ` — ${metrics.longestWaitDays} days`, fontSize: 10, color: "#dc2626" },
-      ],
-      margin: [0, 10, 0, 0],
+      table: {
+        widths: ["*"],
+        body: [[
+          {
+            text: [
+              { text: "Longest Waiting:  ", fontSize: 10, color: gray },
+              { text: metrics.longestWaitingName, fontSize: 10, bold: true, color: dark },
+              { text: ` — ${metrics.longestWaitDays} days`, fontSize: 10, color: red, bold: true },
+            ],
+            fillColor: lightBlue,
+            margin: [12, 8, 12, 8],
+          },
+        ]],
+      },
+      layout: {
+        hLineWidth: () => 0,
+        vLineWidth: () => 0,
+        paddingLeft: () => 0,
+        paddingRight: () => 0,
+        paddingTop: () => 0,
+        paddingBottom: () => 0,
+      },
+      margin: [0, 4, 0, 4],
     },
+
+    divider(),
+
+    // Executive Summary
+    {
+      text: "Executive Summary",
+      fontSize: 13,
+      bold: true,
+      color: dark,
+      margin: [0, 12, 0, 8],
+    },
+    {
+      text: generateInsightsSummary(metrics),
+      fontSize: 10,
+      color: "#374151",
+      lineHeight: 1.5,
+      margin: [0, 0, 0, 8],
+    },
+
+    divider(),
 
     // Distributions
     sectionTitle("Status Distribution"),
@@ -236,19 +370,29 @@ export function buildInsightsDocument(metrics: InsightsMetrics): Record<string, 
     })));
   }
 
-  // Footer
-  content.push({
-    text: "The Family Connection · CRM Insights Report · Confidential",
-    fontSize: 8,
-    color: gray,
-    alignment: "center",
-    margin: [0, 30, 0, 0],
-  });
-
   return {
     content,
     defaultStyle: { font: "Helvetica" },
     pageSize: "LETTER",
-    pageMargins: [40, 40, 40, 40],
+    pageMargins: [40, 40, 40, 50],
+    footer: (currentPage: number, pageCount: number) => ({
+      columns: [
+        {
+          text: "The Family Connection — CRM Insights Report — Confidential",
+          fontSize: 7,
+          color: gray,
+          alignment: "left",
+          margin: [40, 0, 0, 0],
+        },
+        {
+          text: `Page ${currentPage} of ${pageCount}`,
+          fontSize: 7,
+          color: gray,
+          alignment: "right",
+          margin: [0, 0, 40, 0],
+        },
+      ],
+      margin: [0, 15, 0, 0],
+    }),
   };
 }
