@@ -25,7 +25,13 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { AlertCircle, LayoutGrid, List, User } from "lucide-react";
+import { AlertCircle, Download, LayoutGrid, List, User } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { StatusLegendModal } from "@/components/ui/status-legend-modal";
 import { getWaitlistBoard, updateContactStatus, addNoteToContact, getAttentionFlags } from "@/lib/api";
 import { useDataSource } from "@/lib/data-source-context";
@@ -468,6 +474,43 @@ export default function Waitlist() {
     })].sort((a, b) => computeDaysWaiting(b.dateAdded, b.daysOnWaitlist) - computeDaysWaiting(a.dateAdded, a.daysOnWaitlist));
   };
 
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = useCallback(async (format: "csv" | "xlsx") => {
+    setExporting(true);
+    try {
+      const res = await fetch(`/api/export/waitlist.${format}`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error(`Export failed (${res.status})`);
+      const blob = await res.blob();
+      const now = new Date();
+      const ts = [
+        now.getFullYear(),
+        String(now.getMonth() + 1).padStart(2, "0"),
+        String(now.getDate()).padStart(2, "0"),
+        "-",
+        String(now.getHours()).padStart(2, "0"),
+        String(now.getMinutes()).padStart(2, "0"),
+      ].join("");
+      const filename = `waitlist-${ts}.${format}`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast({ title: "Export complete", description: filename });
+    } catch (err) {
+      toast({ title: "Export failed", description: String(err), variant: "destructive" });
+    } finally {
+      setExporting(false);
+    }
+  }, [toast]);
+
   if (isLoading) {
     return (
       <PageLayout>
@@ -549,6 +592,23 @@ export default function Waitlist() {
                 List
               </Button>
             </div>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-1.5" disabled={exporting}>
+                  <Download className="h-4 w-4" />
+                  {exporting ? "Exporting…" : "Export"}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => handleExport("csv")} className="cursor-pointer">
+                  Export as CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExport("xlsx")} className="cursor-pointer">
+                  Export as Excel
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             <StatusLegendModal />
           </div>
