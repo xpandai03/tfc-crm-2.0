@@ -799,7 +799,7 @@ export default function ContactDetail() {
           {/* Main Content */}
           <div className="lg:col-span-2 space-y-6">
             {/* Contact Header */}
-            <Card className="overflow-visible bg-white/90 dark:bg-gray-800/90 backdrop-blur-md">
+            <Card className="overflow-visible bg-white dark:bg-gray-800/90">
               <CardContent className="p-6">
                 <div className="flex items-start gap-4">
                   {isLoading ? (
@@ -888,7 +888,7 @@ export default function ContactDetail() {
 
             {/* Status Info */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <Card className="overflow-visible bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm">
+              <Card className="overflow-visible bg-white dark:bg-gray-800/90">
                 <CardContent className="p-4">
                   <div className="flex items-center gap-2 text-muted-foreground mb-1">
                     <Clock className="h-4 w-4" />
@@ -903,7 +903,7 @@ export default function ContactDetail() {
                   )}
                 </CardContent>
               </Card>
-              <Card className="overflow-visible bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm">
+              <Card className="overflow-visible bg-white dark:bg-gray-800/90">
                 <CardContent className="p-4">
                   <div className="flex items-center gap-2 text-muted-foreground mb-1">
                     <Calendar className="h-4 w-4" />
@@ -918,7 +918,7 @@ export default function ContactDetail() {
                   )}
                 </CardContent>
               </Card>
-              <Card className="overflow-visible bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm">
+              <Card className="overflow-visible bg-white dark:bg-gray-800/90">
                 <CardContent className="p-4">
                   <div className="flex items-center gap-2 text-muted-foreground mb-1">
                     <Calendar className="h-4 w-4" />
@@ -933,7 +933,7 @@ export default function ContactDetail() {
                   )}
                 </CardContent>
               </Card>
-              <Card className="overflow-visible bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm">
+              <Card className="overflow-visible bg-white dark:bg-gray-800/90">
                 <CardContent className="p-4">
                   <div className="flex items-center gap-2 text-muted-foreground mb-1">
                     <User className="h-4 w-4" />
@@ -958,7 +958,7 @@ export default function ContactDetail() {
             </div>
 
             {/* Activity Timeline */}
-            <Card className="overflow-visible bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm">
+            <Card className="overflow-visible bg-white dark:bg-gray-800/90">
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base font-medium">
                   <Activity className="h-4 w-4" />

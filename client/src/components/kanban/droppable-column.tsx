@@ -1,6 +1,5 @@
 import { useDroppable } from "@dnd-kit/core";
 import { DraggableCard } from "./draggable-card";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
@@ -58,30 +57,29 @@ export function DroppableColumn({
   const styles = colorStyles[color] || colorStyles.slate;
 
   return (
-    <Card
+    <div
       ref={setNodeRef}
       className={cn(
-        "w-[280px] flex-shrink-0 flex flex-col overflow-visible transition-colors duration-200",
-        styles.border,
-        isOver && "ring-2 ring-primary ring-offset-2",
+        "w-[290px] flex-shrink-0 flex flex-col rounded-xl bg-white/50 dark:bg-gray-900/30 border border-gray-200/50 dark:border-gray-800/50 transition-colors duration-200",
+        isOver && "ring-2 ring-primary ring-offset-2 ring-offset-background",
         isInactiveColumn && "opacity-75",
         className
       )}
       data-testid={`column-${columnId}`}
     >
-      <CardHeader className={cn("pb-3 flex-shrink-0 rounded-t-lg", styles.header)}>
-        <CardTitle className="flex items-center justify-between">
-          <span className="text-sm font-medium">
+      <div className={cn("px-4 py-3 flex-shrink-0 rounded-t-xl border-b border-gray-200/40 dark:border-gray-800/40", styles.header)}>
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-semibold text-foreground">
             {title}
           </span>
           <Badge className={cn("ml-2", styles.badge)} data-testid={`badge-count-${columnId}`}>
             {isInactiveColumn ? `${contacts.length} inactive` : contacts.length}
           </Badge>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="flex-1 pt-3 overflow-hidden">
-        <ScrollArea className="h-full pr-2">
-          <div className="space-y-2">
+        </div>
+      </div>
+      <div className="flex-1 pt-3 px-2 pb-2 overflow-hidden">
+        <ScrollArea className="h-full">
+          <div className="space-y-2.5 px-1 pb-1">
             {contacts.length === 0 ? (
               <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
                 No contacts
@@ -98,7 +96,7 @@ export function DroppableColumn({
             )}
           </div>
         </ScrollArea>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

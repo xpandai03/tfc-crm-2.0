@@ -18,10 +18,10 @@ interface MetricCardProps {
 }
 
 const variantStyles = {
-  default: "bg-white/70 dark:bg-gray-900/70 backdrop-blur-md border-white/40 dark:border-gray-700/40",
-  warning: "bg-amber-500/20 dark:bg-amber-500/10 border-amber-500/30 dark:border-amber-500/20 backdrop-blur-md shadow-amber-500/10",
-  danger: "bg-red-500/20 dark:bg-red-500/10 border-red-500/30 dark:border-red-500/20 backdrop-blur-md shadow-red-500/10",
-  success: "bg-green-500/20 dark:bg-green-500/10 border-green-500/30 dark:border-green-500/20 backdrop-blur-md shadow-green-500/10",
+  default: "bg-white dark:bg-gray-900/80 border-gray-200/60 dark:border-gray-700/50",
+  warning: "bg-amber-50 dark:bg-amber-500/10 border-amber-200/60 dark:border-amber-500/20",
+  danger: "bg-red-50 dark:bg-red-500/10 border-red-200/60 dark:border-red-500/20",
+  success: "bg-green-50 dark:bg-green-500/10 border-green-200/60 dark:border-green-500/20",
 };
 
 const variantTextStyles = {

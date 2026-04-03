@@ -129,7 +129,7 @@ export function PriorityCard({
       <Card
         className={cn(
           "hover-elevate active-elevate-2 cursor-pointer transition-all duration-300 hover:translate-y-[-4px] hover:shadow-xl hover:shadow-black/10 dark:hover:shadow-black/30 hover:scale-[1.02] overflow-visible group",
-          "bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm",
+          "bg-white dark:bg-gray-800/90",
           priorityStyles[priority],
           isTopPriority && "ring-2 ring-offset-2 ring-offset-background/50",
           isTopPriority && priority === "high" && "ring-red-400/50 dark:ring-red-600/50 shadow-red-500/20 animate-subtle-pulse",

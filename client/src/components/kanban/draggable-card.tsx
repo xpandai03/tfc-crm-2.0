@@ -113,6 +113,7 @@ export function DraggableCard({ contact, onAddNote, isDragging = false, currentU
       <Card
         className={cn(
           "cursor-grab active:cursor-grabbing transition-all duration-200 overflow-visible group relative",
+          "hover:shadow-md hover:-translate-y-0.5 hover:scale-[1.01]",
           isUrgent && "ring-1 ring-red-300 dark:ring-red-700",
           isDragging && "shadow-lg rotate-2 scale-105"
         )}

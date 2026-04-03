@@ -530,7 +530,7 @@ export default function Waitlist() {
           </div>
           <div className="flex items-center gap-2">
             {/* Assigned to Me filter toggle */}
-            <div className="flex items-center gap-2 bg-white/60 dark:bg-gray-900/60 backdrop-blur-sm rounded-lg px-3 py-2 border border-white/20 dark:border-gray-700/30">
+            <div className="flex items-center gap-2 bg-white dark:bg-gray-900/80 rounded-lg px-3 py-2 border border-gray-200/60 dark:border-gray-700/40 shadow-sm">
               <User className="h-4 w-4 text-muted-foreground" />
               <Switch
                 id="waitlist-show-only-mine"

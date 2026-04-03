@@ -16,7 +16,7 @@ export function TopNav() {
   const [location] = useLocation();
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header className="sticky top-0 z-50 w-full border-b border-gray-200/60 dark:border-gray-800 bg-white/95 dark:bg-gray-950/95 backdrop-blur-sm shadow-sm">
       <div className="flex h-14 items-center px-6 gap-6">
         <Link href="/" className="flex items-center" data-testid="link-logo">
           <img
