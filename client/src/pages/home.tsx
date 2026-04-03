@@ -418,7 +418,7 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-4">
             {/* Assigned to Me filter toggle */}
-            <div className="flex items-center gap-2 bg-white/60 dark:bg-gray-900/60 backdrop-blur-sm rounded-lg px-3 py-2 border border-white/20 dark:border-gray-700/30">
+            <div className="flex items-center gap-2 bg-white dark:bg-gray-900/80 rounded-lg px-3 py-2 border border-gray-200/60 dark:border-gray-700/40 shadow-sm">
               <User className="h-4 w-4 text-muted-foreground" />
               <Switch
                 id="show-only-mine"
@@ -463,7 +463,7 @@ export default function Home() {
           {/* Attention Required column — only for allowed users with active flags */}
           {canSeeAttention && attentionContacts.length > 0 && (
             <div className="xl:col-span-1">
-              <Card className="flex flex-col h-[calc(100vh-320px)] overflow-visible bg-white/60 dark:bg-gray-900/60 backdrop-blur-xl border-white/20 dark:border-gray-700/30 shadow-lg shadow-amber-500/10 bg-gradient-to-b from-amber-500/8 to-transparent ring-1 ring-amber-400/30">
+              <Card className="flex flex-col h-[calc(100vh-320px)] overflow-visible bg-white dark:bg-gray-900/80 border-amber-200/60 dark:border-amber-800/40 ring-1 ring-amber-400/20">
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center gap-2 text-base font-medium">
                     <AlertTriangle className="h-4 w-4 text-amber-500" />
@@ -476,7 +476,7 @@ export default function Home() {
                     <div className="space-y-2">
                       {attentionContacts.map((contact) => (
                         <Link key={contact.contactId} href={`/contact/${contact.contactId}`}>
-                          <Card className="hover-elevate cursor-pointer transition-all duration-300 hover:translate-y-[-2px] hover:shadow-lg overflow-visible bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm relative rounded-l-none before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1 before:bg-gradient-to-b before:from-amber-500 before:via-amber-400 before:to-amber-600 before:rounded-l-lg">
+                          <Card className="hover-elevate cursor-pointer transition-all duration-300 hover:translate-y-[-2px] hover:shadow-md overflow-visible bg-white dark:bg-gray-800/90 relative rounded-l-none before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1 before:bg-gradient-to-b before:from-amber-500 before:via-amber-400 before:to-amber-600 before:rounded-l-lg">
                             <CardContent className="p-3">
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">
@@ -506,7 +506,7 @@ export default function Home() {
           {/* Priority Queues */}
           <div className="xl:col-span-3 grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Over 60 Days */}
-            <Card className="flex flex-col h-[calc(100vh-320px)] overflow-visible bg-white/60 dark:bg-gray-900/60 backdrop-blur-xl border-white/20 dark:border-gray-700/30 shadow-lg shadow-red-500/5 bg-gradient-to-b from-red-500/5 to-transparent">
+            <Card className="flex flex-col h-[calc(100vh-320px)] overflow-visible bg-white dark:bg-gray-900/80 border-gray-200/60 dark:border-gray-700/40">
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base font-medium">
                   <AlertTriangle className="h-4 w-4 text-red-500" />
@@ -544,7 +544,7 @@ export default function Home() {
             </Card>
 
             {/* Ready to Schedule */}
-            <Card className="flex flex-col h-[calc(100vh-320px)] overflow-visible bg-white/60 dark:bg-gray-900/60 backdrop-blur-xl border-white/20 dark:border-gray-700/30 shadow-lg shadow-green-500/5 bg-gradient-to-b from-green-500/5 to-transparent">
+            <Card className="flex flex-col h-[calc(100vh-320px)] overflow-visible bg-white dark:bg-gray-900/80 border-gray-200/60 dark:border-gray-700/40">
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base font-medium">
                   <CalendarCheck className="h-4 w-4 text-amber-500" />
@@ -582,7 +582,7 @@ export default function Home() {
             </Card>
 
             {/* Needs Follow-up */}
-            <Card className="flex flex-col h-[calc(100vh-320px)] overflow-visible bg-white/60 dark:bg-gray-900/60 backdrop-blur-xl border-white/20 dark:border-gray-700/30 shadow-lg shadow-blue-500/5 bg-gradient-to-b from-blue-500/5 to-transparent">
+            <Card className="flex flex-col h-[calc(100vh-320px)] overflow-visible bg-white dark:bg-gray-900/80 border-gray-200/60 dark:border-gray-700/40">
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base font-medium">
                   <Clock className="h-4 w-4 text-blue-500" />

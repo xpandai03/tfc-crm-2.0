@@ -506,12 +506,12 @@ export default function Insights() {
                   sortedServiceTypes.map(([service, count]) => (
                     <div
                       key={service}
-                      className="flex items-center justify-between p-3 rounded-lg bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border border-white/40 dark:border-gray-700/40 shadow-md transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-white/90 dark:hover:bg-gray-800/90"
+                      className="flex items-center justify-between p-3 rounded-lg bg-white dark:bg-gray-800/90 border border-gray-200/60 dark:border-gray-700/40 shadow-sm transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-gray-50 dark:hover:bg-gray-800"
                     >
                       <span className="text-sm font-medium text-foreground">
                         {service}
                       </span>
-                      <Badge variant="secondary" className="backdrop-blur-sm border-white/40 dark:border-gray-700/40 shadow-md">{count}</Badge>
+                      <Badge variant="secondary" className="shadow-sm">{count}</Badge>
                     </div>
                   ))
                 )}
@@ -533,13 +533,13 @@ export default function Insights() {
                     <div
                       key={insurance}
                       onClick={() => handleDrillDown("insurance", insurance)}
-                      className="group flex items-center justify-between p-3 rounded-lg bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border border-white/40 dark:border-gray-700/40 shadow-md transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-white/90 dark:hover:bg-gray-800/90 cursor-pointer hover:border-primary/30"
+                      className="group flex items-center justify-between p-3 rounded-lg bg-white dark:bg-gray-800/90 border border-gray-200/60 dark:border-gray-700/40 shadow-sm transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer hover:border-primary/30"
                     >
                       <span className="text-sm font-medium text-foreground group-hover:text-primary transition-colors">
                         {insurance}
                       </span>
                       <div className="flex items-center gap-2">
-                        <Badge variant="secondary" className="backdrop-blur-sm border-white/40 dark:border-gray-700/40 shadow-md">{count}</Badge>
+                        <Badge variant="secondary" className="shadow-sm">{count}</Badge>
                         <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                       </div>
                     </div>
@@ -563,13 +563,13 @@ export default function Insights() {
                     <div
                       key={modality}
                       onClick={() => handleDrillDown("modality", modality)}
-                      className="group flex items-center justify-between p-3 rounded-lg bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border border-white/40 dark:border-gray-700/40 shadow-md transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-white/90 dark:hover:bg-gray-800/90 cursor-pointer hover:border-primary/30"
+                      className="group flex items-center justify-between p-3 rounded-lg bg-white dark:bg-gray-800/90 border border-gray-200/60 dark:border-gray-700/40 shadow-sm transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer hover:border-primary/30"
                     >
                       <span className="text-sm font-medium text-foreground group-hover:text-primary transition-colors">
                         {modality}
                       </span>
                       <div className="flex items-center gap-2">
-                        <Badge variant="secondary" className="backdrop-blur-sm border-white/40 dark:border-gray-700/40 shadow-md">{count}</Badge>
+                        <Badge variant="secondary" className="shadow-sm">{count}</Badge>
                         <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                       </div>
                     </div>
@@ -598,7 +598,7 @@ export default function Insights() {
                       className={`flex items-center justify-between p-3 rounded-lg backdrop-blur-sm border shadow-md transition-all duration-300 ${
                         reason === "Not Collected (Older Intake)"
                           ? "bg-gray-100/80 dark:bg-gray-900/80 border-gray-300/40 dark:border-gray-600/40"
-                          : "bg-white/80 dark:bg-gray-800/80 border-white/40 dark:border-gray-700/40 hover:scale-[1.02] hover:shadow-lg hover:bg-white/90 dark:hover:bg-gray-800/90"
+                          : "bg-white/80 dark:bg-gray-800/80 border-white/40 dark:border-gray-700/40 hover:scale-[1.02] hover:shadow-lg hover:bg-gray-50 dark:hover:bg-gray-800"
                       }`}
                     >
                       <span className={`text-sm font-medium ${
@@ -610,7 +610,7 @@ export default function Insights() {
                       </span>
                       <Badge 
                         variant={reason === "Not Collected (Older Intake)" ? "outline" : "secondary"} 
-                        className="backdrop-blur-sm border-white/40 dark:border-gray-700/40 shadow-md"
+                        className="shadow-sm"
                       >
                         {count}
                       </Badge>
@@ -628,30 +628,30 @@ export default function Insights() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                <div className="flex items-center justify-between p-3 rounded-lg border border-red-500/30 dark:border-red-500/20 bg-red-500/20 dark:bg-red-500/10 backdrop-blur-md shadow-lg shadow-red-500/10 bg-gradient-to-br from-red-500/10 to-transparent relative before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1 before:bg-gradient-to-b before:from-red-500 before:via-red-400 before:to-red-600 before:rounded-l-lg">
+                <div className="flex items-center justify-between p-3 rounded-lg border border-red-500/30 dark:border-red-500/20 bg-red-500/20 dark:bg-red-500/10 shadow-sm shadow-red-500/10 bg-gradient-to-br from-red-500/10 to-transparent relative before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1 before:bg-gradient-to-b before:from-red-500 before:via-red-400 before:to-red-600 before:rounded-l-lg">
                   <div>
                     <p className="text-sm font-medium text-foreground">Over 60 Days</p>
                     <p className="text-xs text-muted-foreground">Critical attention needed</p>
                   </div>
-                  <span className="text-2xl font-bold text-red-600 dark:text-red-400 backdrop-blur-sm bg-white/40 dark:bg-gray-900/40 px-3 py-1 rounded-lg shadow-md" data-testid="text-over-60-days">
+                  <span className="text-2xl font-bold text-red-600 dark:text-red-400 bg-white/80 dark:bg-gray-900/60 px-3 py-1 rounded-lg shadow-sm" data-testid="text-over-60-days">
                     {safeNumber(metrics.over60Days)}
                   </span>
                 </div>
-                <div className="flex items-center justify-between p-3 rounded-lg border border-amber-500/30 dark:border-amber-500/20 bg-amber-500/20 dark:bg-amber-500/10 backdrop-blur-md shadow-lg shadow-amber-500/10 bg-gradient-to-br from-amber-500/10 to-transparent relative before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1 before:bg-gradient-to-b before:from-amber-500 before:via-amber-400 before:to-amber-600 before:rounded-l-lg">
+                <div className="flex items-center justify-between p-3 rounded-lg border border-amber-500/30 dark:border-amber-500/20 bg-amber-500/20 dark:bg-amber-500/10 shadow-sm shadow-amber-500/10 bg-gradient-to-br from-amber-500/10 to-transparent relative before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1 before:bg-gradient-to-b before:from-amber-500 before:via-amber-400 before:to-amber-600 before:rounded-l-lg">
                   <div>
                     <p className="text-sm font-medium text-foreground">Over 30 Days</p>
                     <p className="text-xs text-muted-foreground">Requires follow-up</p>
                   </div>
-                  <span className="text-2xl font-bold text-amber-600 dark:text-amber-400 backdrop-blur-sm bg-white/40 dark:bg-gray-900/40 px-3 py-1 rounded-lg shadow-md" data-testid="text-over-30-days">
+                  <span className="text-2xl font-bold text-amber-600 dark:text-amber-400 bg-white/80 dark:bg-gray-900/60 px-3 py-1 rounded-lg shadow-sm" data-testid="text-over-30-days">
                     {safeNumber(metrics.over30Days)}
                   </span>
                 </div>
-                <div className="flex items-center justify-between p-3 rounded-lg border border-green-500/30 dark:border-green-500/20 bg-green-500/20 dark:bg-green-500/10 backdrop-blur-md shadow-lg shadow-green-500/10 bg-gradient-to-br from-green-500/10 to-transparent relative before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1 before:bg-gradient-to-b before:from-green-500 before:via-green-400 before:to-green-600 before:rounded-l-lg">
+                <div className="flex items-center justify-between p-3 rounded-lg border border-green-500/30 dark:border-green-500/20 bg-green-500/20 dark:bg-green-500/10 shadow-sm shadow-green-500/10 bg-gradient-to-br from-green-500/10 to-transparent relative before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1 before:bg-gradient-to-b before:from-green-500 before:via-green-400 before:to-green-600 before:rounded-l-lg">
                   <div>
                     <p className="text-sm font-medium text-foreground">Under 30 Days</p>
                     <p className="text-xs text-muted-foreground">On track</p>
                   </div>
-                  <span className="text-2xl font-bold text-green-600 dark:text-green-400 backdrop-blur-sm bg-white/40 dark:bg-gray-900/40 px-3 py-1 rounded-lg shadow-md" data-testid="text-under-30-days">
+                  <span className="text-2xl font-bold text-green-600 dark:text-green-400 bg-white/80 dark:bg-gray-900/60 px-3 py-1 rounded-lg shadow-sm" data-testid="text-under-30-days">
                     {safeNumber(Math.max(0, metrics.totalActive - metrics.over30Days))}
                   </span>
                 </div>
@@ -673,7 +673,7 @@ export default function Insights() {
                 <div className="flex items-center gap-2">
                   {metrics.longestWaitDays > 0 ? (
                     <>
-                      <Badge variant="destructive" className="backdrop-blur-sm border-white/40 dark:border-gray-700/40 shadow-md">{metrics.longestWaitDays} days</Badge>
+                      <Badge variant="destructive" className="shadow-sm">{metrics.longestWaitDays} days</Badge>
                       <span className="text-xs text-muted-foreground">on waitlist</span>
                     </>
                   ) : (
@@ -682,7 +682,7 @@ export default function Insights() {
                 </div>
               </div>
 
-              <div className="mt-4 p-4 rounded-lg bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border border-white/40 dark:border-gray-700/40 shadow-md">
+              <div className="mt-4 p-4 rounded-lg bg-white dark:bg-gray-800/90 border border-gray-200/60 dark:border-gray-700/40 shadow-sm">
                 <p className="text-sm text-muted-foreground mb-1">Needs Follow-up</p>
                 <p className="text-3xl font-bold text-foreground" data-testid="metric-needs-followup">
                   {safeNumber(metrics.needsFollowUp)}
