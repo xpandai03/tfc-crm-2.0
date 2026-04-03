@@ -250,17 +250,31 @@ export function initSyncTables(): void {
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS form_submissions (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-      source      TEXT NOT NULL DEFAULT 'rfs',
-      contact_id  INTEGER,
-      name        TEXT NOT NULL,
-      payload     TEXT NOT NULL
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      source        TEXT NOT NULL DEFAULT 'rfs',
+      form_type     TEXT NOT NULL DEFAULT 'intake',
+      submitted_at  TEXT,
+      contact_id    INTEGER,
+      name          TEXT NOT NULL DEFAULT '',
+      payload       TEXT NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_form_submissions_created
       ON form_submissions(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_form_submissions_form_type
+      ON form_submissions(form_type);
   `);
+
+  // Migrate: add columns if missing (safe for existing DBs)
+  try {
+    db.exec(`ALTER TABLE form_submissions ADD COLUMN form_type TEXT NOT NULL DEFAULT 'intake'`);
+  } catch (_) { /* column already exists */ }
+  try {
+    db.exec(`ALTER TABLE form_submissions ADD COLUMN submitted_at TEXT`);
+  } catch (_) { /* column already exists */ }
+  // Relax NOT NULL on name for generic submissions
+  // SQLite doesn't support ALTER COLUMN, but new inserts can use default ''
 
   console.log("[sync-db] Sync tables initialized");
 }
@@ -1322,11 +1336,14 @@ export interface FormSubmission {
   id: number;
   createdAt: string;
   source: string;
+  formType: string;
+  submittedAt: string | null;
   contactId: number | null;
   name: string;
   payload: Record<string, unknown>;
 }
 
+/** Insert a submission from the existing intake flow (backwards-compatible). */
 export function insertFormSubmission(fields: {
   source: string;
   contactId: number;
@@ -1335,8 +1352,8 @@ export function insertFormSubmission(fields: {
 }): void {
   const db = getDatabase();
   db.prepare(`
-    INSERT INTO form_submissions (source, contact_id, name, payload)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO form_submissions (source, form_type, contact_id, name, payload)
+    VALUES (?, 'intake', ?, ?, ?)
   `).run(
     fields.source,
     fields.contactId,
@@ -1345,14 +1362,40 @@ export function insertFormSubmission(fields: {
   );
 }
 
+/** Insert a generic form submission (unified ingestion). */
+export function insertSubmission(fields: {
+  formType: string;
+  source: string;
+  submittedAt?: string;
+  contactId?: number | null;
+  name?: string;
+  data: Record<string, unknown>;
+}): number {
+  const db = getDatabase();
+  const result = db.prepare(`
+    INSERT INTO form_submissions (form_type, source, submitted_at, contact_id, name, payload)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    fields.formType,
+    fields.source,
+    fields.submittedAt || null,
+    fields.contactId ?? null,
+    fields.name || "",
+    JSON.stringify(fields.data),
+  );
+  return result.lastInsertRowid as number;
+}
+
 export function getRecentSubmissions(limit: number = 50): FormSubmission[] {
   const db = getDatabase();
   const rows = db.prepare(`
     SELECT
       id,
-      created_at  AS createdAt,
+      created_at    AS createdAt,
       source,
-      contact_id  AS contactId,
+      form_type     AS formType,
+      submitted_at  AS submittedAt,
+      contact_id    AS contactId,
       name,
       payload
     FROM form_submissions

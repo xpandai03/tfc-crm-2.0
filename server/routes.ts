@@ -41,6 +41,7 @@ import {
   insertIntakeContact,
   insertFormSubmission,
   getRecentSubmissions,
+  insertSubmission,
   normalizeDateValue,
   insertMigrationContacts,
   mergeMigrationContacts,
@@ -3921,6 +3922,49 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[submissions] Error fetching submissions:", error);
       return res.status(500).json({ error: "Failed to fetch submissions" });
+    }
+  });
+
+  // Unified form ingestion — any form can POST here
+  app.post("/api/submissions", async (req, res) => {
+    try {
+      const { formType, source, submittedAt, data, contactId, name } = req.body;
+
+      if (!formType || typeof formType !== "string") {
+        return res.status(400).json({ error: "formType is required (string)" });
+      }
+      if (!source || typeof source !== "string") {
+        return res.status(400).json({ error: "source is required (string)" });
+      }
+      if (!data || typeof data !== "object" || Array.isArray(data)) {
+        return res.status(400).json({ error: "data is required (object)" });
+      }
+
+      // Validate submittedAt if provided
+      let normalizedSubmittedAt: string | undefined;
+      if (submittedAt) {
+        const parsed = new Date(submittedAt);
+        if (isNaN(parsed.getTime())) {
+          return res.status(400).json({ error: "submittedAt must be a valid ISO timestamp" });
+        }
+        normalizedSubmittedAt = parsed.toISOString();
+      }
+
+      const id = insertSubmission({
+        formType: formType.trim(),
+        source: source.trim(),
+        submittedAt: normalizedSubmittedAt,
+        contactId: typeof contactId === "number" ? contactId : null,
+        name: typeof name === "string" ? name.trim() : "",
+        data,
+      });
+
+      console.log(`[submissions] Ingested: id=${id} formType=${formType} source=${source}`);
+      return res.json({ success: true, id });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Submission failed";
+      console.error("[submissions] Error:", message);
+      return res.status(500).json({ error: message });
     }
   });
 

@@ -348,6 +348,16 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     return next();
   }
 
+  // POST-only public endpoints (external forms that need to submit without session)
+  const publicPostPaths = [
+    "/api/intake",
+    "/api/submissions",
+  ];
+
+  if (req.method === "POST" && publicPostPaths.includes(req.path)) {
+    return next();
+  }
+
   // Check if path matches any public path (exact match, query suffix, or prefix for paths ending in /)
   const isPublicPath = publicPaths.some(
     (p) => req.path === p || req.path.startsWith(p + "?") || (p.endsWith("/") && req.path.startsWith(p))
