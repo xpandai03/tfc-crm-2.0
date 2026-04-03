@@ -125,6 +125,40 @@ export function getRecentActivity(limit: number = 100): Activity[] {
 }
 
 // ============================================================================
+// Contact-scoped Activity
+// ============================================================================
+
+export function getActivityForContact(contactId: number, limit: number = 50): Activity[] {
+  const db = getDatabase();
+  const rows = db.prepare(`
+    SELECT
+      id,
+      type,
+      actor_email   AS actorEmail,
+      entity_type   AS entityType,
+      entity_id     AS entityId,
+      entity_name   AS entityName,
+      metadata,
+      created_at    AS createdAt
+    FROM activity_log
+    WHERE entity_type = 'contact' AND entity_id = ?
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(String(contactId), limit) as Array<Omit<Activity, "metadata" | "summary"> & { metadata: string }>;
+
+  return rows.map((r) => {
+    const meta = JSON.parse(r.metadata || "{}");
+    return {
+      ...r,
+      entityId: r.entityId ?? "",
+      entityName: r.entityName ?? "",
+      metadata: meta,
+      summary: formatActivitySummary(r.type as ActivityType, r.entityName ?? "", meta),
+    };
+  });
+}
+
+// ============================================================================
 // Staff Activity Summary
 // ============================================================================
 

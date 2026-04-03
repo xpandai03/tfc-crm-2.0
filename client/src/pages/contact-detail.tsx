@@ -497,6 +497,19 @@ export default function ContactDetail() {
   const assignments = assignmentsData?.assignments || [];
   const latestAssignment = assignments.length > 0 ? assignments[0] : null;
 
+  // Contact-scoped activity events (emails sent, TN creation, etc.)
+  const { data: contactActivityData } = useQuery<{ activities: Array<{ id: number; type: string; actorEmail: string; summary: string; metadata: Record<string, unknown>; createdAt: string }> }>({
+    queryKey: ["/api/activity/contact", contactId],
+    queryFn: async () => {
+      const res = await fetch(`/api/activity/contact/${contactId}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch contact activity");
+      return res.json();
+    },
+    enabled: isValidId,
+    staleTime: 30_000,
+  });
+  const contactActivities = contactActivityData?.activities || [];
+
   const isContactFlagged = useMemo(() => {
     if (!flagsData?.flags || !contactId) return false;
     return flagsData.flags.some(f => f.contactId === contactId);
@@ -627,13 +640,7 @@ export default function ContactDetail() {
   const timelineEvents = useMemo(() => {
     if (!contact) return [];
     try {
-      console.log("[contact-detail] Building timeline for:", contact.name, {
-        hasNotes: !!contact.notes,
-        notesLength: contact.notes?.length,
-        dateAdded: contact.dateAdded,
-        source: contactData?._source,
-      });
-      return buildTimelineEvents(
+      const baseEvents = buildTimelineEvents(
         {
           ...contact,
           _source: contactData?._source as "live" | "mock" | undefined,
@@ -641,11 +648,33 @@ export default function ContactDetail() {
         snapshotsData?.snapshots,
         assignments,
       );
+
+      // Merge activity_log events (emails, TN, etc.) into timeline
+      const activityEvents: import("@/lib/timeline").TimelineEvent[] = contactActivities
+        .filter(a => ["email_sent", "therapy_notes_started", "therapy_notes_created", "therapy_notes_failed"].includes(a.type))
+        .map(a => ({
+          id: `activity-${a.id}`,
+          type: "system" as const,
+          timestamp: a.createdAt,
+          content: a.summary,
+          author: a.actorEmail === "system" ? "System" : a.actorEmail.split("@")[0].substring(0, 3).toUpperCase(),
+          source: "live" as const,
+        }));
+
+      // Combine and sort by timestamp descending
+      const all = [...baseEvents, ...activityEvents];
+      all.sort((a, b) => {
+        const ta = new Date(a.timestamp || "").getTime() || 0;
+        const tb = new Date(b.timestamp || "").getTime() || 0;
+        return tb - ta;
+      });
+
+      return all;
     } catch (e) {
       console.error("[contact-detail] Error building timeline events:", e);
       return [];
     }
-  }, [contact, contactData?._source, snapshotsData?.snapshots, assignments]);
+  }, [contact, contactData?._source, snapshotsData?.snapshots, assignments, contactActivities]);
 
   // Handle deleting timeline events (notes or assignments)
   const handleDeleteTimelineEvent = async (event: TimelineEvent) => {
