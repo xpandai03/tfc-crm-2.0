@@ -4269,18 +4269,17 @@ export async function registerRoutes(
   // ============================================================================
 
   // Shared auth check for all export endpoints
+  // Accepts EITHER: session auth (logged-in CRM user) OR X-Sync-Key (n8n)
   function checkExportAuth(req: any, res: any): boolean {
-    if (!SYNC_API_KEY) {
-      console.warn("[export] blocked — SYNC_API_KEY not configured");
-      res.status(503).json({ error: "Export not configured for this environment" });
-      return false;
-    }
+    // Session-authenticated users pass through
+    if (req.isAuthenticated && req.isAuthenticated()) return true;
+
+    // Fall back to API key auth (for n8n / external callers)
     const apiKey = req.headers["x-sync-key"] as string;
-    if (apiKey !== SYNC_API_KEY) {
-      res.status(401).json({ error: "Invalid sync key" });
-      return false;
-    }
-    return true;
+    if (SYNC_API_KEY && apiKey === SYNC_API_KEY) return true;
+
+    res.status(401).json({ error: "Authentication required" });
+    return false;
   }
 
   // JSON export (for n8n or programmatic consumers)
