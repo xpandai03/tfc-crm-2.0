@@ -237,12 +237,24 @@ export default function ContactDetail() {
   });
   const tnRecord = tnData?.record ?? null;
 
+  // Refresh activity when TN status reaches terminal state (created/failed)
+  const tnStatus = tnRecord?.tnStatus;
+  useEffect(() => {
+    if (tnStatus === "created" || tnStatus === "failed") {
+      queryClient.invalidateQueries({ queryKey: ["/api/activity/contact", contactId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
+    }
+  }, [tnStatus, contactId, queryClient]);
+
   const createTnMutation = useMutation({
     mutationFn: () => createTherapyNotesPatient(Number(contactId), contact?.name),
     onSuccess: () => {
       toast({ title: "TherapyNotes creation started", description: "This may take 30-40 seconds..." });
       setShowCreateTnModal(false);
       refetchTn();
+      // Immediately show "started" event in activity
+      queryClient.invalidateQueries({ queryKey: ["/api/activity/contact", contactId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
     },
     onError: (err: Error) => {
       const is409 = err.message.startsWith("409");
@@ -1743,8 +1755,10 @@ export default function ContactDetail() {
               title: "Email sent",
               description: `Email sent successfully to ${contact?.name}`,
             });
-            // Refetch contact data to update timeline
+            // Refetch contact data + activity to update timeline
             queryClient.invalidateQueries({ queryKey: ["/api/contact", contactId] });
+            queryClient.invalidateQueries({ queryKey: ["/api/activity/contact", contactId] });
+            queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
           } else {
             toast({
               title: "Failed to send email",
