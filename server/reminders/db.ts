@@ -113,9 +113,18 @@ export function initDatabase(): Database.Database {
       insurances TEXT,
       populations TEXT,
       notes TEXT,
+      age_groups TEXT,
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+
+  // Migrations: add columns that may be missing from existing databases
+  try {
+    db.exec(`ALTER TABLE provider_overrides ADD COLUMN age_groups TEXT`);
+    console.log("[reminders-db] Added age_groups column to provider_overrides");
+  } catch {
+    // Column already exists — ignore
+  }
 
   console.log("[reminders-db] Database initialized successfully");
   return db;
@@ -532,6 +541,7 @@ export interface ProviderOverride {
   insurances: string[] | null;
   populations: string[] | null;
   notes: string | null;
+  ageGroups: Record<string, Record<string, string>> | null;
   updatedAt: string;
 }
 
@@ -541,12 +551,13 @@ export interface UpsertOverrideParams {
   insurances?: string[];
   populations?: string[];
   notes?: string;
+  ageGroups?: Record<string, Record<string, string>>;
 }
 
 export function getProviderOverride(providerName: string): ProviderOverride | null {
   const db = getDatabase();
   const row = db.prepare(`
-    SELECT id, provider_name, specialties, insurances, populations, notes, updated_at
+    SELECT id, provider_name, specialties, insurances, populations, notes, age_groups, updated_at
     FROM provider_overrides WHERE provider_name = ?
   `).get(providerName) as any;
 
@@ -558,6 +569,7 @@ export function getProviderOverride(providerName: string): ProviderOverride | nu
     insurances: row.insurances ? JSON.parse(row.insurances) : null,
     populations: row.populations ? JSON.parse(row.populations) : null,
     notes: row.notes,
+    ageGroups: row.age_groups ? JSON.parse(row.age_groups) : null,
     updatedAt: row.updated_at,
   };
 }
@@ -565,7 +577,7 @@ export function getProviderOverride(providerName: string): ProviderOverride | nu
 export function getAllProviderOverrides(): ProviderOverride[] {
   const db = getDatabase();
   const rows = db.prepare(`
-    SELECT id, provider_name, specialties, insurances, populations, notes, updated_at
+    SELECT id, provider_name, specialties, insurances, populations, notes, age_groups, updated_at
     FROM provider_overrides ORDER BY provider_name ASC
   `).all() as any[];
 
@@ -576,6 +588,7 @@ export function getAllProviderOverrides(): ProviderOverride[] {
     insurances: row.insurances ? JSON.parse(row.insurances) : null,
     populations: row.populations ? JSON.parse(row.populations) : null,
     notes: row.notes,
+    ageGroups: row.age_groups ? JSON.parse(row.age_groups) : null,
     updatedAt: row.updated_at,
   }));
 }
@@ -591,6 +604,7 @@ export function upsertProviderOverride(params: UpsertOverrideParams): void {
     if (params.insurances !== undefined) { setClauses.push("insurances = ?"); values.push(JSON.stringify(params.insurances)); }
     if (params.populations !== undefined) { setClauses.push("populations = ?"); values.push(JSON.stringify(params.populations)); }
     if (params.notes !== undefined) { setClauses.push("notes = ?"); values.push(params.notes); }
+    if (params.ageGroups !== undefined) { setClauses.push("age_groups = ?"); values.push(JSON.stringify(params.ageGroups)); }
 
     if (setClauses.length === 0) return;
     setClauses.push("updated_at = datetime('now')");
@@ -599,14 +613,15 @@ export function upsertProviderOverride(params: UpsertOverrideParams): void {
     db.prepare(`UPDATE provider_overrides SET ${setClauses.join(", ")} WHERE provider_name = ?`).run(...values);
   } else {
     db.prepare(`
-      INSERT INTO provider_overrides (provider_name, specialties, insurances, populations, notes)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO provider_overrides (provider_name, specialties, insurances, populations, notes, age_groups)
+      VALUES (?, ?, ?, ?, ?, ?)
     `).run(
       params.providerName,
       params.specialties ? JSON.stringify(params.specialties) : null,
       params.insurances ? JSON.stringify(params.insurances) : null,
       params.populations ? JSON.stringify(params.populations) : null,
       params.notes !== undefined ? params.notes : null,
+      params.ageGroups ? JSON.stringify(params.ageGroups) : null,
     );
   }
   console.log(`[provider-overrides] Upserted override for: ${params.providerName}`);
