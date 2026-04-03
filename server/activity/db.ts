@@ -163,7 +163,9 @@ function formatActivitySummary(
     }
 
     case "contact_assigned": {
+      const provider = String(metadata.providerName || "");
       const assignee = String(metadata.assignedTo || "");
+      if (provider) return `Assigned provider ${provider} → ${name}`;
       if (assignee) return `Assigned ${name} to ${assignee}`;
       return `Unassigned ${name}`;
     }
