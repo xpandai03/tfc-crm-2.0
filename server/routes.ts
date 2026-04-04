@@ -81,13 +81,13 @@ const SYNC_API_KEY = process.env.SYNC_API_KEY || "";
  * Check if we should read from sync cache.
  * Returns true if sync cache has data and READ_SOURCE allows it.
  */
-function shouldReadFromSync(): boolean {
+async function shouldReadFromSync(): Promise<boolean> {
   if (READ_SOURCE === "n8n") return false;
   if (READ_SOURCE === "sync") return true;
   // "auto": use sync if it has enough data (>= 50 rows prevents partial-cache issues)
   // Exception: if n8n is disabled, always prefer sync (even with few rows)
   try {
-    const count = getSyncContactCount();
+    const count = await getSyncContactCount();
     if (isN8nDisabled(WAITLIST_BOARD_URL)) {
       return count > 0;
     }
@@ -613,8 +613,8 @@ export async function registerRoutes(
       console.log(`[contact-snapshot] Fetching contact by ID: ${contactId}, READ_SOURCE: ${READ_SOURCE}`);
 
       // Hybrid path: Use sync for board data, enrich with n8n for detailed fields
-      if (shouldReadFromSync()) {
-        const syncContact = getSyncContactById(contactId);
+      if (await shouldReadFromSync()) {
+        const syncContact = await getSyncContactById(contactId);
         if (syncContact) {
           const hasDetailedData = syncContact.lastNote || syncContact.email;
 
@@ -632,7 +632,7 @@ export async function registerRoutes(
                   if (resp.ok) {
                     const raw = await resp.json();
                     const detailed = (raw.contact || raw || {}) as Record<string, unknown>;
-                    enrichSyncContact(contactId, detailed);
+                    await enrichSyncContact(contactId, detailed);
                     console.log(`[contact-snapshot] Background re-enriched stale contact ${contactId}`);
                   }
                 } catch { /* fire-and-forget */ }
@@ -677,7 +677,7 @@ export async function registerRoutes(
               const detailed = (rawData.contact || rawData || {}) as Record<string, unknown>;
 
               // Enrich sync cache for next time (fire-and-forget)
-              try { enrichSyncContact(contactId, detailed); } catch (e) {
+              try { await enrichSyncContact(contactId, detailed); } catch (e) {
                 console.warn(`[contact-snapshot] Failed to enrich sync cache:`, e);
               }
 
@@ -1531,9 +1531,9 @@ export async function registerRoutes(
     console.log("[SUMMARY] READ_SOURCE:", READ_SOURCE);
 
     // Fast path: compute summary from sync cache
-    if (shouldReadFromSync()) {
+    if (await shouldReadFromSync()) {
       try {
-        const contacts = getAllSyncContacts();
+        const contacts = await getAllSyncContacts();
         const activeContacts = contacts.filter((c) => {
           const sc = c.statusCode ?? 0;
           // Inactive: 103, 104, 203, 204, 205, 400+
@@ -1648,9 +1648,9 @@ export async function registerRoutes(
     console.log("[WAITLIST-CONTACTS] DATA_MODE:", DATA_MODE, "READ_SOURCE:", READ_SOURCE);
 
     // Fast path: read from sync cache
-    if (shouldReadFromSync()) {
+    if (await shouldReadFromSync()) {
       try {
-        const contacts = getAllSyncContacts().map((c) => ({
+        const contacts = (await getAllSyncContacts()).map((c) => ({
           ...c,
           dateAdded: normalizeOrReconstructDateAdded(c.dateAdded, c.daysOnWaitlist, c.contactId),
         }));
@@ -1833,9 +1833,9 @@ export async function registerRoutes(
     console.log("[BOARD] DATA_MODE:", DATA_MODE, "READ_SOURCE:", READ_SOURCE);
 
     // Fast path: read from sync cache
-    if (shouldReadFromSync()) {
+    if (await shouldReadFromSync()) {
       try {
-        const contacts = getAllSyncContacts();
+        const contacts = await getAllSyncContacts();
         console.log(`[BOARD] Serving ${contacts.length} contacts from sync cache`);
         setBoardCache({ contacts: contacts as any[] });
         return res.json({ contacts, _source: "sync" });
@@ -2022,11 +2022,11 @@ export async function registerRoutes(
           300: "on_hold", 400: "closed",
         };
         try {
-          const prev = getSyncContactById(contactId);
-          updateSyncContactStatus(contactId, statusCode, statusCodeToString[statusCode] || "unknown");
+          const prev = await getSyncContactById(contactId);
+          await updateSyncContactStatus(contactId, statusCode, statusCodeToString[statusCode] || "unknown");
           console.log(`[update-status] Sync cache updated for contactId ${contactId}`);
 
-          logActivity({
+          await logActivity({
             type: "status_changed",
             actorEmail: (req as any).user?.email || "system",
             entityType: "contact",
@@ -2143,11 +2143,11 @@ export async function registerRoutes(
       if (DATA_MODE === "live") {
         // Write-through: update sync cache for instant timeline update
         try {
-          const contact = getSyncContactById(contactId);
+          const contact = await getSyncContactById(contactId);
           appendSyncContactNote(contactId, note.trim(), author.trim(), timestamp);
           console.log(`[add-note] Sync cache updated for contactId ${contactId}`);
 
-          logActivity({
+          await logActivity({
             type: "note_added",
             actorEmail: (req as any).user?.email || "system",
             entityType: "contact",
@@ -2238,7 +2238,7 @@ export async function registerRoutes(
         fieldNames: Object.keys(fields),
       });
 
-      const result = updateContactIntakeFields(contactId, fields);
+      const result = await updateContactIntakeFields(contactId, fields);
 
       if (result.notFound) {
         return res.status(404).json({ error: "Contact not found", contactId });
@@ -2262,12 +2262,12 @@ export async function registerRoutes(
         console.warn(`[intake-update] Failed to log timeline event:`, e);
       }
 
-      logActivity({
+      await logActivity({
         type: "contact_updated",
         actorEmail: (req as any).user?.email || "system",
         entityType: "contact",
         entityId: String(contactId),
-        entityName: getSyncContactById(contactId)?.name || "",
+        entityName: (await getSyncContactById(contactId))?.name || "",
         metadata: { fields: changedList },
       });
 
@@ -2344,7 +2344,7 @@ export async function registerRoutes(
       });
 
       // Create reminder in SQLite database
-      const result = createReminderInDb({
+      const result = await createReminderInDb({
         contactId,
         contactName: contactName.trim(),
         createdByEmail: createdByEmail.trim(),
@@ -2370,7 +2370,7 @@ export async function registerRoutes(
   // Get reminder stats (monitoring endpoint)
   app.get("/api/reminders/stats", async (_req, res) => {
     try {
-      const stats = getReminderStats();
+      const stats = await getReminderStats();
       return res.json(stats);
     } catch (error) {
       console.error("Error getting reminder stats:", error);
@@ -2416,11 +2416,11 @@ export async function registerRoutes(
       if (DATA_MODE === "live") {
         // Write-through: update sync cache for instant UI feedback
         try {
-          const contact = getSyncContactById(contactId);
-          updateSyncContactAssignment(contactId, assignedTo);
+          const contact = await getSyncContactById(contactId);
+          await updateSyncContactAssignment(contactId, assignedTo);
           console.log(`[assign-contact] Sync cache updated for contactId ${contactId}`);
 
-          logActivity({
+          await logActivity({
             type: "contact_assigned",
             actorEmail: (req as any).user?.email || "system",
             entityType: "contact",
@@ -2513,8 +2513,8 @@ export async function registerRoutes(
   app.get("/api/staff-list", async (_req, res) => {
     try {
       // Fast path: read from sync cache
-      if (shouldReadFromSync()) {
-        const staff = getSyncStaffList();
+      if (await shouldReadFromSync()) {
+        const staff = await getSyncStaffList();
         console.log(`[staff-list] Serving ${staff.length} staff from sync cache`);
         return res.json({ staff });
       }
@@ -2738,7 +2738,7 @@ export async function registerRoutes(
 
       // Apply CRM overrides to spreadsheet providers
       try {
-        const overrides = getAllProviderOverrides();
+        const overrides = await getAllProviderOverrides();
         const overrideMap = new Map(overrides.map(o => [o.providerName, o]));
         for (const p of providers) {
           const prov = p as any;
@@ -2772,7 +2772,7 @@ export async function registerRoutes(
 
       // Merge CRM-managed providers
       try {
-        const crmProviders = getAllCrmProviders();
+        const crmProviders = await getAllCrmProviders();
         for (const cp of crmProviders) {
           providers.push({
             id: 10000 + cp.id, // offset to avoid ID collisions with spreadsheet
@@ -2831,7 +2831,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: "name is required" });
       }
 
-      const id = createCrmProvider({
+      const id = await createCrmProvider({
         name,
         credentials,
         location,
@@ -2845,7 +2845,7 @@ export async function registerRoutes(
       providerDataCache = null;
 
       // Log activity
-      logActivity({
+      await logActivity({
         type: "provider_updated",
         actorEmail: (req as any).user?.email || "system",
         entityType: "provider",
@@ -2874,7 +2874,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Invalid provider ID" });
       }
 
-      const existing = getCrmProviderById(id);
+      const existing = await getCrmProviderById(id);
       if (!existing) {
         return res.status(404).json({ error: "CRM provider not found" });
       }
@@ -2891,7 +2891,7 @@ export async function registerRoutes(
       if (insurances !== undefined && JSON.stringify(insurances) !== JSON.stringify(existing.insurances)) fieldsUpdated.push("insurances");
       if (notes !== undefined && notes.trim() !== (existing.notes || "")) fieldsUpdated.push("notes");
 
-      const updated = updateCrmProvider(id, {
+      const updated = await updateCrmProvider(id, {
         name,
         credentials,
         location,
@@ -2906,7 +2906,7 @@ export async function registerRoutes(
 
       // Log activity if something actually changed
       if (updated && fieldsUpdated.length > 0) {
-        logActivity({
+        await logActivity({
           type: "provider_updated",
           actorEmail: (req as any).user?.email || "system",
           entityType: "provider",
@@ -2920,7 +2920,7 @@ export async function registerRoutes(
         });
       }
 
-      const updatedProvider = getCrmProviderById(id);
+      const updatedProvider = await getCrmProviderById(id);
       return res.json({ success: true, updated, provider: updatedProvider });
     } catch (error) {
       console.error("[providers] Error updating provider:", error);
@@ -2937,7 +2937,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: "providerName is required" });
       }
 
-      const existing = getProviderOverride(providerName.trim());
+      const existing = await getProviderOverride(providerName.trim());
 
       // Diff fields for activity log
       const fieldsUpdated: string[] = [];
@@ -2947,7 +2947,7 @@ export async function registerRoutes(
       if (notes !== undefined && notes !== (existing?.notes ?? "")) fieldsUpdated.push("notes");
       if (ageGroups !== undefined) fieldsUpdated.push("age groups");
 
-      upsertProviderOverride({
+      await upsertProviderOverride({
         providerName: providerName.trim(),
         specialties,
         insurances,
@@ -2961,7 +2961,7 @@ export async function registerRoutes(
 
       // Log activity
       if (fieldsUpdated.length > 0) {
-        logActivity({
+        await logActivity({
           type: "provider_updated",
           actorEmail: (req as any).user?.email || "system",
           entityType: "provider",
@@ -3006,7 +3006,7 @@ export async function registerRoutes(
   } = await import("./email/provider-location-config");
 
   // Log email service configuration status at startup
-  const emailConfig = validateEmailServiceConfig();
+  const emailConfig = await validateEmailServiceConfig();
   if (emailConfig.warnings.length > 0) {
     console.warn("[email-api] Email service warnings:");
     emailConfig.warnings.forEach((w) => console.warn(`  - ${w}`));
@@ -3100,9 +3100,9 @@ export async function registerRoutes(
   });
 
   // GET /api/email-templates - List available templates for dropdown
-  app.get("/api/email-templates", (_req, res) => {
+  app.get("/api/email-templates", async (_req, res) => {
     try {
-      const templates = getTemplateList();
+      const templates = await getTemplateList();
       console.log(`[email-api] Returning ${templates.length} templates`);
       return res.json({ templates });
     } catch (error) {
@@ -3127,7 +3127,7 @@ export async function registerRoutes(
       // Read contact from local sync_contacts DB (primary source)
       // Falls back to n8n snapshot only if local data is missing
       let contact: Record<string, unknown> | null = null;
-      const localContact = getSyncContactById(contactId);
+      const localContact = await getSyncContactById(contactId);
 
       if (localContact && localContact.name) {
         contact = localContact as unknown as Record<string, unknown>;
@@ -3180,13 +3180,13 @@ export async function registerRoutes(
       }
 
       // Render preview with admin-provided dynamic fields
-      const rendered = renderTemplate(templateId, contactForEmail, sanitizedFields);
+      const rendered = await renderTemplate(templateId, contactForEmail, sanitizedFields);
       if (!rendered) {
         return res.status(400).json({ error: `Template not found: ${templateId}` });
       }
 
       // Include ECC status in response
-      const eccStatus = getEccStatus(contactForEmail);
+      const eccStatus = await getEccStatus(contactForEmail);
 
       console.log(`[email-preview] Rendered "${templateId}" for contact ${contactId} (ECC: ${eccStatus})`);
 
@@ -3222,7 +3222,7 @@ export async function registerRoutes(
       // Read contact from local sync_contacts DB (primary source)
       // Falls back to n8n snapshot only if local data is missing
       let contact: Record<string, unknown> | null = null;
-      const localContact = getSyncContactById(contactId);
+      const localContact = await getSyncContactById(contactId);
 
       if (localContact && localContact.name) {
         contact = localContact as unknown as Record<string, unknown>;
@@ -3296,7 +3296,7 @@ export async function registerRoutes(
       });
 
       // Build audit note content (used for timeline logging after response is sent)
-      const templates = getTemplateList();
+      const templates = await getTemplateList();
       const templateName = templates.find((t) => t.id === templateId)?.name || templateId;
       const dynamicFieldDetails: string[] = [];
       if (sanitizedFields.therapistName) dynamicFieldDetails.push(`Provider: ${sanitizedFields.therapistName}`);
@@ -3331,7 +3331,7 @@ export async function registerRoutes(
       const QUALIFYING_TEMPLATES = ["appointment-confirmation", "post-appointment-survey", "intake-form-reminder"];
       if (QUALIFYING_TEMPLATES.includes(templateId) && sendResult.renderedHtml) {
         try {
-          saveEmailSnapshot({
+          await saveEmailSnapshot({
             contactId,
             templateId,
             subject: sendResult.renderedSubject || templateName,
@@ -3345,7 +3345,7 @@ export async function registerRoutes(
       }
 
       // Log email_sent activity
-      logActivity({
+      await logActivity({
         type: "email_sent",
         actorEmail: userEmail,
         entityType: "contact",
@@ -3400,7 +3400,7 @@ export async function registerRoutes(
       if (isNaN(contactId) || contactId <= 0) {
         return res.status(400).json({ error: "Invalid contactId" });
       }
-      const submissions = getSubmissionsForContact(contactId);
+      const submissions = await getSubmissionsForContact(contactId);
       return res.json({ submissions });
     } catch (error) {
       console.error("[intake-history] Error:", error);
@@ -3415,7 +3415,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: "contactId must be a number" });
       }
 
-      const comments = getIntakeComments(contactId);
+      const comments = await getIntakeComments(contactId);
       return res.json({ comments });
     } catch (error) {
       console.error("Error getting intake comments:", error);
@@ -3444,7 +3444,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: "commentText is required" });
       }
 
-      const result = createIntakeComment({
+      const result = await createIntakeComment({
         contactId,
         contactName: contactName.trim(),
         authorEmail: authorEmail.trim(),
@@ -3466,7 +3466,7 @@ export async function registerRoutes(
   // Get all active attention flags (bulk endpoint for list/kanban views)
   app.get("/api/attention-flags", async (_req, res) => {
     try {
-      const flags = getActiveAttentionFlags();
+      const flags = await getActiveAttentionFlags();
       return res.json({ flags });
     } catch (error) {
       console.error("Error getting attention flags:", error);
@@ -3487,7 +3487,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: "valid clearedByEmail is required" });
       }
 
-      const cleared = clearAttentionFlag(contactId, clearedByEmail.trim());
+      const cleared = await clearAttentionFlag(contactId, clearedByEmail.trim());
       return res.json({ success: true, cleared });
     } catch (error) {
       console.error("Error clearing attention flag:", error);
@@ -3533,21 +3533,21 @@ export async function registerRoutes(
       let existingId: number | null = null;
 
       if (email && email !== "none@none.com" && email !== "none@gmail.com" && email !== "unknown@gmail.com") {
-        const match = getAllSyncContacts().find(c =>
+        const match = (await getAllSyncContacts()).find(c =>
           c.email?.toLowerCase() === email.toLowerCase() &&
           c.name.toLowerCase() === nameNorm
         );
         if (match) existingId = match.contactId;
       }
       if (!existingId && phone) {
-        const match = getAllSyncContacts().find(c =>
+        const match = (await getAllSyncContacts()).find(c =>
           c.phone === phone &&
           c.name.toLowerCase() === nameNorm
         );
         if (match) existingId = match.contactId;
       }
 
-      const contactId = existingId ?? generateIntakeContactId();
+      const contactId = existingId ?? await generateIntakeContactId();
       const isUpdate = !!existingId;
 
       if (isUpdate) {
@@ -3556,7 +3556,7 @@ export async function registerRoutes(
 
       // Immutable audit log — capture raw submission before any processing
       try {
-        insertFormSubmission({
+        await insertFormSubmission({
           source: "rfs_v2",
           contactId,
           name: b.name.trim(),
@@ -3566,7 +3566,7 @@ export async function registerRoutes(
         console.error("[INTAKE] Failed to log form submission (non-fatal):", err);
       }
 
-      insertIntakeContact({
+      await insertIntakeContact({
         contactId,
         name: b.name.trim(),
         email: s(b.email),
@@ -3604,7 +3604,7 @@ export async function registerRoutes(
 
       boardCache = null;
 
-      logActivity({
+      await logActivity({
         type: "submission_received",
         actorEmail: "system",
         entityType: "contact",
@@ -3647,7 +3647,7 @@ export async function registerRoutes(
 
       console.log(`[sync] Received ${contacts.length} contacts from n8n`);
 
-      const result = syncContactsToDb(contacts);
+      const result = await syncContactsToDb(contacts);
 
       console.log(`[sync] Complete: ${result.synced} synced, ${result.skipped} unchanged, ${result.deleted} deleted in ${result.durationMs}ms`);
 
@@ -3667,7 +3667,7 @@ export async function registerRoutes(
   app.get("/api/sync/status", async (_req, res) => {
     try {
       const meta = getSyncMeta();
-      const contactCount = getSyncContactCount();
+      const contactCount = await getSyncContactCount();
       return res.json({ ...meta, contactCount });
     } catch (error) {
       console.error("[sync] Error fetching status:", error);
@@ -3716,7 +3716,7 @@ export async function registerRoutes(
 
       console.log(`[sync-trigger] Fetched ${contacts.length} contacts from n8n, syncing to SQLite...`);
 
-      const result = syncContactsToDb(contacts);
+      const result = await syncContactsToDb(contacts);
 
       console.log(`[sync-trigger] Sync complete: ${result.synced} upserted, ${result.skipped} unchanged, ${result.deleted} deleted in ${result.durationMs}ms`);
 
@@ -3789,13 +3789,13 @@ export async function registerRoutes(
 
       // Step 3: Merge board + detailed data and upsert
       const merged = { ...boardContact, ...detailedData, contactId } as SyncPayloadContact;
-      upsertSingleContact(merged);
+      await upsertSingleContact(merged);
 
       // Step 4: Also enrich with detailed fields
-      enrichSyncContact(contactId, detailedData);
+      await enrichSyncContact(contactId, detailedData);
 
       // Step 5: Return the fresh contact
-      const freshContact = getSyncContactById(contactId);
+      const freshContact = await getSyncContactById(contactId);
       console.log(`[sync] Manual sync complete for contact ${contactId}`);
 
       return res.json({
@@ -3820,7 +3820,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: "contactId must be a number" });
       }
 
-      const assignments = getAssignmentsByContact(contactId);
+      const assignments = await getAssignmentsByContact(contactId);
       return res.json({ assignments });
     } catch (error) {
       console.error("Error getting assignments:", error);
@@ -3852,7 +3852,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: "assignedByInitials is required" });
       }
 
-      const result = createAssignment({
+      const result = await createAssignment({
         contactId,
         contactName: contactName.trim(),
         providerName: providerName.trim(),
@@ -3862,7 +3862,7 @@ export async function registerRoutes(
         assignedByInitials: assignedByInitials.trim(),
       });
 
-      logActivity({
+      await logActivity({
         type: "contact_assigned",
         actorEmail: assignedByEmail.trim(),
         entityType: "contact",
@@ -3892,7 +3892,7 @@ export async function registerRoutes(
       if (isNaN(id)) {
         return res.status(400).json({ error: "id must be a number" });
       }
-      const deleted = deleteAssignment(id);
+      const deleted = await deleteAssignment(id);
       if (!deleted) {
         return res.status(404).json({ error: "Assignment not found" });
       }
@@ -3937,7 +3937,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: "contactId must be a number" });
       }
 
-      const record = getTnRecord(contactId);
+      const record = await getTnRecord(contactId);
       return res.json({ record });
     } catch (error) {
       console.error("[therapy-notes] Error getting record:", error);
@@ -3958,12 +3958,12 @@ export async function registerRoutes(
         return res.status(400).json({ error: "contactId (number) is required" });
       }
 
-      const existing = getTnRecord(contactId);
+      const existing = await getTnRecord(contactId);
       if (!existing) {
         return res.status(404).json({ error: "No TherapyNotes record for this contact" });
       }
 
-      resetTnLink(contactId);
+      await resetTnLink(contactId);
 
       // Fire-and-forget timeline log
       const author = userEmail.split("@")[0].substring(0, 3).toUpperCase();
@@ -3978,7 +3978,7 @@ export async function registerRoutes(
         }),
       }).catch((err) => console.error("[therapy-notes] Timeline log failed:", err));
 
-      const record = getTnRecord(contactId);
+      const record = await getTnRecord(contactId);
       return res.json({ success: true, record });
     } catch (error) {
       console.error("[therapy-notes] Error in reset endpoint:", error);
@@ -4001,7 +4001,7 @@ export async function registerRoutes(
       }
 
       // Check existing record
-      const existing = getTnRecord(contactId);
+      const existing = await getTnRecord(contactId);
       if (existing) {
         if (existing.tnStatus === "created") {
           return res.status(200).json({ status: "created", record: existing });
@@ -4010,22 +4010,22 @@ export async function registerRoutes(
           return res.status(409).json({ status: "in_progress", record: existing });
         }
         // Stale in_progress or failed → reset for retry
-        resetTnRecordForRetry(contactId);
+        await resetTnRecordForRetry(contactId);
       } else {
         // New record
         const contactName = req.body.contactName || "Unknown";
-        createTnRecord({ contactId, contactName, createdByEmail: userEmail });
+        await createTnRecord({ contactId, contactName, createdByEmail: userEmail });
       }
 
       // Validate TN_API_KEY
       if (!process.env.TN_API_KEY) {
-        updateTnStatus(contactId, "failed", { failureReason: "TN_API_KEY not configured on server" });
+        await updateTnStatus(contactId, "failed", { failureReason: "TN_API_KEY not configured on server" });
         return res.status(500).json({ error: "TherapyNotes API key not configured" });
       }
 
       // Log therapy_notes_started activity
-      const contactName = req.body.contactName || getSyncContactById(contactId)?.name || `Contact ${contactId}`;
-      logActivity({
+      const contactName = req.body.contactName || (await getSyncContactById(contactId))?.name || `Contact ${contactId}`;
+      await logActivity({
         type: "therapy_notes_started",
         actorEmail: userEmail,
         entityType: "contact",
@@ -4035,7 +4035,7 @@ export async function registerRoutes(
       });
 
       // Return 202 immediately
-      const record = getTnRecord(contactId);
+      const record = await getTnRecord(contactId);
       res.status(202).json({ status: "in_progress", record });
 
       // Detached async: read data → validate → call TN agent (with retry) → update record
@@ -4048,7 +4048,7 @@ export async function registerRoutes(
 
           // ---- Step 1: Get contact data from LOCAL DB (no n8n dependency) ----
           let snapshot: Record<string, unknown> | null = null;
-          const localContact = getSyncContactById(contactId);
+          const localContact = await getSyncContactById(contactId);
 
           if (localContact && localContact.name) {
             console.log(`[TN] Using local sync_contacts data for ${contactId}`);
@@ -4112,13 +4112,13 @@ export async function registerRoutes(
           if (missingFields.length > 0) {
             const reason = `Missing critical fields: ${missingFields.join(", ")}`;
             console.error(`[TN] Pre-validation failed: ${reason}`);
-            updateTnStatus(contactId, "failed", { failureReason: reason });
+            await updateTnStatus(contactId, "failed", { failureReason: reason });
             return;
           }
 
           if (isN8nDisabled(TN_AGENT_URL) || !process.env.TN_API_KEY) {
             console.warn("[TN] Skipped — TN_AGENT_URL or TN_API_KEY not configured");
-            updateTnStatus(contactId, "failed", { failureReason: "TherapyNotes disabled in this environment" });
+            await updateTnStatus(contactId, "failed", { failureReason: "TherapyNotes disabled in this environment" });
             return;
           }
 
@@ -4153,14 +4153,14 @@ export async function registerRoutes(
 
               if (tnResult.status === "success") {
                 console.log(`[TN] Success: url=${tnResult.tn_patient_url}`);
-                updateTnStatus(contactId, "created", {
+                await updateTnStatus(contactId, "created", {
                   url: tnResult.tn_patient_url,
                   id: tnResult.tn_patient_id,
                 });
 
                 // Log therapy_notes_created activity
-                const contactName = getSyncContactById(contactId)?.name || `Contact ${contactId}`;
-                logActivity({
+                const contactName = (await getSyncContactById(contactId))?.name || `Contact ${contactId}`;
+                await logActivity({
                   type: "therapy_notes_created",
                   actorEmail: userEmail,
                   entityType: "contact",
@@ -4199,15 +4199,15 @@ export async function registerRoutes(
 
           // All retries exhausted
           console.error(`[TN] All attempts failed for contact ${contactId}: ${lastError}`);
-          updateTnStatus(contactId, "failed", { failureReason: lastError });
+          await updateTnStatus(contactId, "failed", { failureReason: lastError });
 
           // Log therapy_notes_failed activity
-          logActivity({
+          await logActivity({
             type: "therapy_notes_failed",
             actorEmail: userEmail,
             entityType: "contact",
             entityId: String(contactId),
-            entityName: getSyncContactById(contactId)?.name || `Contact ${contactId}`,
+            entityName: (await getSyncContactById(contactId))?.name || `Contact ${contactId}`,
             metadata: { contactId, failureReason: lastError, attempts: TN_MAX_RETRIES + 1 },
           });
 
@@ -4226,19 +4226,19 @@ export async function registerRoutes(
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           console.error(`[TN] Unexpected error for contact ${contactId}: ${message}`);
-          updateTnStatus(contactId, "failed", { failureReason: message });
+          await updateTnStatus(contactId, "failed", { failureReason: message });
 
-          logActivity({
+          await logActivity({
             type: "therapy_notes_failed",
             actorEmail: userEmail,
             entityType: "contact",
             entityId: String(contactId),
-            entityName: getSyncContactById(contactId)?.name || `Contact ${contactId}`,
+            entityName: (await getSyncContactById(contactId))?.name || `Contact ${contactId}`,
             metadata: { contactId, failureReason: message },
           });
         }
 
-        console.log(`[TN] Final state:`, JSON.stringify(getTnRecord(contactId)));
+        console.log(`[TN] Final state:`, JSON.stringify(await getTnRecord(contactId)));
       })();
     } catch (error) {
       console.error("[therapy-notes] Error in create endpoint:", error);
@@ -4252,7 +4252,7 @@ export async function registerRoutes(
 
   app.get("/api/submissions", async (_req, res) => {
     try {
-      const submissions = getRecentSubmissions(50);
+      const submissions = await getRecentSubmissions(50);
       return res.json({ submissions });
     } catch (error) {
       console.error("[submissions] Error fetching submissions:", error);
@@ -4285,7 +4285,7 @@ export async function registerRoutes(
         normalizedSubmittedAt = parsed.toISOString();
       }
 
-      const id = insertSubmission({
+      const id = await insertSubmission({
         formType: formType.trim(),
         source: source.trim(),
         submittedAt: normalizedSubmittedAt,
@@ -4294,7 +4294,7 @@ export async function registerRoutes(
         data,
       });
 
-      logActivity({
+      await logActivity({
         type: "submission_received",
         actorEmail: "system",
         entityType: "submission",
@@ -4507,7 +4507,7 @@ export async function registerRoutes(
 
       // Real migration: insert or merge into DB
       if (mode === "merge") {
-        const result = mergeMigrationContacts(validContacts);
+        const result = await mergeMigrationContacts(validContacts);
 
         console.log("[MIGRATION:MERGE]", {
           total: contacts.length,
@@ -4535,7 +4535,7 @@ export async function registerRoutes(
       }
 
       if (mode === "fullsync") {
-        const result = fullSyncMigrationContacts(validContacts);
+        const result = await fullSyncMigrationContacts(validContacts);
 
         console.log("[MIGRATION:FULLSYNC]", {
           total: contacts.length,
@@ -4562,7 +4562,7 @@ export async function registerRoutes(
         });
       }
 
-      const result = insertMigrationContacts(validContacts);
+      const result = await insertMigrationContacts(validContacts);
 
       console.log("[MIGRATION:INSERT]", {
         total: contacts.length,
@@ -4605,7 +4605,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: "contactId must be a number" });
       }
 
-      const contact = getSyncContactById(contactId);
+      const contact = await getSyncContactById(contactId);
       if (!contact) {
         return res.status(404).json({ error: "Contact not found" });
       }
@@ -4647,7 +4647,7 @@ export async function registerRoutes(
   app.get("/api/export/insights.pdf", async (_req, res) => {
     try {
       const { computeInsightsMetrics, buildInsightsDocument } = await import("./pdf/insights-template");
-      const metrics = computeInsightsMetrics();
+      const metrics = await computeInsightsMetrics();
       const docDefinition = buildInsightsDocument(metrics);
 
       const pdfmake = require("pdfmake");
@@ -4688,7 +4688,7 @@ export async function registerRoutes(
       if (isNaN(contactId)) {
         return res.status(400).json({ error: "contactId must be a number" });
       }
-      const snapshots = getSnapshotsForContact(contactId);
+      const snapshots = await getSnapshotsForContact(contactId);
       return res.json({ snapshots });
     } catch (error) {
       console.error("[email-snapshots] Error fetching snapshots:", error);
@@ -4703,7 +4703,7 @@ export async function registerRoutes(
       if (isNaN(id)) {
         return res.status(400).json({ error: "id must be a number" });
       }
-      const snapshot = getEmailSnapshot(id);
+      const snapshot = await getEmailSnapshot(id);
       if (!snapshot) {
         return res.status(404).json({ error: "Snapshot not found" });
       }
@@ -4721,7 +4721,7 @@ export async function registerRoutes(
   app.get("/api/activity", async (req, res) => {
     try {
       const limit = Math.min(parseInt(String(req.query.limit)) || 100, 500);
-      const activities = getRecentActivity(limit);
+      const activities = await getRecentActivity(limit);
       return res.json({ activities });
     } catch (error) {
       console.error("[activity] Error fetching activity:", error);
@@ -4736,7 +4736,7 @@ export async function registerRoutes(
       if (isNaN(contactId) || contactId <= 0) {
         return res.status(400).json({ error: "Invalid contactId" });
       }
-      const activities = getActivityForContact(contactId);
+      const activities = await getActivityForContact(contactId);
       return res.json({ activities });
     } catch (error) {
       console.error("[activity] Error fetching contact activity:", error);
@@ -4747,7 +4747,7 @@ export async function registerRoutes(
   app.get("/api/activity/staff-summary", async (_req, res) => {
     try {
       const days = 7;
-      const staff = getStaffActivitySummary(days);
+      const staff = await getStaffActivitySummary(days);
       return res.json({ staff, days });
     } catch (error) {
       console.error("[activity] Error fetching staff summary:", error);
@@ -4777,7 +4777,7 @@ export async function registerRoutes(
   app.get("/api/export/waitlist", async (req, res) => {
     try {
       if (!checkExportAuth(req, res)) return;
-      const result = getWaitlistExportData();
+      const result = await getWaitlistExportData();
       console.log(`[export] JSON: ${result.total} rows`);
       return res.json(result);
     } catch (error) {
@@ -4791,7 +4791,7 @@ export async function registerRoutes(
   app.get("/api/export/waitlist.csv", async (req, res) => {
     try {
       if (!checkExportAuth(req, res)) return;
-      const { rows, total } = getWaitlistExportData();
+      const { rows, total } = await getWaitlistExportData();
       console.log(`[export] CSV: ${total} rows`);
 
       // Build CSV: header + rows, using canonical column order
@@ -4824,7 +4824,7 @@ export async function registerRoutes(
   app.get("/api/export/waitlist.xlsx", async (req, res) => {
     try {
       if (!checkExportAuth(req, res)) return;
-      const { rows, total } = getWaitlistExportData();
+      const { rows, total } = await getWaitlistExportData();
       console.log(`[export] XLSX: ${total} rows`);
 
       // Build worksheet from rows using canonical column order

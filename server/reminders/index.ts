@@ -5,7 +5,7 @@
  */
 
 export {
-  initDatabase,
+  initRemindersTable,
   createReminder,
   getReminderStats,
   getDueReminders,

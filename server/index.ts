@@ -4,7 +4,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { configureAuth, authMiddleware } from "./auth";
-import { initDatabase, startReminderCron } from "./reminders";
+import { initRemindersTable, startReminderCron } from "./reminders";
 import { initTherapyNotesTable } from "./therapy-notes";
 import { initEmailSnapshotsTable } from "./email-snapshots";
 import { initAssignmentsTable } from "./assignments/db";
@@ -129,18 +129,18 @@ app.use((req, res, next) => {
 
   await registerRoutes(httpServer, app);
 
-  // Initialize reminder system (SQLite + cron)
+  // Initialize database tables (Postgres)
   try {
-    initDatabase();
-    initTherapyNotesTable();
-    initEmailSnapshotsTable();
-    initAssignmentsTable();
-    initSyncTables();
-    initActivityTable();
+    await initRemindersTable();
+    await initTherapyNotesTable();
+    await initEmailSnapshotsTable();
+    await initAssignmentsTable();
+    await initSyncTables();
+    await initActivityTable();
     startReminderCron();
-    log("Reminder system initialized");
+    log("Database and reminder system initialized (Postgres)");
   } catch (err) {
-    log(`Warning: Reminder system failed to initialize: ${err}`, "reminders");
+    log(`Warning: Database initialization failed: ${err}`, "db");
   }
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

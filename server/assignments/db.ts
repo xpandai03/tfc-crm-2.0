@@ -2,10 +2,10 @@
  * Provider Assignments Database
  *
  * CRM-only storage for provider assignment records.
- * Uses the same SQLite database as reminders, intake comments, etc.
+ * Uses PostgreSQL via the shared pool.
  */
 
-import { getDatabase } from "../reminders/db";
+import { getPool } from "../db/pool";
 
 export interface ProviderAssignment {
   id: number;
@@ -34,12 +34,12 @@ export interface CreateAssignmentParams {
 /**
  * Initialize the assignments table (idempotent)
  */
-export function initAssignmentsTable(): void {
-  const db = getDatabase();
+export async function initAssignmentsTable(): Promise<void> {
+  const pool = getPool();
 
-  db.exec(`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS contact_provider_assignments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       contact_id INTEGER NOT NULL,
       contact_name TEXT NOT NULL,
       provider_name TEXT NOT NULL,
@@ -47,10 +47,12 @@ export function initAssignmentsTable(): void {
       assignment_comment TEXT,
       assigned_by_email TEXT NOT NULL,
       assigned_by_initials TEXT NOT NULL,
-      assigned_at TEXT NOT NULL DEFAULT (datetime('now')),
+      assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       source TEXT NOT NULL DEFAULT 'manual'
     );
+  `);
 
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_assignments_contact
       ON contact_provider_assignments(contact_id);
   `);
@@ -61,28 +63,28 @@ export function initAssignmentsTable(): void {
 /**
  * Create a new provider assignment
  */
-export function createAssignment(params: CreateAssignmentParams): { assignmentId: number } {
-  const db = getDatabase();
+export async function createAssignment(params: CreateAssignmentParams): Promise<{ assignmentId: number }> {
+  const pool = getPool();
 
-  const stmt = db.prepare(`
-    INSERT INTO contact_provider_assignments (
+  const result = await pool.query(
+    `INSERT INTO contact_provider_assignments (
       contact_id, contact_name, provider_name, credential,
       assignment_comment, assigned_by_email, assigned_by_initials, source
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const result = stmt.run(
-    params.contactId,
-    params.contactName,
-    params.providerName,
-    params.credential,
-    params.assignmentComment || null,
-    params.assignedByEmail,
-    params.assignedByInitials,
-    params.source || "manual",
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    RETURNING id`,
+    [
+      params.contactId,
+      params.contactName,
+      params.providerName,
+      params.credential,
+      params.assignmentComment || null,
+      params.assignedByEmail,
+      params.assignedByInitials,
+      params.source || "manual",
+    ]
   );
 
-  const assignmentId = result.lastInsertRowid as number;
+  const assignmentId = result.rows[0].id as number;
   console.log(`[assignments-db] Created assignment ${assignmentId} for contact ${params.contactId}: ${params.providerName}`);
 
   return { assignmentId };
@@ -91,66 +93,69 @@ export function createAssignment(params: CreateAssignmentParams): { assignmentId
 /**
  * Get all assignments for a contact, newest first
  */
-export function getAssignmentsByContact(contactId: number): ProviderAssignment[] {
-  const db = getDatabase();
+export async function getAssignmentsByContact(contactId: number): Promise<ProviderAssignment[]> {
+  const pool = getPool();
 
-  const stmt = db.prepare(`
-    SELECT
+  const result = await pool.query(
+    `SELECT
       id,
-      contact_id as contactId,
-      contact_name as contactName,
-      provider_name as providerName,
+      contact_id AS "contactId",
+      contact_name AS "contactName",
+      provider_name AS "providerName",
       credential,
-      assignment_comment as assignmentComment,
-      assigned_by_email as assignedByEmail,
-      assigned_by_initials as assignedByInitials,
-      assigned_at as assignedAt,
+      assignment_comment AS "assignmentComment",
+      assigned_by_email AS "assignedByEmail",
+      assigned_by_initials AS "assignedByInitials",
+      assigned_at AS "assignedAt",
       source
     FROM contact_provider_assignments
-    WHERE contact_id = ?
-    ORDER BY assigned_at DESC
-  `);
+    WHERE contact_id = $1
+    ORDER BY assigned_at DESC`,
+    [contactId]
+  );
 
-  return stmt.all(contactId) as ProviderAssignment[];
+  return result.rows as ProviderAssignment[];
 }
 
 /**
  * Get the most recent assignment for a contact (for header badge)
  */
-export function getLatestAssignment(contactId: number): ProviderAssignment | null {
-  const db = getDatabase();
+export async function getLatestAssignment(contactId: number): Promise<ProviderAssignment | null> {
+  const pool = getPool();
 
-  const stmt = db.prepare(`
-    SELECT
+  const result = await pool.query(
+    `SELECT
       id,
-      contact_id as contactId,
-      contact_name as contactName,
-      provider_name as providerName,
+      contact_id AS "contactId",
+      contact_name AS "contactName",
+      provider_name AS "providerName",
       credential,
-      assignment_comment as assignmentComment,
-      assigned_by_email as assignedByEmail,
-      assigned_by_initials as assignedByInitials,
-      assigned_at as assignedAt,
+      assignment_comment AS "assignmentComment",
+      assigned_by_email AS "assignedByEmail",
+      assigned_by_initials AS "assignedByInitials",
+      assigned_at AS "assignedAt",
       source
     FROM contact_provider_assignments
-    WHERE contact_id = ?
+    WHERE contact_id = $1
     ORDER BY assigned_at DESC
-    LIMIT 1
-  `);
+    LIMIT 1`,
+    [contactId]
+  );
 
-  return (stmt.get(contactId) as ProviderAssignment) || null;
+  return (result.rows[0] as ProviderAssignment) || null;
 }
 
 /**
  * Delete an assignment by ID
  */
-export function deleteAssignment(assignmentId: number): boolean {
-  const db = getDatabase();
-  const result = db.prepare(
-    `DELETE FROM contact_provider_assignments WHERE id = ?`
-  ).run(assignmentId);
-  if (result.changes > 0) {
+export async function deleteAssignment(assignmentId: number): Promise<boolean> {
+  const pool = getPool();
+  const result = await pool.query(
+    `DELETE FROM contact_provider_assignments WHERE id = $1`,
+    [assignmentId]
+  );
+  if (result.rowCount && result.rowCount > 0) {
     console.log(`[assignments-db] Deleted assignment ${assignmentId}`);
   }
-  return result.changes > 0;
+  return (result.rowCount ?? 0) > 0;
 }

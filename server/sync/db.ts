@@ -1,18 +1,17 @@
 /**
  * Sync Database Layer
  *
- * SQLite-backed cache of Excel waitlist data.
+ * Postgres-backed cache of Excel waitlist data.
  * Populated by n8n background sync, read by CRM API endpoints.
  *
  * Design:
  * - sync_contacts: mirrors Excel waitlist rows (upsert on sync)
  * - sync_meta: singleton row tracking sync health
- * - All reads are <10ms (SQLite local file)
  * - Writes to Excel still go through n8n async
  */
 
 import crypto from "crypto";
-import { getDatabase } from "../reminders/db";
+import { getPool } from "../db/pool";
 
 const MONTH_NAMES: Record<string, number> = {
   january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
@@ -172,10 +171,10 @@ export interface SyncPayloadContact {
 // Table Initialization
 // ============================================================================
 
-export function initSyncTables(): void {
-  const db = getDatabase();
+export async function initSyncTables(): Promise<void> {
+  const pool = getPool();
 
-  db.exec(`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS sync_contacts (
       contact_id        INTEGER PRIMARY KEY,
       name              TEXT NOT NULL,
@@ -225,56 +224,64 @@ export function initSyncTables(): void {
       last_contact       TEXT,
       last_note          TEXT,
 
-      synced_at          TEXT NOT NULL DEFAULT (datetime('now')),
+      synced_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       sync_hash          TEXT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_sync_contacts_status_code
-      ON sync_contacts(status_code);
-    CREATE INDEX IF NOT EXISTS idx_sync_contacts_assigned
-      ON sync_contacts(assigned_to);
+    )
   `);
 
-  db.exec(`
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_sync_contacts_status_code
+      ON sync_contacts(status_code)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_sync_contacts_assigned
+      ON sync_contacts(assigned_to)
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS sync_meta (
       id              INTEGER PRIMARY KEY CHECK (id = 1),
-      last_sync_at    TEXT,
+      last_sync_at    TIMESTAMPTZ,
       last_sync_rows  INTEGER DEFAULT 0,
       last_sync_ms    INTEGER DEFAULT 0,
       sync_status     TEXT DEFAULT 'never',
       error_message   TEXT
-    );
-
-    INSERT OR IGNORE INTO sync_meta (id) VALUES (1);
+    )
   `);
 
-  db.exec(`
+  await pool.query(`
+    INSERT INTO sync_meta (id) VALUES (1) ON CONFLICT DO NOTHING
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS form_submissions (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      id            SERIAL PRIMARY KEY,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       source        TEXT NOT NULL DEFAULT 'rfs',
       form_type     TEXT NOT NULL DEFAULT 'intake',
       submitted_at  TEXT,
       contact_id    INTEGER,
       name          TEXT NOT NULL DEFAULT '',
       payload       TEXT NOT NULL
-    );
+    )
+  `);
 
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_form_submissions_created
-      ON form_submissions(created_at DESC);
+      ON form_submissions(created_at DESC)
+  `);
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_form_submissions_form_type
-      ON form_submissions(form_type);
+      ON form_submissions(form_type)
   `);
 
   // Migrate: add columns if missing (safe for existing DBs)
   try {
-    db.exec(`ALTER TABLE form_submissions ADD COLUMN form_type TEXT NOT NULL DEFAULT 'intake'`);
+    await pool.query(`ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS form_type TEXT NOT NULL DEFAULT 'intake'`);
   } catch (_) { /* column already exists */ }
   try {
-    db.exec(`ALTER TABLE form_submissions ADD COLUMN submitted_at TEXT`);
+    await pool.query(`ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS submitted_at TEXT`);
   } catch (_) { /* column already exists */ }
-  // Relax NOT NULL on name for generic submissions
-  // SQLite doesn't support ALTER COLUMN, but new inserts can use default ''
 
   console.log("[sync-db] Sync tables initialized");
 }
@@ -300,98 +307,97 @@ function computeRowHash(contact: Record<string, unknown>): string {
  * Upsert all contacts from n8n sync payload.
  * Returns counts of synced, skipped (unchanged), and deleted rows.
  */
-export function syncContacts(contacts: SyncPayloadContact[]): {
+export async function syncContacts(contacts: SyncPayloadContact[]): Promise<{
   synced: number;
   skipped: number;
   deleted: number;
   durationMs: number;
-} {
-  const db = getDatabase();
+}> {
+  const pool = getPool();
+  const client = await pool.connect();
   const startMs = Date.now();
-
-  const upsertStmt = db.prepare(`
-    INSERT INTO sync_contacts (
-      contact_id, name, email, phone, status, status_code,
-      service_requested, days_on_waitlist, date_added, assigned_to,
-      requesting_for, reason_for_seeking, reason_for_therapy, detailed_reason,
-      form_completed_by, modality, referral_source, prior_services,
-      prior_provider, preferred_contact, custody, flags, priority,
-      insurance_payer, insurance_plan, insurance_id, insurance_status,
-      referral_auth, referral_status,
-      patient_dob, gender, age,
-      street_address, city, state, zip_code, county,
-      rfs_link, document_link,
-      last_contact, last_note,
-      synced_at, sync_hash
-    ) VALUES (
-      ?, ?, ?, ?, ?, ?,
-      ?, ?, ?, ?,
-      ?, ?, ?, ?,
-      ?, ?, ?, ?,
-      ?, ?, ?, ?, ?,
-      ?, ?, ?, ?,
-      ?, ?,
-      ?, ?, ?,
-      ?, ?, ?, ?, ?,
-      ?, ?,
-      ?, ?,
-      datetime('now'), ?
-    ) ON CONFLICT(contact_id) DO UPDATE SET
-      name = excluded.name,
-      email = excluded.email,
-      phone = excluded.phone,
-      status = excluded.status,
-      status_code = excluded.status_code,
-      service_requested = excluded.service_requested,
-      days_on_waitlist = excluded.days_on_waitlist,
-      date_added = excluded.date_added,
-      assigned_to = excluded.assigned_to,
-      requesting_for = excluded.requesting_for,
-      reason_for_seeking = excluded.reason_for_seeking,
-      reason_for_therapy = excluded.reason_for_therapy,
-      detailed_reason = excluded.detailed_reason,
-      form_completed_by = excluded.form_completed_by,
-      modality = excluded.modality,
-      referral_source = excluded.referral_source,
-      prior_services = excluded.prior_services,
-      prior_provider = excluded.prior_provider,
-      preferred_contact = excluded.preferred_contact,
-      custody = excluded.custody,
-      flags = excluded.flags,
-      priority = excluded.priority,
-      insurance_payer = excluded.insurance_payer,
-      insurance_plan = excluded.insurance_plan,
-      insurance_id = excluded.insurance_id,
-      insurance_status = excluded.insurance_status,
-      referral_auth = excluded.referral_auth,
-      referral_status = excluded.referral_status,
-      patient_dob = excluded.patient_dob,
-      gender = excluded.gender,
-      age = excluded.age,
-      street_address = excluded.street_address,
-      city = excluded.city,
-      state = excluded.state,
-      zip_code = excluded.zip_code,
-      county = excluded.county,
-      rfs_link = excluded.rfs_link,
-      document_link = excluded.document_link,
-      last_contact = excluded.last_contact,
-      last_note = CASE WHEN sync_contacts.last_note IS NOT NULL AND sync_contacts.last_note != '' THEN sync_contacts.last_note ELSE excluded.last_note END,
-      synced_at = datetime('now'),
-      sync_hash = excluded.sync_hash
-    WHERE excluded.sync_hash != sync_contacts.sync_hash OR sync_contacts.sync_hash IS NULL
-  `);
-
-  const getHashStmt = db.prepare(
-    `SELECT sync_hash FROM sync_contacts WHERE contact_id = ?`
-  );
 
   let synced = 0;
   let skipped = 0;
+  let deleted = 0;
 
-  // Run all upserts in a transaction for atomicity and speed
-  const syncAll = db.transaction(() => {
+  try {
+    await client.query('BEGIN');
+
     const incomingIds = new Set<number>();
+
+    const upsertSql = `
+      INSERT INTO sync_contacts (
+        contact_id, name, email, phone, status, status_code,
+        service_requested, days_on_waitlist, date_added, assigned_to,
+        requesting_for, reason_for_seeking, reason_for_therapy, detailed_reason,
+        form_completed_by, modality, referral_source, prior_services,
+        prior_provider, preferred_contact, custody, flags, priority,
+        insurance_payer, insurance_plan, insurance_id, insurance_status,
+        referral_auth, referral_status,
+        patient_dob, gender, age,
+        street_address, city, state, zip_code, county,
+        rfs_link, document_link,
+        last_contact, last_note,
+        synced_at, sync_hash
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6,
+        $7, $8, $9, $10,
+        $11, $12, $13, $14,
+        $15, $16, $17, $18,
+        $19, $20, $21, $22, $23,
+        $24, $25, $26, $27,
+        $28, $29,
+        $30, $31, $32,
+        $33, $34, $35, $36, $37,
+        $38, $39,
+        $40, $41,
+        NOW(), $42
+      ) ON CONFLICT(contact_id) DO UPDATE SET
+        name = EXCLUDED.name,
+        email = EXCLUDED.email,
+        phone = EXCLUDED.phone,
+        status = EXCLUDED.status,
+        status_code = EXCLUDED.status_code,
+        service_requested = EXCLUDED.service_requested,
+        days_on_waitlist = EXCLUDED.days_on_waitlist,
+        date_added = EXCLUDED.date_added,
+        assigned_to = EXCLUDED.assigned_to,
+        requesting_for = EXCLUDED.requesting_for,
+        reason_for_seeking = EXCLUDED.reason_for_seeking,
+        reason_for_therapy = EXCLUDED.reason_for_therapy,
+        detailed_reason = EXCLUDED.detailed_reason,
+        form_completed_by = EXCLUDED.form_completed_by,
+        modality = EXCLUDED.modality,
+        referral_source = EXCLUDED.referral_source,
+        prior_services = EXCLUDED.prior_services,
+        prior_provider = EXCLUDED.prior_provider,
+        preferred_contact = EXCLUDED.preferred_contact,
+        custody = EXCLUDED.custody,
+        flags = EXCLUDED.flags,
+        priority = EXCLUDED.priority,
+        insurance_payer = EXCLUDED.insurance_payer,
+        insurance_plan = EXCLUDED.insurance_plan,
+        insurance_id = EXCLUDED.insurance_id,
+        insurance_status = EXCLUDED.insurance_status,
+        referral_auth = EXCLUDED.referral_auth,
+        referral_status = EXCLUDED.referral_status,
+        patient_dob = EXCLUDED.patient_dob,
+        gender = EXCLUDED.gender,
+        age = EXCLUDED.age,
+        street_address = EXCLUDED.street_address,
+        city = EXCLUDED.city,
+        state = EXCLUDED.state,
+        zip_code = EXCLUDED.zip_code,
+        county = EXCLUDED.county,
+        rfs_link = EXCLUDED.rfs_link,
+        document_link = EXCLUDED.document_link,
+        last_contact = EXCLUDED.last_contact,
+        last_note = CASE WHEN sync_contacts.last_note IS NOT NULL AND sync_contacts.last_note != '' THEN sync_contacts.last_note ELSE EXCLUDED.last_note END,
+        synced_at = NOW(),
+        sync_hash = EXCLUDED.sync_hash
+      WHERE EXCLUDED.sync_hash != sync_contacts.sync_hash OR sync_contacts.sync_hash IS NULL
+    `;
 
     for (const raw of contacts) {
       if (raw.contactId === undefined || raw.contactId === null) continue;
@@ -402,7 +408,10 @@ export function syncContacts(contacts: SyncPayloadContact[]): {
       const hash = computeRowHash(raw);
 
       // Check if hash matches — skip if unchanged
-      const existing = getHashStmt.get(id) as { sync_hash: string | null } | undefined;
+      const existingResult = await client.query(
+        `SELECT sync_hash FROM sync_contacts WHERE contact_id = $1`, [id]
+      );
+      const existing = existingResult.rows[0] as { sync_hash: string | null } | undefined;
       if (existing && existing.sync_hash === hash) {
         skipped++;
         continue;
@@ -419,7 +428,7 @@ export function syncContacts(contacts: SyncPayloadContact[]): {
       const normalizedDateAdded =
         normalizeDateValue(raw.dateAdded) ?? deriveDateFromDays(raw.daysOnWaitlist);
 
-      upsertStmt.run(
+      await client.query(upsertSql, [
         id,
         str(raw.name) || "Unknown",
         str(raw.email),
@@ -462,40 +471,41 @@ export function syncContacts(contacts: SyncPayloadContact[]): {
         str(raw.lastContact),
         str(raw.lastNote),
         hash,
-      );
+      ]);
       synced++;
     }
 
     // Delete contacts no longer in Excel
-    const allIds = db
-      .prepare(`SELECT contact_id FROM sync_contacts`)
-      .all() as { contact_id: number }[];
+    const allIdsResult = await client.query(`SELECT contact_id FROM sync_contacts`);
+    const allIds = allIdsResult.rows as { contact_id: number }[];
 
-    let deleted = 0;
-    const deleteStmt = db.prepare(`DELETE FROM sync_contacts WHERE contact_id = ?`);
     for (const row of allIds) {
       if (!incomingIds.has(row.contact_id)) {
-        deleteStmt.run(row.contact_id);
+        await client.query(`DELETE FROM sync_contacts WHERE contact_id = $1`, [row.contact_id]);
         deleted++;
       }
     }
 
-    return deleted;
-  });
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 
-  const deleted = syncAll();
   const durationMs = Date.now() - startMs;
 
   // Update sync_meta
-  db.prepare(`
+  await pool.query(`
     UPDATE sync_meta SET
-      last_sync_at = datetime('now'),
-      last_sync_rows = ?,
-      last_sync_ms = ?,
+      last_sync_at = NOW(),
+      last_sync_rows = $1,
+      last_sync_ms = $2,
       sync_status = 'ok',
       error_message = NULL
     WHERE id = 1
-  `).run(contacts.length, durationMs);
+  `, [contacts.length, durationMs]);
 
   console.log(
     `[sync-db] Sync complete: ${synced} upserted, ${skipped} unchanged, ${deleted} deleted in ${durationMs}ms`
@@ -507,14 +517,14 @@ export function syncContacts(contacts: SyncPayloadContact[]): {
 /**
  * Record a sync error in sync_meta.
  */
-export function recordSyncError(error: string): void {
-  const db = getDatabase();
-  db.prepare(`
+export async function recordSyncError(error: string): Promise<void> {
+  const pool = getPool();
+  await pool.query(`
     UPDATE sync_meta SET
       sync_status = 'error',
-      error_message = ?
+      error_message = $1
     WHERE id = 1
-  `).run(error);
+  `, [error]);
 }
 
 // ============================================================================
@@ -525,51 +535,51 @@ export function recordSyncError(error: string): void {
  * Get all contacts from the sync cache.
  * Returns them in the same shape the frontend expects.
  */
-export function getAllSyncContacts(): SyncContact[] {
-  const db = getDatabase();
-  const rows = db.prepare(`
+export async function getAllSyncContacts(): Promise<SyncContact[]> {
+  const pool = getPool();
+  const result = await pool.query(`
     SELECT
-      contact_id as contactId,
+      contact_id AS "contactId",
       name, email, phone, status,
-      status_code as statusCode,
-      service_requested as serviceRequested,
-      days_on_waitlist as daysOnWaitlist,
-      date_added as dateAdded,
-      assigned_to as assignedTo,
-      requesting_for as requestingFor,
-      reason_for_seeking as reasonForSeeking,
-      reason_for_therapy as reasonForTherapy,
-      detailed_reason as detailedReason,
-      form_completed_by as formCompletedBy,
+      status_code AS "statusCode",
+      service_requested AS "serviceRequested",
+      days_on_waitlist AS "daysOnWaitlist",
+      date_added AS "dateAdded",
+      assigned_to AS "assignedTo",
+      requesting_for AS "requestingFor",
+      reason_for_seeking AS "reasonForSeeking",
+      reason_for_therapy AS "reasonForTherapy",
+      detailed_reason AS "detailedReason",
+      form_completed_by AS "formCompletedBy",
       modality,
-      referral_source as referralSource,
-      prior_services as priorServices,
-      prior_provider as priorProvider,
-      preferred_contact as preferredContact,
+      referral_source AS "referralSource",
+      prior_services AS "priorServices",
+      prior_provider AS "priorProvider",
+      preferred_contact AS "preferredContact",
       custody, flags, priority,
-      insurance_payer as insurancePayer,
-      insurance_plan as insurancePlan,
-      insurance_id as insuranceId,
-      insurance_status as insuranceStatus,
-      referral_auth as referralAuth,
-      referral_status as referralStatus,
-      patient_dob as patientDob,
+      insurance_payer AS "insurancePayer",
+      insurance_plan AS "insurancePlan",
+      insurance_id AS "insuranceId",
+      insurance_status AS "insuranceStatus",
+      referral_auth AS "referralAuth",
+      referral_status AS "referralStatus",
+      patient_dob AS "patientDob",
       gender, age,
-      street_address as streetAddress,
+      street_address AS "streetAddress",
       city, state,
-      zip_code as zipCode,
+      zip_code AS "zipCode",
       county,
-      rfs_link as rfsLink,
-      document_link as documentLink,
-      last_contact as lastContact,
-      last_note as lastNote,
-      synced_at as syncedAt,
-      sync_hash as syncHash
+      rfs_link AS "rfsLink",
+      document_link AS "documentLink",
+      last_contact AS "lastContact",
+      last_note AS "lastNote",
+      synced_at AS "syncedAt",
+      sync_hash AS "syncHash"
     FROM sync_contacts
     ORDER BY name ASC
-  `).all() as SyncContact[];
+  `);
 
-  return rows;
+  return result.rows as SyncContact[];
 }
 
 // ============================================================================
@@ -653,9 +663,9 @@ export type WaitlistExportRow = Record<(typeof WAITLIST_EXPORT_COLUMNS)[number],
  * - No nested objects or arrays
  * - Sorted by date_added ASC, contact_id ASC (oldest first, deterministic)
  */
-export function getWaitlistExportData(): { total: number; generatedAt: string; columns: readonly string[]; rows: WaitlistExportRow[] } {
-  const db = getDatabase();
-  const rows = db.prepare(`
+export async function getWaitlistExportData(): Promise<{ total: number; generatedAt: string; columns: readonly string[]; rows: WaitlistExportRow[] }> {
+  const pool = getPool();
+  const result = await pool.query(`
     SELECT
       contact_id, name, email, phone,
       status, status_code,
@@ -673,7 +683,9 @@ export function getWaitlistExportData(): { total: number; generatedAt: string; c
       synced_at
     FROM sync_contacts
     ORDER BY date_added ASC, contact_id ASC
-  `).all() as Record<string, unknown>[];
+  `);
+
+  const rows = result.rows as Record<string, unknown>[];
 
   const now = new Date();
   now.setHours(0, 0, 0, 0);
@@ -766,68 +778,70 @@ export function getWaitlistExportData(): { total: number; generatedAt: string; c
 /**
  * Get a single contact by ID from the sync cache.
  */
-export function getSyncContactById(contactId: number): SyncContact | null {
-  const db = getDatabase();
-  const row = db.prepare(`
+export async function getSyncContactById(contactId: number): Promise<SyncContact | null> {
+  const pool = getPool();
+  const result = await pool.query(`
     SELECT
-      contact_id as contactId,
+      contact_id AS "contactId",
       name, email, phone, status,
-      status_code as statusCode,
-      service_requested as serviceRequested,
-      days_on_waitlist as daysOnWaitlist,
-      date_added as dateAdded,
-      assigned_to as assignedTo,
-      requesting_for as requestingFor,
-      reason_for_seeking as reasonForSeeking,
-      reason_for_therapy as reasonForTherapy,
-      detailed_reason as detailedReason,
-      form_completed_by as formCompletedBy,
+      status_code AS "statusCode",
+      service_requested AS "serviceRequested",
+      days_on_waitlist AS "daysOnWaitlist",
+      date_added AS "dateAdded",
+      assigned_to AS "assignedTo",
+      requesting_for AS "requestingFor",
+      reason_for_seeking AS "reasonForSeeking",
+      reason_for_therapy AS "reasonForTherapy",
+      detailed_reason AS "detailedReason",
+      form_completed_by AS "formCompletedBy",
       modality,
-      referral_source as referralSource,
-      prior_services as priorServices,
-      prior_provider as priorProvider,
-      preferred_contact as preferredContact,
+      referral_source AS "referralSource",
+      prior_services AS "priorServices",
+      prior_provider AS "priorProvider",
+      preferred_contact AS "preferredContact",
       custody, flags, priority,
-      insurance_payer as insurancePayer,
-      insurance_plan as insurancePlan,
-      insurance_id as insuranceId,
-      insurance_status as insuranceStatus,
-      referral_auth as referralAuth,
-      referral_status as referralStatus,
-      patient_dob as patientDob,
+      insurance_payer AS "insurancePayer",
+      insurance_plan AS "insurancePlan",
+      insurance_id AS "insuranceId",
+      insurance_status AS "insuranceStatus",
+      referral_auth AS "referralAuth",
+      referral_status AS "referralStatus",
+      patient_dob AS "patientDob",
       gender, age,
-      street_address as streetAddress,
+      street_address AS "streetAddress",
       city, state,
-      zip_code as zipCode,
+      zip_code AS "zipCode",
       county,
-      rfs_link as rfsLink,
-      document_link as documentLink,
-      last_contact as lastContact,
-      last_note as lastNote,
-      synced_at as syncedAt,
-      sync_hash as syncHash
+      rfs_link AS "rfsLink",
+      document_link AS "documentLink",
+      last_contact AS "lastContact",
+      last_note AS "lastNote",
+      synced_at AS "syncedAt",
+      sync_hash AS "syncHash"
     FROM sync_contacts
-    WHERE contact_id = ?
-  `).get(contactId) as SyncContact | undefined;
+    WHERE contact_id = $1
+  `, [contactId]);
 
-  return row || null;
+  return (result.rows[0] as SyncContact) || null;
 }
 
 /**
  * Get sync health metadata.
  */
-export function getSyncMeta(): SyncMeta {
-  const db = getDatabase();
-  const row = db.prepare(`
+export async function getSyncMeta(): Promise<SyncMeta> {
+  const pool = getPool();
+  const result = await pool.query(`
     SELECT
-      last_sync_at as lastSyncAt,
-      last_sync_rows as lastSyncRows,
-      last_sync_ms as lastSyncMs,
-      sync_status as syncStatus,
-      error_message as errorMessage
+      last_sync_at AS "lastSyncAt",
+      last_sync_rows AS "lastSyncRows",
+      last_sync_ms AS "lastSyncMs",
+      sync_status AS "syncStatus",
+      error_message AS "errorMessage"
     FROM sync_meta
     WHERE id = 1
-  `).get() as SyncMeta | undefined;
+  `);
+
+  const row = result.rows[0] as SyncMeta | undefined;
 
   if (!row) {
     return {
@@ -854,25 +868,25 @@ export function getSyncMeta(): SyncMeta {
 /**
  * Get distinct staff members from sync cache.
  */
-export function getSyncStaffList(): string[] {
-  const db = getDatabase();
-  const rows = db.prepare(`
+export async function getSyncStaffList(): Promise<string[]> {
+  const pool = getPool();
+  const result = await pool.query(`
     SELECT DISTINCT assigned_to
     FROM sync_contacts
     WHERE assigned_to IS NOT NULL AND assigned_to != ''
     ORDER BY assigned_to ASC
-  `).all() as { assigned_to: string }[];
+  `);
 
-  return rows.map((r) => r.assigned_to);
+  return (result.rows as { assigned_to: string }[]).map((r) => r.assigned_to);
 }
 
 /**
  * Get sync contact count (quick check if sync has data).
  */
-export function getSyncContactCount(): number {
-  const db = getDatabase();
-  const row = db.prepare(`SELECT COUNT(*) as count FROM sync_contacts`).get() as { count: number };
-  return row.count;
+export async function getSyncContactCount(): Promise<number> {
+  const pool = getPool();
+  const result = await pool.query(`SELECT COUNT(*) AS "count" FROM sync_contacts`);
+  return parseInt(result.rows[0].count, 10);
 }
 
 // ============================================================================
@@ -883,19 +897,19 @@ export function getSyncContactCount(): number {
  * Generate a unique contact_id for direct-intake contacts.
  * Uses 900_000+ range to avoid collision with n8n-sourced IDs (typically < 100k).
  */
-export function generateIntakeContactId(): number {
-  const db = getDatabase();
-  const row = db.prepare(
-    `SELECT MAX(contact_id) as maxId FROM sync_contacts WHERE contact_id >= 900000`
-  ).get() as { maxId: number | null };
-  return (row.maxId ?? 899999) + 1;
+export async function generateIntakeContactId(): Promise<number> {
+  const pool = getPool();
+  const result = await pool.query(
+    `SELECT MAX(contact_id) AS "maxId" FROM sync_contacts WHERE contact_id >= 900000`
+  );
+  return (result.rows[0]?.maxId ?? 899999) + 1;
 }
 
 /**
  * Insert a new contact created via /api/intake.
  * Writes directly to sync_contacts with full structured fields — no n8n, no Excel.
  */
-export function insertIntakeContact(fields: {
+export async function insertIntakeContact(fields: {
   contactId: number;
   name: string;
   email?: string | null;
@@ -929,11 +943,11 @@ export function insertIntakeContact(fields: {
   state?: string | null;
   zipCode?: string | null;
   county?: string | null;
-}): void {
-  const db = getDatabase();
+}): Promise<void> {
+  const pool = getPool();
   const today = new Date().toISOString().split("T")[0];
 
-  db.prepare(`
+  await pool.query(`
     INSERT INTO sync_contacts (
       contact_id, name, email, phone,
       status, status_code, service_requested,
@@ -952,55 +966,55 @@ export function insertIntakeContact(fields: {
       last_contact, last_note,
       synced_at, sync_hash
     ) VALUES (
-      ?, ?, ?, ?,
-      'New -- No Outreach', 100, ?,
-      ?, 0, NULL,
+      $1, $2, $3, $4,
+      'New -- No Outreach', 100, $5,
+      $6, 0, NULL,
 
-      ?, ?, ?, ?,
-      ?, ?, ?, ?,
-      ?, ?, ?, ?, ?,
+      $7, $8, $9, $10,
+      $11, $12, $13, $14,
+      $15, $16, $17, $18, $19,
 
-      ?, ?, ?,
+      $20, $21, $22,
 
-      ?, ?,
+      $23, $24,
 
-      ?, ?, ?, ?, ?,
+      $25, $26, $27, $28, $29,
 
-      ?, ?,
-      datetime('now'), ?
+      $30, $31,
+      NOW(), $32
     )
     ON CONFLICT(contact_id) DO UPDATE SET
-      name = excluded.name,
-      email = COALESCE(excluded.email, sync_contacts.email),
-      phone = COALESCE(excluded.phone, sync_contacts.phone),
-      service_requested = COALESCE(excluded.service_requested, sync_contacts.service_requested),
-      requesting_for = COALESCE(excluded.requesting_for, sync_contacts.requesting_for),
-      reason_for_seeking = COALESCE(excluded.reason_for_seeking, sync_contacts.reason_for_seeking),
-      reason_for_therapy = COALESCE(excluded.reason_for_therapy, sync_contacts.reason_for_therapy),
-      detailed_reason = COALESCE(excluded.detailed_reason, sync_contacts.detailed_reason),
-      form_completed_by = COALESCE(excluded.form_completed_by, sync_contacts.form_completed_by),
-      modality = COALESCE(excluded.modality, sync_contacts.modality),
-      referral_source = COALESCE(excluded.referral_source, sync_contacts.referral_source),
-      prior_services = COALESCE(excluded.prior_services, sync_contacts.prior_services),
-      prior_provider = COALESCE(excluded.prior_provider, sync_contacts.prior_provider),
-      preferred_contact = COALESCE(excluded.preferred_contact, sync_contacts.preferred_contact),
-      insurance_payer = COALESCE(excluded.insurance_payer, sync_contacts.insurance_payer),
-      insurance_plan = COALESCE(excluded.insurance_plan, sync_contacts.insurance_plan),
-      insurance_id = COALESCE(excluded.insurance_id, sync_contacts.insurance_id),
-      patient_dob = COALESCE(excluded.patient_dob, sync_contacts.patient_dob),
-      gender = COALESCE(excluded.gender, sync_contacts.gender),
-      street_address = COALESCE(excluded.street_address, sync_contacts.street_address),
-      city = COALESCE(excluded.city, sync_contacts.city),
-      state = COALESCE(excluded.state, sync_contacts.state),
-      zip_code = COALESCE(excluded.zip_code, sync_contacts.zip_code),
-      county = COALESCE(excluded.county, sync_contacts.county),
+      name = EXCLUDED.name,
+      email = COALESCE(EXCLUDED.email, sync_contacts.email),
+      phone = COALESCE(EXCLUDED.phone, sync_contacts.phone),
+      service_requested = COALESCE(EXCLUDED.service_requested, sync_contacts.service_requested),
+      requesting_for = COALESCE(EXCLUDED.requesting_for, sync_contacts.requesting_for),
+      reason_for_seeking = COALESCE(EXCLUDED.reason_for_seeking, sync_contacts.reason_for_seeking),
+      reason_for_therapy = COALESCE(EXCLUDED.reason_for_therapy, sync_contacts.reason_for_therapy),
+      detailed_reason = COALESCE(EXCLUDED.detailed_reason, sync_contacts.detailed_reason),
+      form_completed_by = COALESCE(EXCLUDED.form_completed_by, sync_contacts.form_completed_by),
+      modality = COALESCE(EXCLUDED.modality, sync_contacts.modality),
+      referral_source = COALESCE(EXCLUDED.referral_source, sync_contacts.referral_source),
+      prior_services = COALESCE(EXCLUDED.prior_services, sync_contacts.prior_services),
+      prior_provider = COALESCE(EXCLUDED.prior_provider, sync_contacts.prior_provider),
+      preferred_contact = COALESCE(EXCLUDED.preferred_contact, sync_contacts.preferred_contact),
+      insurance_payer = COALESCE(EXCLUDED.insurance_payer, sync_contacts.insurance_payer),
+      insurance_plan = COALESCE(EXCLUDED.insurance_plan, sync_contacts.insurance_plan),
+      insurance_id = COALESCE(EXCLUDED.insurance_id, sync_contacts.insurance_id),
+      patient_dob = COALESCE(EXCLUDED.patient_dob, sync_contacts.patient_dob),
+      gender = COALESCE(EXCLUDED.gender, sync_contacts.gender),
+      street_address = COALESCE(EXCLUDED.street_address, sync_contacts.street_address),
+      city = COALESCE(EXCLUDED.city, sync_contacts.city),
+      state = COALESCE(EXCLUDED.state, sync_contacts.state),
+      zip_code = COALESCE(EXCLUDED.zip_code, sync_contacts.zip_code),
+      county = COALESCE(EXCLUDED.county, sync_contacts.county),
       last_note = CASE
-        WHEN excluded.last_note IS NOT NULL AND sync_contacts.last_note IS NOT NULL
-        THEN sync_contacts.last_note || char(10) || excluded.last_note
-        ELSE COALESCE(excluded.last_note, sync_contacts.last_note)
+        WHEN EXCLUDED.last_note IS NOT NULL AND sync_contacts.last_note IS NOT NULL
+        THEN sync_contacts.last_note || chr(10) || EXCLUDED.last_note
+        ELSE COALESCE(EXCLUDED.last_note, sync_contacts.last_note)
       END,
-      synced_at = datetime('now')
-  `).run(
+      synced_at = NOW()
+  `, [
     fields.contactId,
     fields.name,
     fields.email || null,
@@ -1038,7 +1052,7 @@ export function insertIntakeContact(fields: {
     today,
     fields.lastNote || null,
     `intake-${fields.contactId}`,
-  );
+  ]);
 
   console.log(`[sync-db] Intake contact upserted: ${fields.contactId} (${fields.name})`);
 }
@@ -1051,40 +1065,41 @@ export function insertIntakeContact(fields: {
  * Update a contact's status in the sync cache (write-through).
  * Called before async n8n write so UI reflects change instantly.
  */
-export function updateSyncContactStatus(contactId: number, statusCode: number, status: string): void {
-  const db = getDatabase();
-  db.prepare(`
+export async function updateSyncContactStatus(contactId: number, statusCode: number, status: string): Promise<void> {
+  const pool = getPool();
+  await pool.query(`
     UPDATE sync_contacts
-    SET status_code = ?, status = ?, synced_at = datetime('now')
-    WHERE contact_id = ?
-  `).run(statusCode, status, contactId);
+    SET status_code = $1, status = $2, synced_at = NOW()
+    WHERE contact_id = $3
+  `, [statusCode, status, contactId]);
 }
 
 /**
  * Update a contact's assigned_to in the sync cache (write-through).
  */
-export function updateSyncContactAssignment(contactId: number, assignedTo: string | null): void {
-  const db = getDatabase();
-  db.prepare(`
+export async function updateSyncContactAssignment(contactId: number, assignedTo: string | null): Promise<void> {
+  const pool = getPool();
+  await pool.query(`
     UPDATE sync_contacts
-    SET assigned_to = ?, synced_at = datetime('now')
-    WHERE contact_id = ?
-  `).run(assignedTo, contactId);
+    SET assigned_to = $1, synced_at = NOW()
+    WHERE contact_id = $2
+  `, [assignedTo, contactId]);
 }
 
 /**
  * Append a note to a contact's last_note field in the sync cache (write-through).
  */
-export function appendSyncContactNote(
+export async function appendSyncContactNote(
   contactId: number,
   note: string,
   author: string,
   timestamp: string
-): void {
-  const db = getDatabase();
-  const existing = db.prepare(
-    `SELECT last_note FROM sync_contacts WHERE contact_id = ?`
-  ).get(contactId) as { last_note: string | null } | undefined;
+): Promise<void> {
+  const pool = getPool();
+  const existingResult = await pool.query(
+    `SELECT last_note FROM sync_contacts WHERE contact_id = $1`, [contactId]
+  );
+  const existing = existingResult.rows[0] as { last_note: string | null } | undefined;
 
   // Format note in CRM header format that parseNotesRobust recognizes:
   // [XX | MM/DD/YYYY, HH:MM AM]
@@ -1104,11 +1119,11 @@ export function appendSyncContactNote(
     ? `${newEntry}\n\n${existing.last_note}`
     : newEntry;
 
-  db.prepare(`
+  await pool.query(`
     UPDATE sync_contacts
-    SET last_note = ?, last_contact = ?, synced_at = datetime('now')
-    WHERE contact_id = ?
-  `).run(updated, timestamp.split("T")[0], contactId);
+    SET last_note = $1, last_contact = $2, synced_at = NOW()
+    WHERE contact_id = $3
+  `, [updated, timestamp.split("T")[0], contactId]);
 }
 
 /**
@@ -1116,14 +1131,15 @@ export function appendSyncContactNote(
  * Notes are stored as a concatenated text blob.
  * Matches by finding the noteContent substring and removing it.
  */
-export function removeSyncContactNote(
+export async function removeSyncContactNote(
   contactId: number,
   noteContent: string
-): boolean {
-  const db = getDatabase();
-  const existing = db.prepare(
-    `SELECT last_note FROM sync_contacts WHERE contact_id = ?`
-  ).get(contactId) as { last_note: string | null } | undefined;
+): Promise<boolean> {
+  const pool = getPool();
+  const existingResult = await pool.query(
+    `SELECT last_note FROM sync_contacts WHERE contact_id = $1`, [contactId]
+  );
+  const existing = existingResult.rows[0] as { last_note: string | null } | undefined;
 
   if (!existing?.last_note) return false;
 
@@ -1136,11 +1152,11 @@ export function removeSyncContactNote(
     .replace(/\n{3,}/g, "\n\n") // collapse multiple blank lines
     .trim() || null;
 
-  db.prepare(`
+  await pool.query(`
     UPDATE sync_contacts
-    SET last_note = ?, synced_at = datetime('now')
-    WHERE contact_id = ?
-  `).run(updated, contactId);
+    SET last_note = $1, synced_at = NOW()
+    WHERE contact_id = $2
+  `, [updated, contactId]);
 
   return true;
 }
@@ -1149,8 +1165,8 @@ export function removeSyncContactNote(
  * Enrich a sync contact with detailed data (from n8n contact snapshot).
  * Updates only non-null fields — preserves existing board data.
  */
-export function enrichSyncContact(contactId: number, detailed: Record<string, unknown>): void {
-  const db = getDatabase();
+export async function enrichSyncContact(contactId: number, detailed: Record<string, unknown>): Promise<void> {
+  const pool = getPool();
 
   const str = (v: unknown): string | null =>
     v !== undefined && v !== null && String(v).trim() !== "" ? String(v).trim() : null;
@@ -1161,9 +1177,10 @@ export function enrichSyncContact(contactId: number, detailed: Record<string, un
   };
 
   // Use existing waitlist days as fallback for date reconstruction if needed
-  const existing = db
-    .prepare(`SELECT days_on_waitlist as daysOnWaitlist FROM sync_contacts WHERE contact_id = ?`)
-    .get(contactId) as { daysOnWaitlist: number | null } | undefined;
+  const existingResult = await pool.query(
+    `SELECT days_on_waitlist AS "daysOnWaitlist" FROM sync_contacts WHERE contact_id = $1`, [contactId]
+  );
+  const existing = existingResult.rows[0] as { daysOnWaitlist: number | null } | undefined;
   const fallbackDays = existing?.daysOnWaitlist ?? null;
   const normalizedOrDerivedDateAdded =
     normalizeDateValue(detailed.dateAdded ?? detailed["date_added"])
@@ -1172,6 +1189,7 @@ export function enrichSyncContact(contactId: number, detailed: Record<string, un
   // Only update fields that have values in the detailed data
   const updates: string[] = [];
   const values: unknown[] = [];
+  let paramIdx = 1;
 
   const fieldMap: Array<[string, unknown]> = [
     ["email", str(detailed.email)],
@@ -1214,19 +1232,21 @@ export function enrichSyncContact(contactId: number, detailed: Record<string, un
 
   for (const [col, val] of fieldMap) {
     if (val !== null) {
-      updates.push(`${col} = ?`);
+      updates.push(`${col} = $${paramIdx}`);
       values.push(val);
+      paramIdx++;
     }
   }
 
   if (updates.length === 0) return;
 
-  updates.push("synced_at = datetime('now')");
+  updates.push(`synced_at = NOW()`);
   values.push(contactId);
 
-  db.prepare(
-    `UPDATE sync_contacts SET ${updates.join(", ")} WHERE contact_id = ?`
-  ).run(...values);
+  await pool.query(
+    `UPDATE sync_contacts SET ${updates.join(", ")} WHERE contact_id = $${paramIdx}`,
+    values
+  );
 
   console.log(`[sync-db] Enriched contact ${contactId} with ${updates.length - 1} detailed fields`);
 }
@@ -1236,8 +1256,8 @@ export function enrichSyncContact(contactId: number, detailed: Record<string, un
  * Used by the manual "Sync Contact Now" feature.
  * IMPORTANT: This does NOT delete other contacts — it only upserts one row.
  */
-export function upsertSingleContact(contact: SyncPayloadContact): void {
-  const db = getDatabase();
+export async function upsertSingleContact(contact: SyncPayloadContact): Promise<void> {
+  const pool = getPool();
   const id = Number(contact.contactId);
   if (isNaN(id)) return;
 
@@ -1254,7 +1274,7 @@ export function upsertSingleContact(contact: SyncPayloadContact): void {
   const normalizedDateAdded =
     normalizeDateValue(contact.dateAdded) ?? deriveDateFromDays(contact.daysOnWaitlist);
 
-  db.prepare(`
+  await pool.query(`
     INSERT INTO sync_contacts (
       contact_id, name, email, phone, status, status_code,
       service_requested, days_on_waitlist, date_added, assigned_to,
@@ -1269,63 +1289,63 @@ export function upsertSingleContact(contact: SyncPayloadContact): void {
       last_contact, last_note,
       synced_at, sync_hash
     ) VALUES (
-      ?, ?, ?, ?, ?, ?,
-      ?, ?, ?, ?,
-      ?, ?, ?, ?,
-      ?, ?, ?, ?,
-      ?, ?, ?, ?, ?,
-      ?, ?, ?, ?,
-      ?, ?,
-      ?, ?, ?,
-      ?, ?, ?, ?, ?,
-      ?, ?,
-      ?, ?,
-      datetime('now'), ?
+      $1, $2, $3, $4, $5, $6,
+      $7, $8, $9, $10,
+      $11, $12, $13, $14,
+      $15, $16, $17, $18,
+      $19, $20, $21, $22, $23,
+      $24, $25, $26, $27,
+      $28, $29,
+      $30, $31, $32,
+      $33, $34, $35, $36, $37,
+      $38, $39,
+      $40, $41,
+      NOW(), $42
     )
     ON CONFLICT(contact_id) DO UPDATE SET
-      name = excluded.name,
-      email = excluded.email,
-      phone = excluded.phone,
-      status = excluded.status,
-      status_code = excluded.status_code,
-      service_requested = excluded.service_requested,
-      days_on_waitlist = excluded.days_on_waitlist,
-      date_added = excluded.date_added,
-      assigned_to = excluded.assigned_to,
-      requesting_for = excluded.requesting_for,
-      reason_for_seeking = excluded.reason_for_seeking,
-      reason_for_therapy = excluded.reason_for_therapy,
-      detailed_reason = excluded.detailed_reason,
-      form_completed_by = excluded.form_completed_by,
-      modality = excluded.modality,
-      referral_source = excluded.referral_source,
-      prior_services = excluded.prior_services,
-      prior_provider = excluded.prior_provider,
-      preferred_contact = excluded.preferred_contact,
-      custody = excluded.custody,
-      flags = excluded.flags,
-      priority = excluded.priority,
-      insurance_payer = excluded.insurance_payer,
-      insurance_plan = excluded.insurance_plan,
-      insurance_id = excluded.insurance_id,
-      insurance_status = excluded.insurance_status,
-      referral_auth = excluded.referral_auth,
-      referral_status = excluded.referral_status,
-      patient_dob = excluded.patient_dob,
-      gender = excluded.gender,
-      age = excluded.age,
-      street_address = excluded.street_address,
-      city = excluded.city,
-      state = excluded.state,
-      zip_code = excluded.zip_code,
-      county = excluded.county,
-      rfs_link = excluded.rfs_link,
-      document_link = excluded.document_link,
-      last_contact = excluded.last_contact,
-      last_note = CASE WHEN sync_contacts.last_note IS NOT NULL AND sync_contacts.last_note != '' THEN sync_contacts.last_note ELSE excluded.last_note END,
-      synced_at = datetime('now'),
-      sync_hash = excluded.sync_hash
-  `).run(
+      name = EXCLUDED.name,
+      email = EXCLUDED.email,
+      phone = EXCLUDED.phone,
+      status = EXCLUDED.status,
+      status_code = EXCLUDED.status_code,
+      service_requested = EXCLUDED.service_requested,
+      days_on_waitlist = EXCLUDED.days_on_waitlist,
+      date_added = EXCLUDED.date_added,
+      assigned_to = EXCLUDED.assigned_to,
+      requesting_for = EXCLUDED.requesting_for,
+      reason_for_seeking = EXCLUDED.reason_for_seeking,
+      reason_for_therapy = EXCLUDED.reason_for_therapy,
+      detailed_reason = EXCLUDED.detailed_reason,
+      form_completed_by = EXCLUDED.form_completed_by,
+      modality = EXCLUDED.modality,
+      referral_source = EXCLUDED.referral_source,
+      prior_services = EXCLUDED.prior_services,
+      prior_provider = EXCLUDED.prior_provider,
+      preferred_contact = EXCLUDED.preferred_contact,
+      custody = EXCLUDED.custody,
+      flags = EXCLUDED.flags,
+      priority = EXCLUDED.priority,
+      insurance_payer = EXCLUDED.insurance_payer,
+      insurance_plan = EXCLUDED.insurance_plan,
+      insurance_id = EXCLUDED.insurance_id,
+      insurance_status = EXCLUDED.insurance_status,
+      referral_auth = EXCLUDED.referral_auth,
+      referral_status = EXCLUDED.referral_status,
+      patient_dob = EXCLUDED.patient_dob,
+      gender = EXCLUDED.gender,
+      age = EXCLUDED.age,
+      street_address = EXCLUDED.street_address,
+      city = EXCLUDED.city,
+      state = EXCLUDED.state,
+      zip_code = EXCLUDED.zip_code,
+      county = EXCLUDED.county,
+      rfs_link = EXCLUDED.rfs_link,
+      document_link = EXCLUDED.document_link,
+      last_contact = EXCLUDED.last_contact,
+      last_note = CASE WHEN sync_contacts.last_note IS NOT NULL AND sync_contacts.last_note != '' THEN sync_contacts.last_note ELSE EXCLUDED.last_note END,
+      synced_at = NOW(),
+      sync_hash = EXCLUDED.sync_hash
+  `, [
     id,
     str(contact.name) || "Unknown",
     str(contact.email),
@@ -1368,7 +1388,7 @@ export function upsertSingleContact(contact: SyncPayloadContact): void {
     str(contact.lastContact),
     str(contact.lastNote),
     hash,
-  );
+  ]);
 
   console.log(`[sync-db] Upserted single contact ${id} (no delete of other rows)`);
 }
@@ -1389,90 +1409,91 @@ export interface FormSubmission {
 }
 
 /** Insert a submission from the existing intake flow (backwards-compatible). */
-export function insertFormSubmission(fields: {
+export async function insertFormSubmission(fields: {
   source: string;
   contactId: number;
   name: string;
   payload: unknown;
-}): void {
-  const db = getDatabase();
-  db.prepare(`
+}): Promise<void> {
+  const pool = getPool();
+  await pool.query(`
     INSERT INTO form_submissions (source, form_type, contact_id, name, payload)
-    VALUES (?, 'intake', ?, ?, ?)
-  `).run(
+    VALUES ($1, 'intake', $2, $3, $4)
+  `, [
     fields.source,
     fields.contactId,
     fields.name,
     JSON.stringify(fields.payload),
-  );
+  ]);
 }
 
 /** Insert a generic form submission (unified ingestion). */
-export function insertSubmission(fields: {
+export async function insertSubmission(fields: {
   formType: string;
   source: string;
   submittedAt?: string;
   contactId?: number | null;
   name?: string;
   data: Record<string, unknown>;
-}): number {
-  const db = getDatabase();
-  const result = db.prepare(`
+}): Promise<number> {
+  const pool = getPool();
+  const result = await pool.query(`
     INSERT INTO form_submissions (form_type, source, submitted_at, contact_id, name, payload)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING id
+  `, [
     fields.formType,
     fields.source,
     fields.submittedAt || null,
     fields.contactId ?? null,
     fields.name || "",
     JSON.stringify(fields.data),
-  );
-  return result.lastInsertRowid as number;
+  ]);
+  return result.rows[0].id as number;
 }
 
-export function getRecentSubmissions(limit: number = 50): FormSubmission[] {
-  const db = getDatabase();
-  const rows = db.prepare(`
+export async function getRecentSubmissions(limit: number = 50): Promise<FormSubmission[]> {
+  const pool = getPool();
+  const result = await pool.query(`
     SELECT
       id,
-      created_at    AS createdAt,
+      created_at    AS "createdAt",
       source,
-      form_type     AS formType,
-      submitted_at  AS submittedAt,
-      contact_id    AS contactId,
+      form_type     AS "formType",
+      submitted_at  AS "submittedAt",
+      contact_id    AS "contactId",
       name,
       payload
     FROM form_submissions
     ORDER BY created_at DESC
-    LIMIT ?
-  `).all(limit) as Array<Omit<FormSubmission, "payload"> & { payload: string }>;
+    LIMIT $1
+  `, [limit]);
 
-  return rows.map((r) => ({
+  return (result.rows as Array<Omit<FormSubmission, "payload"> & { payload: string }>).map((r) => ({
     ...r,
     payload: JSON.parse(r.payload),
   }));
 }
 
 /** Get all intake submissions for a specific contact. */
-export function getSubmissionsForContact(contactId: number): FormSubmission[] {
-  const db = getDatabase();
-  const rows = db.prepare(`
+export async function getSubmissionsForContact(contactId: number): Promise<FormSubmission[]> {
+  const pool = getPool();
+  const result = await pool.query(`
     SELECT
       id,
-      created_at    AS createdAt,
+      created_at    AS "createdAt",
       source,
-      form_type     AS formType,
-      submitted_at  AS submittedAt,
-      contact_id    AS contactId,
+      form_type     AS "formType",
+      submitted_at  AS "submittedAt",
+      contact_id    AS "contactId",
       name,
       payload
     FROM form_submissions
-    WHERE contact_id = ? AND form_type = 'intake'
+    WHERE contact_id = $1 AND form_type = 'intake'
     ORDER BY created_at DESC
-  `).all(contactId) as Array<Omit<FormSubmission, "payload"> & { payload: string }>;
+  `, [contactId]);
 
-  return rows.map((r) => ({
+  return (result.rows as Array<Omit<FormSubmission, "payload"> & { payload: string }>).map((r) => ({
     ...r,
     payload: JSON.parse(r.payload),
   }));
@@ -1517,86 +1538,20 @@ export interface MigrationContact {
 }
 
 /**
- * Insert migration contacts using INSERT OR IGNORE.
+ * Insert migration contacts using INSERT ... ON CONFLICT DO NOTHING.
  * Skips rows where contact_id already exists — safe to re-run.
  * Returns per-row results for reporting.
  */
-export function insertMigrationContacts(
+export async function insertMigrationContacts(
   contacts: MigrationContact[]
-): { migrated: number; skipped: number; errors: Array<{ contactId: number; message: string }> } {
-  const db = getDatabase();
+): Promise<{ migrated: number; skipped: number; errors: Array<{ contactId: number; message: string }> }> {
+  const pool = getPool();
+  const client = await pool.connect();
   let migrated = 0;
   let skipped = 0;
   const errors: Array<{ contactId: number; message: string }> = [];
 
-  const insertStmt = db.prepare(`
-    INSERT OR IGNORE INTO sync_contacts (
-      contact_id, name, email, phone, status, status_code,
-      service_requested, days_on_waitlist, date_added, assigned_to,
-      requesting_for, reason_for_seeking, reason_for_therapy, detailed_reason,
-      form_completed_by, modality, referral_source, prior_services,
-      prior_provider, preferred_contact, custody, flags, priority,
-      insurance_payer, insurance_plan, insurance_id, insurance_status,
-      referral_auth, referral_status,
-      patient_dob, gender, age,
-      street_address, city, state, zip_code, county,
-      rfs_link, document_link,
-      last_contact, last_note,
-      synced_at, sync_hash
-    ) VALUES (
-      @contactId, @name, @email, @phone, @status, @statusCode,
-      @serviceRequested, @daysOnWaitlist, @dateAdded, @assignedTo,
-      @requestingFor, @reasonForSeeking, @reasonForTherapy, @detailedReason,
-      @formCompletedBy, @modality, NULL, @priorServices,
-      @priorProvider, NULL, NULL, @flags, NULL,
-      @insurancePayer, @insurancePlan, @insuranceId, NULL,
-      NULL, NULL,
-      @patientDob, @gender, @age,
-      @streetAddress, @city, @state, @zipCode, NULL,
-      @rfsLink, NULL,
-      NULL, @lastNote,
-      datetime('now'), @syncHash
-    )
-  `);
-
-  const runAll = db.transaction(() => {
-    for (const c of contacts) {
-      try {
-        const result = insertStmt.run({
-          ...c,
-          syncHash: `migrate-${c.contactId}`,
-        });
-        if (result.changes > 0) migrated++;
-        else skipped++;
-      } catch (err) {
-        errors.push({
-          contactId: c.contactId,
-          message: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-  });
-
-  runAll();
-  return { migrated, skipped, errors };
-}
-
-/**
- * Merge migration contacts: insert new rows, update safe fields on existing ones.
- * NEVER overwrites CRM-native data (notes, assignments, timeline, status, etc.).
- */
-export function mergeMigrationContacts(
-  contacts: MigrationContact[]
-): { inserted: number; updated: number; skipped: number; errors: Array<{ contactId: number; message: string }> } {
-  const db = getDatabase();
-  let inserted = 0;
-  let updated = 0;
-  let skipped = 0;
-  const errors: Array<{ contactId: number; message: string }> = [];
-
-  const checkStmt = db.prepare(`SELECT contact_id FROM sync_contacts WHERE contact_id = ?`);
-
-  const insertStmt = db.prepare(`
+  const insertSql = `
     INSERT INTO sync_contacts (
       contact_id, name, email, phone, status, status_code,
       service_requested, days_on_waitlist, date_added, assigned_to,
@@ -1611,59 +1566,169 @@ export function mergeMigrationContacts(
       last_contact, last_note,
       synced_at, sync_hash
     ) VALUES (
-      @contactId, @name, @email, @phone, @status, @statusCode,
-      @serviceRequested, @daysOnWaitlist, @dateAdded, @assignedTo,
-      @requestingFor, @reasonForSeeking, @reasonForTherapy, @detailedReason,
-      @formCompletedBy, @modality, NULL, @priorServices,
-      @priorProvider, NULL, NULL, @flags, NULL,
-      @insurancePayer, @insurancePlan, @insuranceId, NULL,
+      $1, $2, $3, $4, $5, $6,
+      $7, $8, $9, $10,
+      $11, $12, $13, $14,
+      $15, $16, NULL, $17,
+      $18, NULL, NULL, $19, NULL,
+      $20, $21, $22, NULL,
       NULL, NULL,
-      @patientDob, @gender, @age,
-      @streetAddress, @city, @state, @zipCode, NULL,
-      @rfsLink, NULL,
-      NULL, @lastNote,
-      datetime('now'), @syncHash
+      $23, $24, $25,
+      $26, $27, $28, $29, NULL,
+      $30, NULL,
+      NULL, $31,
+      NOW(), $32
     )
-  `);
+    ON CONFLICT DO NOTHING
+  `;
 
-  const updateStmt = db.prepare(`
-    UPDATE sync_contacts SET
-      name = @name,
-      email = @email,
-      phone = @phone,
-      requesting_for = @requestingFor,
-      reason_for_seeking = @reasonForSeeking,
-      reason_for_therapy = @reasonForTherapy,
-      detailed_reason = @detailedReason,
-      form_completed_by = @formCompletedBy,
-      modality = @modality,
-      prior_services = @priorServices,
-      prior_provider = @priorProvider,
-      insurance_payer = @insurancePayer,
-      insurance_plan = @insurancePlan,
-      insurance_id = @insuranceId,
-      patient_dob = @patientDob,
-      gender = @gender,
-      age = @age,
-      street_address = @streetAddress,
-      city = @city,
-      state = @state,
-      zip_code = @zipCode,
-      rfs_link = @rfsLink,
-      synced_at = datetime('now')
-    WHERE contact_id = @contactId
-  `);
+  try {
+    await client.query('BEGIN');
 
-  const runAll = db.transaction(() => {
     for (const c of contacts) {
       try {
-        const existing = checkStmt.get(c.contactId);
-        if (!existing) {
-          insertStmt.run({ ...c, syncHash: `migrate-${c.contactId}` });
+        const result = await client.query(insertSql, [
+          c.contactId, c.name, c.email, c.phone, c.status, c.statusCode,
+          c.serviceRequested, c.daysOnWaitlist, c.dateAdded, c.assignedTo,
+          c.requestingFor, c.reasonForSeeking, c.reasonForTherapy, c.detailedReason,
+          c.formCompletedBy, c.modality, c.priorServices,
+          c.priorProvider, c.flags,
+          c.insurancePayer, c.insurancePlan, c.insuranceId,
+          c.patientDob, c.gender, c.age,
+          c.streetAddress, c.city, c.state, c.zipCode,
+          c.rfsLink,
+          c.lastNote,
+          `migrate-${c.contactId}`,
+        ]);
+        if (result.rowCount && result.rowCount > 0) migrated++;
+        else skipped++;
+      } catch (err) {
+        errors.push({
+          contactId: c.contactId,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  return { migrated, skipped, errors };
+}
+
+/**
+ * Merge migration contacts: insert new rows, update safe fields on existing ones.
+ * NEVER overwrites CRM-native data (notes, assignments, timeline, status, etc.).
+ */
+export async function mergeMigrationContacts(
+  contacts: MigrationContact[]
+): Promise<{ inserted: number; updated: number; skipped: number; errors: Array<{ contactId: number; message: string }> }> {
+  const pool = getPool();
+  const client = await pool.connect();
+  let inserted = 0;
+  let updated = 0;
+  let skipped = 0;
+  const errors: Array<{ contactId: number; message: string }> = [];
+
+  const insertSql = `
+    INSERT INTO sync_contacts (
+      contact_id, name, email, phone, status, status_code,
+      service_requested, days_on_waitlist, date_added, assigned_to,
+      requesting_for, reason_for_seeking, reason_for_therapy, detailed_reason,
+      form_completed_by, modality, referral_source, prior_services,
+      prior_provider, preferred_contact, custody, flags, priority,
+      insurance_payer, insurance_plan, insurance_id, insurance_status,
+      referral_auth, referral_status,
+      patient_dob, gender, age,
+      street_address, city, state, zip_code, county,
+      rfs_link, document_link,
+      last_contact, last_note,
+      synced_at, sync_hash
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6,
+      $7, $8, $9, $10,
+      $11, $12, $13, $14,
+      $15, $16, NULL, $17,
+      $18, NULL, NULL, $19, NULL,
+      $20, $21, $22, NULL,
+      NULL, NULL,
+      $23, $24, $25,
+      $26, $27, $28, $29, NULL,
+      $30, NULL,
+      NULL, $31,
+      NOW(), $32
+    )
+  `;
+
+  const updateSql = `
+    UPDATE sync_contacts SET
+      name = $1,
+      email = $2,
+      phone = $3,
+      requesting_for = $4,
+      reason_for_seeking = $5,
+      reason_for_therapy = $6,
+      detailed_reason = $7,
+      form_completed_by = $8,
+      modality = $9,
+      prior_services = $10,
+      prior_provider = $11,
+      insurance_payer = $12,
+      insurance_plan = $13,
+      insurance_id = $14,
+      patient_dob = $15,
+      gender = $16,
+      age = $17,
+      street_address = $18,
+      city = $19,
+      state = $20,
+      zip_code = $21,
+      rfs_link = $22,
+      synced_at = NOW()
+    WHERE contact_id = $23
+  `;
+
+  try {
+    await client.query('BEGIN');
+
+    for (const c of contacts) {
+      try {
+        const checkResult = await client.query(
+          `SELECT contact_id FROM sync_contacts WHERE contact_id = $1`, [c.contactId]
+        );
+        if (checkResult.rows.length === 0) {
+          await client.query(insertSql, [
+            c.contactId, c.name, c.email, c.phone, c.status, c.statusCode,
+            c.serviceRequested, c.daysOnWaitlist, c.dateAdded, c.assignedTo,
+            c.requestingFor, c.reasonForSeeking, c.reasonForTherapy, c.detailedReason,
+            c.formCompletedBy, c.modality, c.priorServices,
+            c.priorProvider, c.flags,
+            c.insurancePayer, c.insurancePlan, c.insuranceId,
+            c.patientDob, c.gender, c.age,
+            c.streetAddress, c.city, c.state, c.zipCode,
+            c.rfsLink,
+            c.lastNote,
+            `migrate-${c.contactId}`,
+          ]);
           inserted++;
         } else {
-          const result = updateStmt.run(c);
-          if (result.changes > 0) updated++;
+          const result = await client.query(updateSql, [
+            c.name, c.email, c.phone,
+            c.requestingFor, c.reasonForSeeking, c.reasonForTherapy,
+            c.detailedReason, c.formCompletedBy, c.modality,
+            c.priorServices, c.priorProvider,
+            c.insurancePayer, c.insurancePlan, c.insuranceId,
+            c.patientDob, c.gender, c.age,
+            c.streetAddress, c.city, c.state, c.zipCode,
+            c.rfsLink,
+            c.contactId,
+          ]);
+          if (result.rowCount && result.rowCount > 0) updated++;
           else skipped++;
         }
       } catch (err) {
@@ -1673,9 +1738,15 @@ export function mergeMigrationContacts(
         });
       }
     }
-  });
 
-  runAll();
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+
   return { inserted, updated, skipped, errors };
 }
 
@@ -1684,16 +1755,17 @@ export function mergeMigrationContacts(
  * Updates status, notes, assignments — everything. Production is truth.
  * Safe to run repeatedly (idempotent via ON CONFLICT upsert).
  */
-export function fullSyncMigrationContacts(
+export async function fullSyncMigrationContacts(
   contacts: MigrationContact[]
-): { inserted: number; updated: number; unchanged: number; errors: Array<{ contactId: number; message: string }> } {
-  const db = getDatabase();
+): Promise<{ inserted: number; updated: number; unchanged: number; errors: Array<{ contactId: number; message: string }> }> {
+  const pool = getPool();
+  const client = await pool.connect();
   let inserted = 0;
   let updated = 0;
   let unchanged = 0;
   const errors: Array<{ contactId: number; message: string }> = [];
 
-  const upsertStmt = db.prepare(`
+  const upsertSql = `
     INSERT INTO sync_contacts (
       contact_id, name, email, phone, status, status_code,
       service_requested, days_on_waitlist, date_added, assigned_to,
@@ -1708,67 +1780,82 @@ export function fullSyncMigrationContacts(
       last_contact, last_note,
       synced_at, sync_hash
     ) VALUES (
-      @contactId, @name, @email, @phone, @status, @statusCode,
-      @serviceRequested, @daysOnWaitlist, @dateAdded, @assignedTo,
-      @requestingFor, @reasonForSeeking, @reasonForTherapy, @detailedReason,
-      @formCompletedBy, @modality, NULL, @priorServices,
-      @priorProvider, NULL, NULL, @flags, NULL,
-      @insurancePayer, @insurancePlan, @insuranceId, NULL,
+      $1, $2, $3, $4, $5, $6,
+      $7, $8, $9, $10,
+      $11, $12, $13, $14,
+      $15, $16, NULL, $17,
+      $18, NULL, NULL, $19, NULL,
+      $20, $21, $22, NULL,
       NULL, NULL,
-      @patientDob, @gender, @age,
-      @streetAddress, @city, @state, @zipCode, NULL,
-      @rfsLink, NULL,
-      NULL, @lastNote,
-      datetime('now'), @syncHash
+      $23, $24, $25,
+      $26, $27, $28, $29, NULL,
+      $30, NULL,
+      NULL, $31,
+      NOW(), $32
     )
     ON CONFLICT(contact_id) DO UPDATE SET
-      name = excluded.name,
-      email = excluded.email,
-      phone = excluded.phone,
-      status = excluded.status,
-      status_code = excluded.status_code,
-      service_requested = excluded.service_requested,
-      days_on_waitlist = excluded.days_on_waitlist,
-      date_added = excluded.date_added,
-      assigned_to = excluded.assigned_to,
-      requesting_for = excluded.requesting_for,
-      reason_for_seeking = excluded.reason_for_seeking,
-      reason_for_therapy = excluded.reason_for_therapy,
-      detailed_reason = excluded.detailed_reason,
-      form_completed_by = excluded.form_completed_by,
-      modality = excluded.modality,
-      prior_services = excluded.prior_services,
-      prior_provider = excluded.prior_provider,
-      flags = excluded.flags,
-      insurance_payer = excluded.insurance_payer,
-      insurance_plan = excluded.insurance_plan,
-      insurance_id = excluded.insurance_id,
-      patient_dob = excluded.patient_dob,
-      gender = excluded.gender,
-      age = excluded.age,
-      street_address = excluded.street_address,
-      city = excluded.city,
-      state = excluded.state,
-      zip_code = excluded.zip_code,
-      rfs_link = excluded.rfs_link,
-      last_note = excluded.last_note,
-      synced_at = datetime('now'),
-      sync_hash = excluded.sync_hash
-  `);
+      name = EXCLUDED.name,
+      email = EXCLUDED.email,
+      phone = EXCLUDED.phone,
+      status = EXCLUDED.status,
+      status_code = EXCLUDED.status_code,
+      service_requested = EXCLUDED.service_requested,
+      days_on_waitlist = EXCLUDED.days_on_waitlist,
+      date_added = EXCLUDED.date_added,
+      assigned_to = EXCLUDED.assigned_to,
+      requesting_for = EXCLUDED.requesting_for,
+      reason_for_seeking = EXCLUDED.reason_for_seeking,
+      reason_for_therapy = EXCLUDED.reason_for_therapy,
+      detailed_reason = EXCLUDED.detailed_reason,
+      form_completed_by = EXCLUDED.form_completed_by,
+      modality = EXCLUDED.modality,
+      prior_services = EXCLUDED.prior_services,
+      prior_provider = EXCLUDED.prior_provider,
+      flags = EXCLUDED.flags,
+      insurance_payer = EXCLUDED.insurance_payer,
+      insurance_plan = EXCLUDED.insurance_plan,
+      insurance_id = EXCLUDED.insurance_id,
+      patient_dob = EXCLUDED.patient_dob,
+      gender = EXCLUDED.gender,
+      age = EXCLUDED.age,
+      street_address = EXCLUDED.street_address,
+      city = EXCLUDED.city,
+      state = EXCLUDED.state,
+      zip_code = EXCLUDED.zip_code,
+      rfs_link = EXCLUDED.rfs_link,
+      last_note = EXCLUDED.last_note,
+      synced_at = NOW(),
+      sync_hash = EXCLUDED.sync_hash
+  `;
 
-  const checkStmt = db.prepare(`SELECT sync_hash FROM sync_contacts WHERE contact_id = ?`);
+  try {
+    await client.query('BEGIN');
 
-  const runAll = db.transaction(() => {
     for (const c of contacts) {
       try {
         const hash = `fullsync-${c.contactId}-${c.statusCode}-${(c.lastNote || "").length}`;
-        const existing = checkStmt.get(c.contactId) as { sync_hash: string | null } | undefined;
+        const checkResult = await client.query(
+          `SELECT sync_hash FROM sync_contacts WHERE contact_id = $1`, [c.contactId]
+        );
+        const existing = checkResult.rows[0] as { sync_hash: string | null } | undefined;
 
-        const result = upsertStmt.run({ ...c, syncHash: hash });
+        const result = await client.query(upsertSql, [
+          c.contactId, c.name, c.email, c.phone, c.status, c.statusCode,
+          c.serviceRequested, c.daysOnWaitlist, c.dateAdded, c.assignedTo,
+          c.requestingFor, c.reasonForSeeking, c.reasonForTherapy, c.detailedReason,
+          c.formCompletedBy, c.modality, c.priorServices,
+          c.priorProvider, c.flags,
+          c.insurancePayer, c.insurancePlan, c.insuranceId,
+          c.patientDob, c.gender, c.age,
+          c.streetAddress, c.city, c.state, c.zipCode,
+          c.rfsLink,
+          c.lastNote,
+          hash,
+        ]);
 
         if (!existing) {
           inserted++;
-        } else if (result.changes > 0) {
+        } else if (result.rowCount && result.rowCount > 0) {
           updated++;
         } else {
           unchanged++;
@@ -1780,9 +1867,15 @@ export function fullSyncMigrationContacts(
         });
       }
     }
-  });
 
-  runAll();
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+
   return { inserted, updated, unchanged, errors };
 }
 
@@ -1817,39 +1910,42 @@ const SAFE_INTAKE_FIELDS: Record<string, string> = {
  * Update only safe intake fields on an existing contact.
  * Returns the list of fields that actually changed.
  */
-export function updateContactIntakeFields(
+export async function updateContactIntakeFields(
   contactId: number,
   updates: Record<string, string | null>
-): { updated: string[]; notFound: boolean } {
-  const db = getDatabase();
+): Promise<{ updated: string[]; notFound: boolean }> {
+  const pool = getPool();
 
   // Check contact exists
-  const existing = db.prepare(
-    `SELECT contact_id FROM sync_contacts WHERE contact_id = ?`
-  ).get(contactId);
-  if (!existing) return { updated: [], notFound: true };
+  const existingResult = await pool.query(
+    `SELECT contact_id FROM sync_contacts WHERE contact_id = $1`, [contactId]
+  );
+  if (existingResult.rows.length === 0) return { updated: [], notFound: true };
 
   // Filter to only safe fields that were actually provided
   const setClauses: string[] = [];
-  const values: (string | null)[] = [];
+  const values: (string | number | null)[] = [];
   const updatedFields: string[] = [];
+  let paramIdx = 1;
 
   for (const [camelKey, value] of Object.entries(updates)) {
     const col = SAFE_INTAKE_FIELDS[camelKey];
     if (!col) continue; // skip non-safe fields silently
-    setClauses.push(`${col} = ?`);
+    setClauses.push(`${col} = $${paramIdx}`);
     values.push(value ?? null);
     updatedFields.push(camelKey);
+    paramIdx++;
   }
 
   if (setClauses.length === 0) return { updated: [], notFound: false };
 
-  setClauses.push(`synced_at = datetime('now')`);
-  values.push(contactId as any);
+  setClauses.push(`synced_at = NOW()`);
+  values.push(contactId);
 
-  db.prepare(
-    `UPDATE sync_contacts SET ${setClauses.join(", ")} WHERE contact_id = ?`
-  ).run(...values);
+  await pool.query(
+    `UPDATE sync_contacts SET ${setClauses.join(", ")} WHERE contact_id = $${paramIdx}`,
+    values
+  );
 
   return { updated: updatedFields, notFound: false };
 }
