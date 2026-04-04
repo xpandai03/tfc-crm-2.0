@@ -539,6 +539,19 @@ export default function ContactDetail() {
   });
   const contactActivities = contactActivityData?.activities || [];
 
+  // Intake submission history (multiple intakes per contact)
+  const { data: intakeHistoryData } = useQuery<{ submissions: Array<{ id: number; createdAt: string; payload: Record<string, unknown> }> }>({
+    queryKey: ["/api/intake-history", contactId],
+    queryFn: async () => {
+      const res = await fetch(`/api/intake-history/${contactId}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch intake history");
+      return res.json();
+    },
+    enabled: isValidId,
+    staleTime: 60_000,
+  });
+  const intakeSubmissions = intakeHistoryData?.submissions || [];
+
   const isContactFlagged = useMemo(() => {
     if (!flagsData?.flags || !contactId) return false;
     return flagsData.flags.some(f => f.contactId === contactId);
@@ -1428,6 +1441,58 @@ export default function ContactDetail() {
                   )}
                 </CardContent>
               </Card>
+
+              {/* Intake History — shown when contact has multiple submissions */}
+              {intakeSubmissions.length > 1 && (
+                <Card className="overflow-visible">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium flex items-center gap-2">
+                      <FileText className="h-4 w-4" />
+                      Intake History ({intakeSubmissions.length})
+                    </CardTitle>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      Multiple intake submissions for this contact
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {intakeSubmissions.map((sub, idx) => {
+                      const p = sub.payload;
+                      return (
+                        <div
+                          key={sub.id}
+                          className={cn(
+                            "rounded-md p-2.5 border text-sm space-y-1",
+                            idx === 0
+                              ? "bg-blue-50/50 dark:bg-blue-950/20 border-blue-100 dark:border-blue-900/30"
+                              : "bg-muted/30 border-border/50"
+                          )}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-muted-foreground">
+                              {idx === 0 ? "Latest Intake" : `Intake ${intakeSubmissions.length - idx}`}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">
+                              {formatDate(sub.createdAt)}
+                            </span>
+                          </div>
+                          {p.requestingFor && (
+                            <div><span className="text-muted-foreground text-xs">For:</span> <span className="font-medium">{String(p.requestingFor)}</span></div>
+                          )}
+                          {p.reasonForSeeking && (
+                            <div><span className="text-muted-foreground text-xs">Reason:</span> <span className="font-medium">{String(p.reasonForSeeking)}</span></div>
+                          )}
+                          {p.modality && (
+                            <div><span className="text-muted-foreground text-xs">Modality:</span> <span className="font-medium">{String(p.modality)}</span></div>
+                          )}
+                          {p.insurancePayer && (
+                            <div><span className="text-muted-foreground text-xs">Insurance:</span> <span className="font-medium">{String(p.insurancePayer)}</span></div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Intake Comments — CRM-only coordination notes */}
               <Card className="overflow-visible">

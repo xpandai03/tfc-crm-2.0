@@ -1454,6 +1454,30 @@ export function getRecentSubmissions(limit: number = 50): FormSubmission[] {
   }));
 }
 
+/** Get all intake submissions for a specific contact. */
+export function getSubmissionsForContact(contactId: number): FormSubmission[] {
+  const db = getDatabase();
+  const rows = db.prepare(`
+    SELECT
+      id,
+      created_at    AS createdAt,
+      source,
+      form_type     AS formType,
+      submitted_at  AS submittedAt,
+      contact_id    AS contactId,
+      name,
+      payload
+    FROM form_submissions
+    WHERE contact_id = ? AND form_type = 'intake'
+    ORDER BY created_at DESC
+  `).all(contactId) as Array<Omit<FormSubmission, "payload"> & { payload: string }>;
+
+  return rows.map((r) => ({
+    ...r,
+    payload: JSON.parse(r.payload),
+  }));
+}
+
 // ============================================================================
 // Migration Operations (one-time Excel → CRM import)
 // ============================================================================
