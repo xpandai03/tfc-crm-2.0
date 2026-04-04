@@ -5,7 +5,7 @@
  * This is NOT a debug log — only human-relevant actions are recorded.
  */
 
-import { getDatabase } from "../reminders/db";
+import { getPool } from "../db/pool";
 
 // ============================================================================
 // Types
@@ -48,20 +48,21 @@ export interface Activity {
 // Table
 // ============================================================================
 
-export function initActivityTable(): void {
-  const db = getDatabase();
-  db.exec(`
+export async function initActivityTable(): Promise<void> {
+  const pool = getPool();
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS activity_log (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      id            SERIAL PRIMARY KEY,
       type          TEXT NOT NULL,
       actor_email   TEXT NOT NULL,
       entity_type   TEXT NOT NULL,
       entity_id     TEXT,
       entity_name   TEXT,
       metadata      TEXT NOT NULL DEFAULT '{}',
-      created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at    TEXT NOT NULL DEFAULT (NOW())
     );
-
+  `);
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_activity_log_created
       ON activity_log(created_at DESC);
   `);
@@ -71,20 +72,20 @@ export function initActivityTable(): void {
 // Write
 // ============================================================================
 
-export function logActivity(params: LogActivityParams): void {
+export async function logActivity(params: LogActivityParams): Promise<void> {
   try {
-    const db = getDatabase();
-    db.prepare(`
+    const pool = getPool();
+    await pool.query(`
       INSERT INTO activity_log (type, actor_email, entity_type, entity_id, entity_name, metadata)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(
+      VALUES ($1, $2, $3, $4, $5, $6)
+    `, [
       params.type,
       params.actorEmail,
       params.entityType,
       params.entityId ?? null,
       params.entityName ?? null,
       JSON.stringify(params.metadata ?? {}),
-    );
+    ]);
   } catch (err) {
     // Activity logging must never break the primary action
     console.error("[activity] Failed to log event:", err);
@@ -95,24 +96,24 @@ export function logActivity(params: LogActivityParams): void {
 // Read
 // ============================================================================
 
-export function getRecentActivity(limit: number = 100): Activity[] {
-  const db = getDatabase();
-  const rows = db.prepare(`
+export async function getRecentActivity(limit: number = 100): Promise<Activity[]> {
+  const pool = getPool();
+  const { rows } = await pool.query(`
     SELECT
       id,
       type,
-      actor_email   AS actorEmail,
-      entity_type   AS entityType,
-      entity_id     AS entityId,
-      entity_name   AS entityName,
+      actor_email   AS "actorEmail",
+      entity_type   AS "entityType",
+      entity_id     AS "entityId",
+      entity_name   AS "entityName",
       metadata,
-      created_at    AS createdAt
+      created_at    AS "createdAt"
     FROM activity_log
     ORDER BY created_at DESC
-    LIMIT ?
-  `).all(limit) as Array<Omit<Activity, "metadata" | "summary"> & { metadata: string }>;
+    LIMIT $1
+  `, [limit]);
 
-  return rows.map((r) => {
+  return (rows as Array<Omit<Activity, "metadata" | "summary"> & { metadata: string }>).map((r) => {
     const meta = JSON.parse(r.metadata || "{}");
     return {
       ...r,
@@ -128,25 +129,25 @@ export function getRecentActivity(limit: number = 100): Activity[] {
 // Contact-scoped Activity
 // ============================================================================
 
-export function getActivityForContact(contactId: number, limit: number = 50): Activity[] {
-  const db = getDatabase();
-  const rows = db.prepare(`
+export async function getActivityForContact(contactId: number, limit: number = 50): Promise<Activity[]> {
+  const pool = getPool();
+  const { rows } = await pool.query(`
     SELECT
       id,
       type,
-      actor_email   AS actorEmail,
-      entity_type   AS entityType,
-      entity_id     AS entityId,
-      entity_name   AS entityName,
+      actor_email   AS "actorEmail",
+      entity_type   AS "entityType",
+      entity_id     AS "entityId",
+      entity_name   AS "entityName",
       metadata,
-      created_at    AS createdAt
+      created_at    AS "createdAt"
     FROM activity_log
-    WHERE entity_type = 'contact' AND entity_id = ?
+    WHERE entity_type = 'contact' AND entity_id = $1
     ORDER BY created_at DESC
-    LIMIT ?
-  `).all(String(contactId), limit) as Array<Omit<Activity, "metadata" | "summary"> & { metadata: string }>;
+    LIMIT $2
+  `, [String(contactId), limit]);
 
-  return rows.map((r) => {
+  return (rows as Array<Omit<Activity, "metadata" | "summary"> & { metadata: string }>).map((r) => {
     const meta = JSON.parse(r.metadata || "{}");
     return {
       ...r,
@@ -168,18 +169,19 @@ export interface StaffActivitySummary {
 }
 
 /** Get activity counts grouped by user for the last N days. Excludes "system". */
-export function getStaffActivitySummary(days: number = 7): StaffActivitySummary[] {
-  const db = getDatabase();
-  return db.prepare(`
+export async function getStaffActivitySummary(days: number = 7): Promise<StaffActivitySummary[]> {
+  const pool = getPool();
+  const { rows } = await pool.query(`
     SELECT
       actor_email AS user,
       COUNT(*) AS count
     FROM activity_log
     WHERE actor_email != 'system'
-      AND created_at >= datetime('now', ?)
+      AND created_at >= NOW() - $1::INTERVAL
     GROUP BY actor_email
     ORDER BY count DESC
-  `).all(`-${days} days`) as StaffActivitySummary[];
+  `, [`${days} days`]);
+  return rows as StaffActivitySummary[];
 }
 
 // ============================================================================

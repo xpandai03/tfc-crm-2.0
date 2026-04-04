@@ -28,13 +28,13 @@ async function processDueReminders(): Promise<void> {
   isProcessing = true;
 
   try {
-    const dueReminders = getDueReminders();
+    const dueReminders = await getDueReminders();
 
     if (dueReminders.length === 0) {
       // Log heartbeat every 15 minutes (when minute is 0, 15, 30, or 45) so we can verify cron is alive
       const minute = new Date().getMinutes();
       if (minute % 15 === 0) {
-        const stats = getReminderStats();
+        const stats = await getReminderStats();
         console.log(`[reminder-cron] Heartbeat — no due reminders. Stats: pending=${stats.pending}, sent=${stats.sent}, failed=${stats.failed}`);
       }
       return;
@@ -49,15 +49,15 @@ async function processDueReminders(): Promise<void> {
         const result = await sendReminderEmail(reminder);
 
         if (result.success) {
-          markReminderSent(reminder.id);
+          await markReminderSent(reminder.id);
         } else {
-          markReminderFailed(reminder.id);
+          await markReminderFailed(reminder.id);
           console.warn(
             `[reminder-cron] Failed to send reminder ${reminder.id}: ${result.error}`
           );
         }
       } catch (error) {
-        markReminderFailed(reminder.id);
+        await markReminderFailed(reminder.id);
         console.error(
           `[reminder-cron] Error processing reminder ${reminder.id}:`,
           error
@@ -66,7 +66,7 @@ async function processDueReminders(): Promise<void> {
     }
 
     // Log stats after processing
-    const stats = getReminderStats();
+    const stats = await getReminderStats();
     console.log(
       `[reminder-cron] Stats: pending=${stats.pending}, sent=${stats.sent}, failed=${stats.failed}`
     );

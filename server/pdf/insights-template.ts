@@ -50,8 +50,8 @@ interface InsightsMetrics {
   staffActivity: { user: string; count: number }[];
 }
 
-export function computeInsightsMetrics(): InsightsMetrics {
-  const contacts = getAllSyncContacts();
+export async function computeInsightsMetrics(): Promise<InsightsMetrics> {
+  const contacts = await getAllSyncContacts();
   const active = contacts.filter(c => isActive(c.statusCode ?? 0));
 
   const totalActive = active.length;
@@ -109,7 +109,7 @@ export function computeInsightsMetrics(): InsightsMetrics {
     serviceTypes: sort(serviceMap),
     insuranceTypes: sort(insuranceMap).slice(0, 15),
     modalityTypes: sort(modalityMap),
-    staffActivity: getStaffActivitySummary(7),
+    staffActivity: await getStaffActivitySummary(7),
   };
 }
 
