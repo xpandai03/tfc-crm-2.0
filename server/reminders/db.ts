@@ -200,7 +200,7 @@ export async function getDueReminders(): Promise<Reminder[]> {
       sent_at AS "sentAt"
     FROM reminders
     WHERE status = 'pending'
-      AND due_at <= NOW()
+      AND due_at::timestamptz <= NOW()
       AND retry_count < 3
     ORDER BY due_at ASC
   `);

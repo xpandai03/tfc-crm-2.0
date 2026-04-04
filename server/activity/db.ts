@@ -177,7 +177,7 @@ export async function getStaffActivitySummary(days: number = 7): Promise<StaffAc
       COUNT(*) AS count
     FROM activity_log
     WHERE actor_email != 'system'
-      AND created_at >= NOW() - $1::INTERVAL
+      AND created_at::timestamptz >= NOW() - $1::INTERVAL
     GROUP BY actor_email
     ORDER BY count DESC
   `, [`${days} days`]);
