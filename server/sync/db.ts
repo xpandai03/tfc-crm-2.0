@@ -969,6 +969,37 @@ export function insertIntakeContact(fields: {
       ?, ?,
       datetime('now'), ?
     )
+    ON CONFLICT(contact_id) DO UPDATE SET
+      name = excluded.name,
+      email = COALESCE(excluded.email, sync_contacts.email),
+      phone = COALESCE(excluded.phone, sync_contacts.phone),
+      service_requested = COALESCE(excluded.service_requested, sync_contacts.service_requested),
+      requesting_for = COALESCE(excluded.requesting_for, sync_contacts.requesting_for),
+      reason_for_seeking = COALESCE(excluded.reason_for_seeking, sync_contacts.reason_for_seeking),
+      reason_for_therapy = COALESCE(excluded.reason_for_therapy, sync_contacts.reason_for_therapy),
+      detailed_reason = COALESCE(excluded.detailed_reason, sync_contacts.detailed_reason),
+      form_completed_by = COALESCE(excluded.form_completed_by, sync_contacts.form_completed_by),
+      modality = COALESCE(excluded.modality, sync_contacts.modality),
+      referral_source = COALESCE(excluded.referral_source, sync_contacts.referral_source),
+      prior_services = COALESCE(excluded.prior_services, sync_contacts.prior_services),
+      prior_provider = COALESCE(excluded.prior_provider, sync_contacts.prior_provider),
+      preferred_contact = COALESCE(excluded.preferred_contact, sync_contacts.preferred_contact),
+      insurance_payer = COALESCE(excluded.insurance_payer, sync_contacts.insurance_payer),
+      insurance_plan = COALESCE(excluded.insurance_plan, sync_contacts.insurance_plan),
+      insurance_id = COALESCE(excluded.insurance_id, sync_contacts.insurance_id),
+      patient_dob = COALESCE(excluded.patient_dob, sync_contacts.patient_dob),
+      gender = COALESCE(excluded.gender, sync_contacts.gender),
+      street_address = COALESCE(excluded.street_address, sync_contacts.street_address),
+      city = COALESCE(excluded.city, sync_contacts.city),
+      state = COALESCE(excluded.state, sync_contacts.state),
+      zip_code = COALESCE(excluded.zip_code, sync_contacts.zip_code),
+      county = COALESCE(excluded.county, sync_contacts.county),
+      last_note = CASE
+        WHEN excluded.last_note IS NOT NULL AND sync_contacts.last_note IS NOT NULL
+        THEN sync_contacts.last_note || char(10) || excluded.last_note
+        ELSE COALESCE(excluded.last_note, sync_contacts.last_note)
+      END,
+      synced_at = datetime('now')
   `).run(
     fields.contactId,
     fields.name,
@@ -1009,7 +1040,7 @@ export function insertIntakeContact(fields: {
     `intake-${fields.contactId}`,
   );
 
-  console.log(`[sync-db] Intake contact inserted: ${fields.contactId} (${fields.name})`);
+  console.log(`[sync-db] Intake contact upserted: ${fields.contactId} (${fields.name})`);
 }
 
 // ============================================================================

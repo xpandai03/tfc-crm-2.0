@@ -3491,7 +3491,6 @@ export async function registerRoutes(
         return res.status(400).json({ error: "name is required" });
       }
 
-      const contactId = generateIntakeContactId();
       const now = new Date().toISOString();
       const s = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
 
@@ -3510,6 +3509,34 @@ export async function registerRoutes(
       if (s(b.referralSource)) lines.push(`Referral: ${s(b.referralSource)}`);
       if (s(b.notes)) lines.push(`Notes: ${s(b.notes)}`);
       const lastNote = lines.join("\n");
+
+      // Dedup: check if contact already exists by email+name or phone+name
+      const email = s(b.email);
+      const phone = s(b.phone);
+      const nameNorm = b.name.trim().toLowerCase();
+      let existingId: number | null = null;
+
+      if (email && email !== "none@none.com" && email !== "none@gmail.com" && email !== "unknown@gmail.com") {
+        const match = getAllSyncContacts().find(c =>
+          c.email?.toLowerCase() === email.toLowerCase() &&
+          c.name.toLowerCase() === nameNorm
+        );
+        if (match) existingId = match.contactId;
+      }
+      if (!existingId && phone) {
+        const match = getAllSyncContacts().find(c =>
+          c.phone === phone &&
+          c.name.toLowerCase() === nameNorm
+        );
+        if (match) existingId = match.contactId;
+      }
+
+      const contactId = existingId ?? generateIntakeContactId();
+      const isUpdate = !!existingId;
+
+      if (isUpdate) {
+        console.log(`[INTAKE] Dedup match: existing contact ${contactId} for "${b.name.trim()}" (${email || phone})`);
+      }
 
       // Immutable audit log — capture raw submission before any processing
       try {
