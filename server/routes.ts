@@ -44,6 +44,7 @@ import {
   insertIntakeContact,
   insertFormSubmission,
   getRecentSubmissions,
+  getSubmissionsForContact,
   insertSubmission,
   normalizeDateValue,
   insertMigrationContacts,
@@ -3392,6 +3393,21 @@ export async function registerRoutes(
   // ============================================================================
 
   // Get all comments for a contact
+  // Get intake submissions history for a contact
+  app.get("/api/intake-history/:contactId", async (req, res) => {
+    try {
+      const contactId = parseInt(req.params.contactId, 10);
+      if (isNaN(contactId) || contactId <= 0) {
+        return res.status(400).json({ error: "Invalid contactId" });
+      }
+      const submissions = getSubmissionsForContact(contactId);
+      return res.json({ submissions });
+    } catch (error) {
+      console.error("[intake-history] Error:", error);
+      return res.status(500).json({ error: "Failed to fetch intake history" });
+    }
+  });
+
   app.get("/api/intake-comments/:contactId", async (req, res) => {
     try {
       const contactId = parseInt(req.params.contactId, 10);
