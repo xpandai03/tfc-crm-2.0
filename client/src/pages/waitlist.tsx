@@ -602,7 +602,7 @@ export default function Waitlist() {
                     title={column.label}
                     contacts={getContactsByColumn(column.id)}
                     onAddNote={handleAddNote}
-                    color={column.color as "slate" | "amber" | "purple" | "red"}
+                    color={column.color as "slate" | "amber" | "green" | "purple" | "red"}
                     className="h-[calc(100vh-220px)] min-h-[400px]"
                     currentUserEmail={user?.email}
                     isInactiveColumn={column.id === "INS"}
