@@ -1,7 +1,10 @@
 import { Link, useLocation } from "wouter";
-import { Home, Users, BarChart3, UserCheck, FileText, Activity } from "lucide-react";
+import { Home, Users, BarChart3, UserCheck, FileText, Activity, MessageCircleQuestion } from "lucide-react";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { UserMenu } from "./user-menu";
+import { useAuth } from "@/lib/auth-context";
+import { FeedbackModal } from "@/components/ui/feedback-modal";
 
 const navItems = [
   { href: "/", label: "Today", icon: Home },
@@ -14,6 +17,8 @@ const navItems = [
 
 export function TopNav() {
   const [location] = useLocation();
+  const { user } = useAuth();
+  const [showFeedback, setShowFeedback] = useState(false);
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-gray-200/60 dark:border-gray-800 bg-white/95 dark:bg-gray-950/95 backdrop-blur-sm shadow-sm">
@@ -64,10 +69,25 @@ export function TopNav() {
           </div>
         </div>
 
+        <button
+          onClick={() => setShowFeedback(true)}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors border-l pl-4 ml-2"
+          title="Send feedback or report an issue"
+        >
+          <MessageCircleQuestion className="h-4 w-4" />
+          <span className="hidden sm:inline">Feedback</span>
+        </button>
+
         <div className="flex items-center border-l pl-4 ml-2">
           <UserMenu />
         </div>
       </div>
+
+      <FeedbackModal
+        isOpen={showFeedback}
+        onClose={() => setShowFeedback(false)}
+        userEmail={user?.email || ""}
+      />
     </header>
   );
 }

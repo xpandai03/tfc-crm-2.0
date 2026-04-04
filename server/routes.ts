@@ -3072,6 +3072,108 @@ export async function registerRoutes(
     }
   });
 
+  // POST /api/feedback — User feedback with optional screenshot
+  const multer = require("multer");
+  const feedbackUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+
+  app.post("/api/feedback", feedbackUpload.single("screenshot"), async (req: any, res: any) => {
+    try {
+      const userEmail = req.user?.email || "unknown";
+      const comment = req.body?.comment?.trim();
+      if (!comment) {
+        return res.status(400).json({ error: "Comment is required" });
+      }
+
+      let context: Record<string, unknown> = {};
+      try { context = JSON.parse(req.body?.context || "{}"); } catch {}
+
+      const screenshotFile = req.file;
+      const screenshotBase64 = screenshotFile
+        ? screenshotFile.buffer.toString("base64")
+        : null;
+
+      // Store in DB
+      const pool = (await import("./db/pool")).getPool();
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS feedback_log (
+          id SERIAL PRIMARY KEY,
+          user_email TEXT NOT NULL,
+          comment TEXT NOT NULL,
+          has_screenshot BOOLEAN DEFAULT false,
+          context JSONB DEFAULT '{}',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await pool.query(
+        `INSERT INTO feedback_log (user_email, comment, has_screenshot, context) VALUES ($1, $2, $3, $4)`,
+        [userEmail, comment, !!screenshotFile, JSON.stringify(context)]
+      );
+
+      // Send admin notification email
+      try {
+        const { Resend } = await import("resend");
+        const resendKey = process.env.RESEND_API_KEY;
+        if (resendKey) {
+          const resend = new Resend(resendKey);
+          const fromEmail = process.env.EMAIL_FROM_ADDRESS || "no-reply@hipaacheck.ai";
+          const preview = comment.length > 50 ? comment.slice(0, 50) + "..." : comment;
+
+          const attachments = screenshotBase64 && screenshotFile ? [{
+            filename: screenshotFile.originalname || "screenshot.png",
+            content: screenshotBase64,
+          }] : [];
+
+          // Email to admin
+          await resend.emails.send({
+            from: `TFC CRM Feedback <${fromEmail}>`,
+            to: ["raunek@xpandai.com"],
+            subject: `[CRM Feedback] ${preview}`,
+            html: `
+              <div style="font-family: sans-serif; max-width: 600px;">
+                <h2 style="color: #1e3a5f;">CRM Feedback</h2>
+                <p><strong>From:</strong> ${userEmail}</p>
+                <p><strong>Page:</strong> ${context.pageUrl || "N/A"}</p>
+                <p><strong>Time:</strong> ${context.timestamp || new Date().toISOString()}</p>
+                <hr style="border: none; border-top: 1px solid #eee; margin: 16px 0;" />
+                <p>${comment.replace(/\n/g, "<br>")}</p>
+                ${screenshotBase64 ? '<p><em>Screenshot attached</em></p>' : ''}
+              </div>
+            `,
+            attachments,
+          });
+
+          // Confirmation email to user
+          if (userEmail !== "unknown" && userEmail.includes("@")) {
+            await resend.emails.send({
+              from: `The Family Connection <${fromEmail}>`,
+              to: [userEmail],
+              subject: "We received your feedback",
+              html: `
+                <div style="font-family: sans-serif; max-width: 600px;">
+                  <h2 style="color: #1e3a5f;">Thank you for your feedback</h2>
+                  <p>We've received your feedback and will look into it.</p>
+                  <p style="color: #666; font-size: 13px; margin-top: 24px;">
+                    <em>"${preview}"</em>
+                  </p>
+                  <hr style="border: none; border-top: 1px solid #eee; margin: 16px 0;" />
+                  <p style="color: #999; font-size: 12px;">The Family Connection CRM</p>
+                </div>
+              `,
+            });
+          }
+        }
+      } catch (emailErr) {
+        console.error("[feedback] Email send failed (non-blocking):", emailErr);
+      }
+
+      console.log(`[feedback] Received from ${userEmail}: "${comment.substring(0, 80)}"`);
+      return res.json({ success: true });
+    } catch (error) {
+      console.error("[feedback] Error:", error);
+      return res.status(500).json({ error: "Failed to submit feedback" });
+    }
+  });
+
   // GET /api/email-config - Provider list + location list for the Send Email modal
   app.get("/api/email-config", (_req, res) => {
     try {
