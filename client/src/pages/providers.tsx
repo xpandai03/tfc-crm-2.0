@@ -27,6 +27,9 @@ import {
 import type { InsuranceCategory } from "@/lib/insurance-utils";
 import { transformApiProvider, type ProviderWithInsurance } from "@/lib/provider-api";
 import { PatientMatchingModal } from "@/components/ui/patient-matching-modal";
+import { useAuth } from "@/lib/auth-context";
+import { isRestrictedUser } from "@shared/access-control";
+import { Redirect } from "wouter";
 
 /**
  * Provider data structure from the spreadsheet
@@ -777,6 +780,9 @@ function ProviderFormModal({
  * Supports editing CRM providers and creating new ones.
  */
 export default function Providers() {
+  const { user } = useAuth();
+  if (isRestrictedUser(user?.email)) return <Redirect to="/" />;
+
   const queryClient = useQueryClient();
   const [selectedProvider, setSelectedProvider] = useState<ProviderWithInsurance | null>(null);
   const [showProviderForm, setShowProviderForm] = useState(false);
@@ -872,10 +878,10 @@ export default function Providers() {
         <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 px-3 py-2 rounded-md">
           <FileText className="h-4 w-4" />
           <span>
-            This data is synced from the Provider Skills Spreadsheet.
+            Initially synced from the Provider Skills Spreadsheet. You can edit provider details or add new providers directly — changes are reflected in matching.
             {data?.lastModified && (
               <span className="ml-1">
-                Last updated: {new Date(data.lastModified).toLocaleString()}
+                Last synced: {new Date(data.lastModified).toLocaleString()}
               </span>
             )}
           </span>

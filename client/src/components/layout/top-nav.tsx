@@ -5,8 +5,9 @@ import { cn } from "@/lib/utils";
 import { UserMenu } from "./user-menu";
 import { useAuth } from "@/lib/auth-context";
 import { FeedbackModal } from "@/components/ui/feedback-modal";
+import { isRestrictedUser } from "@shared/access-control";
 
-const navItems = [
+const allNavItems = [
   { href: "/", label: "Today", icon: Home },
   { href: "/waitlist", label: "Waitlist", icon: Users },
   { href: "/insights", label: "Insights", icon: BarChart3 },
@@ -15,10 +16,16 @@ const navItems = [
   { href: "/activity", label: "Activity", icon: Activity },
 ];
 
+const GATED_HREFS = ["/insights", "/providers"];
+
 export function TopNav() {
   const [location] = useLocation();
   const { user } = useAuth();
   const [showFeedback, setShowFeedback] = useState(false);
+  const restricted = isRestrictedUser(user?.email);
+  const navItems = restricted
+    ? allNavItems.filter((item) => !GATED_HREFS.includes(item.href))
+    : allNavItems;
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-gray-200/60 dark:border-gray-800 bg-white/95 dark:bg-gray-950/95 backdrop-blur-sm shadow-sm">

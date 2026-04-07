@@ -57,6 +57,7 @@ import {
   type MigrationContact,
 } from "./sync/db";
 import { logActivity, getRecentActivity, getStaffActivitySummary, getActivityForContact } from "./activity/db";
+import { isRestrictedUser } from "@shared/access-control";
 import * as XLSX from "xlsx";
 import * as path from "path";
 
@@ -596,7 +597,17 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  
+
+  // Feature gate: block restricted users from Insights & Providers APIs
+  const GATED_API_PREFIXES = ["/api/providers", "/api/get-waitlist-summary", "/api/export/insights"];
+  app.use((req, res, next) => {
+    const email = (req as any).user?.email;
+    if (email && isRestrictedUser(email) && GATED_API_PREFIXES.some((p) => req.path.startsWith(p))) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+    next();
+  });
+
   // Get contact snapshot by contactId (ONLY)
   // Strategy:
   //   1. Look up contact in board cache/data by contactId
