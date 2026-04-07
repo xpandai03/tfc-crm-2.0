@@ -491,12 +491,13 @@ export function WaitlistListView({
                 </Button>
               </TableHead>
               <TableHead>Assigned To</TableHead>
+              <TableHead>Assigned Provider</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {sortedContacts.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
                   No contacts match the current filters
                 </TableCell>
               </TableRow>
@@ -581,6 +582,13 @@ export function WaitlistListView({
                         showUnassigned={false}
                         size="sm"
                       />
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      {contact.assignedProviderName ? (
+                        <span className="text-foreground font-medium">{contact.assignedProviderName}</span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 );

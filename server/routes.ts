@@ -25,7 +25,7 @@ import {
 } from "./therapy-notes";
 import type { TnAgentPayload, TnAgentResponse } from "./therapy-notes";
 import { saveEmailSnapshot, getEmailSnapshot, getSnapshotsForContact } from "./email-snapshots";
-import { createAssignment, getAssignmentsByContact, deleteAssignment } from "./assignments/db";
+import { createAssignment, getAssignmentsByContact, deleteAssignment, getLatestAssignmentsByAllContacts } from "./assignments/db";
 import {
   syncContacts as syncContactsToDb,
   recordSyncError,
@@ -1827,6 +1827,20 @@ export async function registerRoutes(
     }
   });
 
+  // Enrich contacts with latest assigned provider name from CRM assignments table
+  async function enrichContactsWithProvider(contacts: any[]): Promise<any[]> {
+    try {
+      const providerMap = await getLatestAssignmentsByAllContacts();
+      return contacts.map((c: any) => ({
+        ...c,
+        assignedProviderName: c.contactId ? (providerMap.get(c.contactId) ?? null) : null,
+      }));
+    } catch (err) {
+      console.warn("[BOARD] Failed to enrich contacts with provider assignments:", err);
+      return contacts;
+    }
+  }
+
   // Get waitlist board (contact rows for Kanban - uses dedicated live endpoint)
   app.post("/api/get-waitlist-board", async (_req, res) => {
     console.log("[BOARD] === REQUEST START ===");
@@ -1837,8 +1851,9 @@ export async function registerRoutes(
       try {
         const contacts = await getAllSyncContacts();
         console.log(`[BOARD] Serving ${contacts.length} contacts from sync cache`);
-        setBoardCache({ contacts: contacts as any[] });
-        return res.json({ contacts, _source: "sync" });
+        const enrichedContacts = await enrichContactsWithProvider(contacts as any[]);
+        setBoardCache({ contacts: enrichedContacts });
+        return res.json({ contacts: enrichedContacts, _source: "sync" });
       } catch (syncError) {
         console.warn("[BOARD] Sync read failed, falling through to n8n:", syncError);
       }
@@ -1933,6 +1948,9 @@ export async function registerRoutes(
               console.warn(`[BOARD] Deduplicated ${beforeCount - data.contacts.length} duplicate contacts by contactId`);
             }
 
+            // Enrich with provider assignments
+            data.contacts = await enrichContactsWithProvider(data.contacts);
+
             // Populate server-side cache for contact-snapshot lookups
             // This reduces duplicate n8n calls when navigating from list to detail view
             setBoardCache({ contacts: data.contacts });
@@ -1952,10 +1970,12 @@ export async function registerRoutes(
           return res.json({ ...data, _source: source });
         } catch (liveError) {
           console.warn("Live board fetch failed, falling back to mock:", liveError);
-          return res.json({ contacts: getMockWaitlistContacts(), _source: "fallback" });
+          const fallbackContacts = await enrichContactsWithProvider(getMockWaitlistContacts());
+          return res.json({ contacts: fallbackContacts, _source: "fallback" });
         }
       } else {
-        return res.json({ contacts: getMockWaitlistContacts(), _source: "mock" });
+        const mockContacts = await enrichContactsWithProvider(getMockWaitlistContacts());
+        return res.json({ contacts: mockContacts, _source: "mock" });
       }
     } catch (error) {
       console.error("Error fetching waitlist board:", error);

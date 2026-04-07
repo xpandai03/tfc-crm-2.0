@@ -134,6 +134,7 @@ export const waitlistContactSchema = z.object({
   modality: z.string().nullable().optional(), // Desired modality/location (for insights aggregation)
   reasonForTherapy: z.array(z.string()).optional(), // Reason(s) for seeking services (for insights aggregation)
   patientDob: z.string().nullable().optional(), // Patient date of birth (YYYY-MM-DD or MM/DD/YYYY)
+  assignedProviderName: z.string().nullable().optional(), // Latest assigned provider name (from contact_provider_assignments)
 });
 
 export type WaitlistContact = z.infer<typeof waitlistContactSchema>;

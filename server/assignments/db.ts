@@ -159,3 +159,25 @@ export async function deleteAssignment(assignmentId: number): Promise<boolean> {
   }
   return (result.rowCount ?? 0) > 0;
 }
+
+/**
+ * Get the latest provider assignment for every contact that has one.
+ * Returns a map of contactId → providerName for efficient bulk lookups.
+ */
+export async function getLatestAssignmentsByAllContacts(): Promise<Map<number, string>> {
+  const pool = getPool();
+
+  const result = await pool.query(`
+    SELECT DISTINCT ON (contact_id)
+      contact_id AS "contactId",
+      provider_name AS "providerName"
+    FROM contact_provider_assignments
+    ORDER BY contact_id, assigned_at DESC
+  `);
+
+  const map = new Map<number, string>();
+  for (const row of result.rows) {
+    map.set(row.contactId as number, row.providerName as string);
+  }
+  return map;
+}
