@@ -3,7 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { OwnerBadge } from "@/components/ui/owner-badge";
 import { Link } from "wouter";
-import { Check, Shield, FileText, Video, Brain, Cake } from "lucide-react";
+import { Check, Shield, FileText, Video, Brain, Cake, UserCheck } from "lucide-react";
 import { normalizeInsurance } from "@/lib/insurance-utils";
 import type { WaitlistContact } from "@shared/schema";
 import { computeDaysWaiting } from "@/lib/days-waiting";
@@ -255,6 +255,16 @@ export function PriorityCard({
                     <span className="text-muted-foreground">Reason:</span>
                     <span className="font-medium text-foreground truncate">
                       {reasonDisplay}
+                    </span>
+                  </div>
+                )}
+                {/* Assigned Provider — only shown if assigned */}
+                {contact.assignedProviderName && (
+                  <div className="flex items-center gap-1.5 text-[10px]">
+                    <UserCheck className="h-3 w-3 text-blue-500 flex-shrink-0" />
+                    <span className="text-muted-foreground">Provider:</span>
+                    <span className="font-medium truncate text-blue-700 dark:text-blue-300">
+                      {contact.assignedProviderName}
                     </span>
                   </div>
                 )}
