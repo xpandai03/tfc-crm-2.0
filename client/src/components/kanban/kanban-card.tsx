@@ -2,7 +2,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { OwnerBadge } from "@/components/ui/owner-badge";
 import { Link } from "wouter";
-import { Calendar, Cake } from "lucide-react";
+import { Calendar, Cake, UserCheck } from "lucide-react";
 import type { WaitlistContact } from "@shared/schema";
 import { cn, formatDate, formatDob } from "@/lib/utils";
 import { isActiveStatus } from "@/lib/status-config";
@@ -107,6 +107,15 @@ export function KanbanCard({ contact, currentUserEmail }: KanbanCardProps) {
                       {dobDisplay || "---"}
                     </span>
                   </div>
+                  {contact.assignedProviderName && (
+                    <div className="flex items-center gap-1.5 text-[10px]">
+                      <UserCheck className="h-3 w-3 text-blue-500 flex-shrink-0" />
+                      <span className="text-muted-foreground">Provider:</span>
+                      <span className="font-medium truncate text-blue-700 dark:text-blue-300">
+                        {contact.assignedProviderName}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

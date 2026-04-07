@@ -9,7 +9,7 @@ import { OwnerBadge } from "@/components/ui/owner-badge";
 import { cn, formatDob } from "@/lib/utils";
 import { normalizeInsurance } from "@/lib/insurance-utils";
 import { getAttentionFlags } from "@/lib/api";
-import { Plus, Clock, Shield, Video, FileText, Brain, AlertTriangle, Cake } from "lucide-react";
+import { Plus, Clock, Shield, Video, FileText, Brain, AlertTriangle, Cake, UserCheck } from "lucide-react";
 import type { WaitlistContact } from "@shared/schema";
 import { computeDaysWaiting } from "@/lib/days-waiting";
 
@@ -237,6 +237,16 @@ export function DraggableCard({ contact, onAddNote, isDragging = false, currentU
                       {reasonDisplay || "Not collected (legacy intake)"}
                     </span>
                   </div>
+                  {/* Assigned Provider — only shown if assigned */}
+                  {contact.assignedProviderName && (
+                    <div className="flex items-center gap-1.5 text-[10px]">
+                      <UserCheck className="h-3 w-3 text-blue-500 flex-shrink-0" />
+                      <span className="text-muted-foreground">Provider:</span>
+                      <span className="font-medium truncate text-blue-700 dark:text-blue-300">
+                        {contact.assignedProviderName}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

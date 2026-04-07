@@ -1026,6 +1026,23 @@ export default function ContactDetail() {
                   )}
                 </CardContent>
               </Card>
+              <Card className="overflow-visible bg-white dark:bg-gray-800/90">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <UserPlus className="h-4 w-4" />
+                    <span className="text-xs">Assigned Provider</span>
+                  </div>
+                  {isLoading ? (
+                    <Skeleton className="h-5 w-24" />
+                  ) : latestAssignment ? (
+                    <p className="text-sm font-medium text-foreground">
+                      {latestAssignment.providerName}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">—</p>
+                  )}
+                </CardContent>
+              </Card>
             </div>
 
             {/* Activity Timeline */}
