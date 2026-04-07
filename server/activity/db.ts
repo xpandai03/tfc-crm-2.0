@@ -15,8 +15,10 @@ export type ActivityType =
   | "submission_received"
   | "status_changed"
   | "note_added"
+  | "note_deleted"
   | "contact_updated"
   | "contact_assigned"
+  | "assignment_deleted"
   | "provider_updated"
   | "email_sent"
   | "therapy_notes_started"
@@ -221,6 +223,15 @@ function formatActivitySummary(
       return `Added note to ${name}`;
     }
 
+    case "note_deleted": {
+      const preview = String(metadata.preview || "");
+      if (preview) {
+        const short = preview.length > 60 ? preview.slice(0, 60) + "…" : preview;
+        return `Deleted note from ${name}: "${short}"`;
+      }
+      return `Deleted note from ${name}`;
+    }
+
     case "contact_updated": {
       const fields = String(metadata.fields || "");
       if (fields) return `Updated intake for ${name}: ${fields}`;
@@ -233,6 +244,12 @@ function formatActivitySummary(
       if (provider) return `Assigned provider ${provider} → ${name}`;
       if (assignee) return `Assigned ${name} to ${assignee}`;
       return `Unassigned ${name}`;
+    }
+
+    case "assignment_deleted": {
+      const provider = String(metadata.providerName || "");
+      if (provider) return `Removed provider ${provider} from ${name}`;
+      return `Removed provider assignment from ${name}`;
     }
 
     case "provider_updated": {
