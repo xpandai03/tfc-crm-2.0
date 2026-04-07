@@ -4014,10 +4014,33 @@ export async function registerRoutes(
       if (isNaN(id)) {
         return res.status(400).json({ error: "id must be a number" });
       }
+
+      // Capture assignment context before deletion for audit trail
+      const pool = (await import("./db/pool")).getPool();
+      const { rows } = await pool.query(
+        `SELECT contact_id AS "contactId", contact_name AS "contactName", provider_name AS "providerName"
+         FROM contact_provider_assignments WHERE id = $1`,
+        [id]
+      );
+      const assignmentContext = rows[0] as { contactId: number; contactName: string; providerName: string } | undefined;
+
       const deleted = await deleteAssignment(id);
       if (!deleted) {
         return res.status(404).json({ error: "Assignment not found" });
       }
+
+      // Log the deletion
+      if (assignmentContext) {
+        await logActivity({
+          type: "assignment_deleted",
+          actorEmail: (req as any).user?.email || "system",
+          entityType: "contact",
+          entityId: String(assignmentContext.contactId),
+          entityName: assignmentContext.contactName,
+          metadata: { providerName: assignmentContext.providerName },
+        });
+      }
+
       return res.json({ success: true });
     } catch (error) {
       console.error("Error deleting assignment:", error);
@@ -4035,10 +4058,23 @@ export async function registerRoutes(
       if (!noteContent || typeof noteContent !== "string") {
         return res.status(400).json({ error: "noteContent (string) is required" });
       }
-      const removed = removeSyncContactNote(contactId, noteContent);
+      const removed = await removeSyncContactNote(contactId, noteContent);
       if (!removed) {
         return res.status(404).json({ error: "Note not found" });
       }
+
+      // Log the deletion
+      const contactName = (await getSyncContactById(contactId))?.name || `Contact ${contactId}`;
+      const preview = noteContent.trim().slice(0, 150);
+      await logActivity({
+        type: "note_deleted",
+        actorEmail: (req as any).user?.email || "system",
+        entityType: "contact",
+        entityId: String(contactId),
+        entityName: contactName,
+        metadata: { preview },
+      });
+
       boardCache = null;
       return res.json({ success: true });
     } catch (error) {
