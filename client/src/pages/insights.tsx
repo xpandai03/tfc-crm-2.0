@@ -12,6 +12,9 @@ import { getWaitlistSummary, getWaitlistContacts, type WithSource } from "@/lib/
 import { computeDaysWaiting } from "@/lib/days-waiting";
 import { useDataSource } from "@/lib/data-source-context";
 import { normalizeInsurance } from "@/lib/insurance-utils";
+import { useAuth } from "@/lib/auth-context";
+import { isRestrictedUser } from "@shared/access-control";
+import { Redirect } from "wouter";
 import {
   isActiveStatus,
   getColumnForStatus,
@@ -87,6 +90,9 @@ function normalizeModality(rawValue: string | null | undefined): string {
  * - Avg Wait Time: average of daysOnWaitlist across active waitlist only
  */
 export default function Insights() {
+  const { user } = useAuth();
+  if (isRestrictedUser(user?.email)) return <Redirect to="/" />;
+
   const { updateSummarySource, updateContactsSource, updateSyncTime, lastSyncTime, dataMode, summarySource, contactsSource, isContactsLive, isFullyLive } = useDataSource();
   // Drill-down navigation handler - navigates to Waitlist List View with filter applied
   const handleDrillDown = useCallback((filterType: "insurance" | "modality" | "umbrella", value: string) => {
