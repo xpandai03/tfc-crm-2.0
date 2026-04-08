@@ -837,14 +837,20 @@ export async function getHouseholdMembers(contactId: number, email: string | nul
   assignedTo: string | null;
   statusCode: string | null;
 }>> {
-  if (!email && !phone) return [];
+  // Exclude placeholder emails that would cause false household matches
+  const PLACEHOLDER_EMAILS = [
+    "none@gmail.com", "none@none.com", "unknown@gmail.com",
+    "doesnot@haveone.com", "noemail@noemail.com",
+  ];
+  const realEmail = email && !PLACEHOLDER_EMAILS.includes(email.toLowerCase().trim()) ? email : null;
+  if (!realEmail && !phone) return [];
   const pool = getPool();
   const conditions: string[] = [];
   const params: unknown[] = [contactId];
   let idx = 2;
-  if (email) {
+  if (realEmail) {
     conditions.push(`LOWER(email) = LOWER($${idx})`);
-    params.push(email);
+    params.push(realEmail);
     idx++;
   }
   if (phone) {
