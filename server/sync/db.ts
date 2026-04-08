@@ -826,6 +826,56 @@ export async function getSyncContactById(contactId: number): Promise<SyncContact
 }
 
 /**
+ * Get other contacts in the same household (matching email or phone).
+ * Returns lightweight records for the Household Members UI.
+ */
+export async function getHouseholdMembers(contactId: number, email: string | null, phone: string | null): Promise<Array<{
+  contactId: number;
+  name: string;
+  requestingFor: string | null;
+  patientDob: string | null;
+  assignedTo: string | null;
+  statusCode: string | null;
+}>> {
+  if (!email && !phone) return [];
+  const pool = getPool();
+  const conditions: string[] = [];
+  const params: unknown[] = [contactId];
+  let idx = 2;
+  if (email) {
+    conditions.push(`LOWER(email) = LOWER($${idx})`);
+    params.push(email);
+    idx++;
+  }
+  if (phone) {
+    conditions.push(`phone = $${idx}`);
+    params.push(phone);
+    idx++;
+  }
+  const result = await pool.query(`
+    SELECT
+      contact_id AS "contactId",
+      name,
+      requesting_for AS "requestingFor",
+      patient_dob AS "patientDob",
+      assigned_to AS "assignedTo",
+      status_code AS "statusCode"
+    FROM sync_contacts
+    WHERE contact_id != $1
+      AND (${conditions.join(" OR ")})
+    ORDER BY name ASC
+  `, params);
+  return result.rows as Array<{
+    contactId: number;
+    name: string;
+    requestingFor: string | null;
+    patientDob: string | null;
+    assignedTo: string | null;
+    statusCode: string | null;
+  }>;
+}
+
+/**
  * Get sync health metadata.
  */
 export async function getSyncMeta(): Promise<SyncMeta> {

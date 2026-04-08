@@ -649,6 +649,26 @@ export default function ContactDetail() {
   });
   const intakeSubmissions = intakeHistoryData?.submissions || [];
 
+  // Household members — other contacts sharing email/phone
+  const { data: householdData } = useQuery<{ members: Array<{
+    contactId: number;
+    name: string;
+    requestingFor: string | null;
+    patientDob: string | null;
+    assignedTo: string | null;
+    statusCode: string | null;
+  }> }>({
+    queryKey: ["/api/household", contactId],
+    queryFn: async () => {
+      const res = await fetch(`/api/household/${contactId}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch household");
+      return res.json();
+    },
+    enabled: isValidId,
+    staleTime: 60_000,
+  });
+  const householdMembers = householdData?.members || [];
+
   const isContactFlagged = useMemo(() => {
     if (!flagsData?.flags || !contactId) return false;
     return flagsData.flags.some(f => f.contactId === contactId);
@@ -1587,6 +1607,38 @@ export default function ContactDetail() {
                         />
                       );
                     })}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Household Members — other contacts sharing email/phone */}
+              {householdMembers.length > 0 && (
+                <Card className="overflow-visible">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium flex items-center gap-2">
+                      <Users className="h-4 w-4" />
+                      Household Members ({householdMembers.length})
+                    </CardTitle>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      Other contacts sharing this email or phone
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-1.5">
+                    {householdMembers.map((m) => (
+                      <Link key={m.contactId} href={`/contact/${m.contactId}`}>
+                        <div className="rounded-md border border-border/50 p-2.5 hover:bg-muted/40 transition-colors cursor-pointer">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-semibold text-foreground">{m.name}</span>
+                            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                          </div>
+                          <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
+                            {m.requestingFor && <span>{m.requestingFor}</span>}
+                            {m.patientDob && <span>DOB: {m.patientDob}</span>}
+                            {m.assignedTo && <span>Assigned: {m.assignedTo}</span>}
+                          </div>
+                        </div>
+                      </Link>
+                    ))}
                   </CardContent>
                 </Card>
               )}
