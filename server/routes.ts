@@ -39,6 +39,7 @@ import {
   appendSyncContactNote,
   removeSyncContactNote,
   getSubmissionById,
+  getHouseholdMembers,
   enrichSyncContact,
   upsertSingleContact,
   generateIntakeContactId,
@@ -3539,6 +3540,25 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[intake-history] Error:", error);
       return res.status(500).json({ error: "Failed to fetch intake history" });
+    }
+  });
+
+  // Household members — other contacts sharing email or phone
+  app.get("/api/household/:contactId", async (req, res) => {
+    try {
+      const contactId = parseInt(req.params.contactId, 10);
+      if (isNaN(contactId) || contactId <= 0) {
+        return res.status(400).json({ error: "Invalid contactId" });
+      }
+      const contact = await getSyncContactById(contactId);
+      if (!contact) {
+        return res.status(404).json({ error: "Contact not found" });
+      }
+      const members = await getHouseholdMembers(contactId, contact.email, contact.phone);
+      return res.json({ members });
+    } catch (error) {
+      console.error("[household] Error:", error);
+      return res.status(500).json({ error: "Failed to fetch household members" });
     }
   });
 
