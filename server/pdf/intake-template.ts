@@ -262,7 +262,15 @@ export function buildIntakeDocument(contact: SyncContact): Record<string, unknow
  * Used for per-submission PDF downloads (multi-intake support).
  */
 export function buildSubmissionDocument(submission: FormSubmission): Record<string, unknown> {
-  const p = submission.payload as Record<string, string | null | undefined>;
+  const raw = submission.payload as Record<string, unknown>;
+  // Safely coerce all payload values to string | null for the row() helper
+  const str = (key: string): string | null => {
+    const v = raw[key];
+    if (v === null || v === undefined) return null;
+    if (Array.isArray(v)) return v.filter(Boolean).join(", ") || null;
+    if (typeof v === "object") return JSON.stringify(v);
+    return String(v).trim() || null;
+  };
   const generatedAt = new Date().toLocaleDateString("en-US", {
     year: "numeric",
     month: "long",
@@ -285,8 +293,8 @@ export function buildSubmissionDocument(submission: FormSubmission): Record<stri
           width: "*",
           stack: [
             { text: submission.name, style: "contactName" },
-            ...(p.email ? [{ text: p.email, style: "contactMeta" }] : []),
-            ...(p.phone ? [{ text: p.phone, style: "contactMeta" }] : []),
+            ...(str("email") ? [{ text: str("email"), style: "contactMeta" }] : []),
+            ...(str("phone") ? [{ text: str("phone"), style: "contactMeta" }] : []),
           ],
         },
         {
@@ -295,7 +303,7 @@ export function buildSubmissionDocument(submission: FormSubmission): Record<stri
           stack: [
             { text: `Submission #${submission.id}`, style: "contactMeta" },
             ...(submittedDate ? [{ text: `Date Submitted: ${submittedDate}`, style: "contactMeta" }] : []),
-            ...(p.formCompletedBy ? [{ text: `Completed By: ${p.formCompletedBy}`, style: "contactMeta" }] : []),
+            ...(str("formCompletedBy") ? [{ text: `Completed By: ${str("formCompletedBy")}`, style: "contactMeta" }] : []),
           ],
         },
       ],
@@ -307,44 +315,46 @@ export function buildSubmissionDocument(submission: FormSubmission): Record<stri
     },
   ];
 
-  // Build sections from payload fields
+  // Build sections from payload fields using safe coercion
   const intakeFields = [
-    row("Requesting For", p.requestingFor),
-    row("Service Requested", p.serviceRequested),
-    row("Modality", p.modality),
-    row("Reason for Seeking Services", p.reasonForSeeking),
-    row("Reason for Therapy", p.reasonForTherapy),
-    row("Detailed Reason", p.detailedReason),
-    row("Form Completed By", p.formCompletedBy),
-    row("Preferred Contact", p.preferredContact),
+    row("Requesting For", str("requestingFor")),
+    row("Service Requested", str("serviceRequested")),
+    row("Modality", str("modality")),
+    row("Reason for Seeking Services", str("reasonForSeeking")),
+    row("Reason for Therapy", str("reasonForTherapy")),
+    row("Detailed Reason", str("detailedReason")),
+    row("Form Completed By", str("formCompletedBy")),
+    row("Preferred Contact", str("preferredContact")),
   ].filter((f): f is FieldRow => f !== null);
 
   const insuranceFields = [
-    row("Payer", p.insurancePayer),
-    row("Plan", p.insurancePlan),
-    row("Insurance ID", p.insuranceId),
-    row("Status", p.insuranceStatus),
+    row("Payer", str("insurancePayer")),
+    row("Plan", str("insurancePlan")),
+    row("Insurance ID", str("insuranceId")),
+    row("Status", str("insuranceStatus")),
   ].filter((f): f is FieldRow => f !== null);
 
   const referralFields = [
-    row("Referral Source", p.referralSource),
-    row("Authorization", p.referralAuth),
-    row("Referral Status", p.referralStatus),
-    row("Prior Services", p.priorServices),
-    row("Prior Provider", p.priorProvider),
+    row("Referral Source", str("referralSource")),
+    row("Authorization", str("referralAuth")),
+    row("Referral Status", str("referralStatus")),
+    row("Prior Services", str("priorServices")),
+    row("Prior Provider", str("priorProvider")),
   ].filter((f): f is FieldRow => f !== null);
 
   const demoFields = [
-    row("Date of Birth", formatDob(p.patientDob ?? null)),
-    row("Gender", p.gender),
-    row("Age", p.age),
+    row("Date of Birth", formatDob(str("patientDob"))),
+    row("Gender", str("gender")),
+    row("Age", str("age")),
   ].filter((f): f is FieldRow => f !== null);
 
   const addressParts: string[] = [];
-  if (p.streetAddress?.trim()) addressParts.push(p.streetAddress.trim());
-  const cityLine = [p.city, p.state, p.zipCode].filter((v) => v?.trim()).join(", ");
+  const streetAddr = str("streetAddress");
+  if (streetAddr) addressParts.push(streetAddr);
+  const cityLine = [str("city"), str("state"), str("zipCode")].filter(Boolean).join(", ");
   if (cityLine) addressParts.push(cityLine);
-  if (p.county?.trim()) addressParts.push(`${p.county.trim()} County`);
+  const county = str("county");
+  if (county) addressParts.push(`${county} County`);
   const addressFields = addressParts.length > 0
     ? [{ label: "Address", value: addressParts.join("\n") }]
     : [];
