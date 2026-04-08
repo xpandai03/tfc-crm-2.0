@@ -142,7 +142,14 @@ function IntakeHistoryEntry({ sub, label, isLatest, defaultExpanded }: {
           {expanded
             ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
             : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
-          <span className="text-xs font-semibold text-muted-foreground">{label}</span>
+          <div>
+            <span className="text-xs font-semibold text-foreground">{label}</span>
+            {p.patientDob && (
+              <span className="text-[10px] text-muted-foreground ml-2">
+                DOB: {String(p.patientDob)}
+              </span>
+            )}
+          </div>
         </div>
         <span className="text-[10px] text-muted-foreground">
           {formatDate(sub.createdAt)}
@@ -1560,15 +1567,16 @@ export default function ContactDetail() {
                     <p className="text-[10px] text-muted-foreground mt-0.5">
                       {intakeSubmissions.length === 1
                         ? "Intake submission for this contact"
-                        : "Multiple intake submissions for this contact"}
+                        : `${intakeSubmissions.length} persons requesting services`}
                     </p>
                   </CardHeader>
                   <CardContent className="space-y-2">
                     {intakeSubmissions.map((sub, idx) => {
                       const p = sub.payload as Record<string, unknown>;
-                      const label = idx === 0
-                        ? `Latest Intake${p.requestingFor ? ` — ${String(p.requestingFor)}` : ""}`
-                        : `Previous Intake${p.requestingFor ? ` — ${String(p.requestingFor)}` : ""}`;
+                      const requestingFor = p.requestingFor ? String(p.requestingFor) : null;
+                      const label = requestingFor
+                        ? `Person — ${requestingFor}`
+                        : `Intake #${sub.id}`;
                       return (
                         <IntakeHistoryEntry
                           key={sub.id}
