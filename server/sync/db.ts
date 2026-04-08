@@ -1499,6 +1499,28 @@ export async function getSubmissionsForContact(contactId: number): Promise<FormS
   }));
 }
 
+/** Fetch a single form submission by ID. */
+export async function getSubmissionById(submissionId: number): Promise<FormSubmission | null> {
+  const pool = getPool();
+  const result = await pool.query(`
+    SELECT
+      id,
+      created_at    AS "createdAt",
+      source,
+      form_type     AS "formType",
+      submitted_at  AS "submittedAt",
+      contact_id    AS "contactId",
+      name,
+      payload
+    FROM form_submissions
+    WHERE id = $1
+  `, [submissionId]);
+
+  if (result.rows.length === 0) return null;
+  const r = result.rows[0] as Omit<FormSubmission, "payload"> & { payload: string };
+  return { ...r, payload: JSON.parse(r.payload) };
+}
+
 // ============================================================================
 // Migration Operations (one-time Excel → CRM import)
 // ============================================================================

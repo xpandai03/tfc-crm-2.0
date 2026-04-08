@@ -38,6 +38,7 @@ import {
   updateSyncContactAssignment,
   appendSyncContactNote,
   removeSyncContactNote,
+  getSubmissionById,
   enrichSyncContact,
   upsertSingleContact,
   generateIntakeContactId,
@@ -4808,6 +4809,43 @@ export async function registerRoutes(
       stream.end();
     } catch (error) {
       console.error("[intake-pdf] Error generating PDF:", error);
+      return res.status(500).json({ error: "Failed to generate intake PDF" });
+    }
+  });
+
+  // Per-submission intake PDF (multi-intake support)
+  app.get("/api/intake/pdf/:submissionId", async (req, res) => {
+    try {
+      const submissionId = parseInt(req.params.submissionId, 10);
+      if (isNaN(submissionId)) {
+        return res.status(400).json({ error: "submissionId must be a number" });
+      }
+
+      const submission = await getSubmissionById(submissionId);
+      if (!submission) {
+        return res.status(404).json({ error: "Submission not found" });
+      }
+
+      const pdfmake = require("pdfmake");
+      pdfmake.addFonts(require("pdfmake/standard-fonts/Helvetica"));
+
+      const { buildSubmissionDocument } = await import("./pdf/intake-template");
+      const docDefinition = buildSubmissionDocument(submission);
+      const pdfDoc = pdfmake.createPdf(docDefinition);
+
+      const safeName = submission.name.replace(/[^a-zA-Z0-9\s-]/g, "").replace(/\s+/g, "-");
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="Intake-${safeName}-Sub${submission.id}.pdf"`
+      );
+      res.setHeader("Cache-Control", "no-cache");
+
+      const stream = await pdfDoc.getStream();
+      stream.pipe(res);
+      stream.end();
+    } catch (error) {
+      console.error("[intake-pdf] Error generating submission PDF:", error);
       return res.status(500).json({ error: "Failed to generate intake PDF" });
     }
   });
