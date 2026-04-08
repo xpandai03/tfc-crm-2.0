@@ -5,7 +5,7 @@
  * Uses Helvetica (PDF built-in) — no custom font files needed.
  */
 
-import type { SyncContact } from "../sync/db";
+import type { SyncContact, FormSubmission } from "../sync/db";
 
 type Content = Record<string, unknown>;
 
@@ -251,6 +251,135 @@ export function buildIntakeDocument(contact: SyncContact): Record<string, unknow
           alignment: "right" as const,
           margin: [0, 0, 40, 0],
         },
+      ],
+      margin: [0, 20, 0, 0],
+    }),
+  };
+}
+
+/**
+ * Build a PDF document from a single form submission's payload.
+ * Used for per-submission PDF downloads (multi-intake support).
+ */
+export function buildSubmissionDocument(submission: FormSubmission): Record<string, unknown> {
+  const p = submission.payload as Record<string, string | null | undefined>;
+  const generatedAt = new Date().toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+  const submittedDate = submission.submittedAt
+    ? formatDate(submission.submittedAt)
+    : formatDate(submission.createdAt);
+
+  // --- Header ---
+  const header: Content[] = [
+    { text: "THE FAMILY CONNECTION", style: "orgName", margin: [0, 0, 0, 2] },
+    { text: "Intake Submission", style: "docTitle", margin: [0, 0, 0, 12] },
+    {
+      columns: [
+        {
+          width: "*",
+          stack: [
+            { text: submission.name, style: "contactName" },
+            ...(p.email ? [{ text: p.email, style: "contactMeta" }] : []),
+            ...(p.phone ? [{ text: p.phone, style: "contactMeta" }] : []),
+          ],
+        },
+        {
+          width: "auto",
+          alignment: "right" as const,
+          stack: [
+            { text: `Submission #${submission.id}`, style: "contactMeta" },
+            ...(submittedDate ? [{ text: `Date Submitted: ${submittedDate}`, style: "contactMeta" }] : []),
+            ...(p.formCompletedBy ? [{ text: `Completed By: ${p.formCompletedBy}`, style: "contactMeta" }] : []),
+          ],
+        },
+      ],
+      margin: [0, 0, 0, 6],
+    },
+    {
+      canvas: [{ type: "line", x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1, lineColor: "#7C3AED" }],
+      margin: [0, 4, 0, 0],
+    },
+  ];
+
+  // Build sections from payload fields
+  const intakeFields = [
+    row("Requesting For", p.requestingFor),
+    row("Service Requested", p.serviceRequested),
+    row("Modality", p.modality),
+    row("Reason for Seeking Services", p.reasonForSeeking),
+    row("Reason for Therapy", p.reasonForTherapy),
+    row("Detailed Reason", p.detailedReason),
+    row("Form Completed By", p.formCompletedBy),
+    row("Preferred Contact", p.preferredContact),
+  ].filter((f): f is FieldRow => f !== null);
+
+  const insuranceFields = [
+    row("Payer", p.insurancePayer),
+    row("Plan", p.insurancePlan),
+    row("Insurance ID", p.insuranceId),
+    row("Status", p.insuranceStatus),
+  ].filter((f): f is FieldRow => f !== null);
+
+  const referralFields = [
+    row("Referral Source", p.referralSource),
+    row("Authorization", p.referralAuth),
+    row("Referral Status", p.referralStatus),
+    row("Prior Services", p.priorServices),
+    row("Prior Provider", p.priorProvider),
+  ].filter((f): f is FieldRow => f !== null);
+
+  const demoFields = [
+    row("Date of Birth", formatDob(p.patientDob ?? null)),
+    row("Gender", p.gender),
+    row("Age", p.age),
+  ].filter((f): f is FieldRow => f !== null);
+
+  const addressParts: string[] = [];
+  if (p.streetAddress?.trim()) addressParts.push(p.streetAddress.trim());
+  const cityLine = [p.city, p.state, p.zipCode].filter((v) => v?.trim()).join(", ");
+  if (cityLine) addressParts.push(cityLine);
+  if (p.county?.trim()) addressParts.push(`${p.county.trim()} County`);
+  const addressFields = addressParts.length > 0
+    ? [{ label: "Address", value: addressParts.join("\n") }]
+    : [];
+
+  const content: Content[] = [
+    ...header,
+    ...buildSection("INTAKE DETAILS", intakeFields),
+    ...buildSection("INSURANCE", insuranceFields),
+    ...buildSection("REFERRAL & HISTORY", referralFields),
+    ...buildSection("DEMOGRAPHICS", demoFields),
+    ...buildSection("ADDRESS", addressFields),
+  ];
+
+  return {
+    content,
+    defaultStyle: {
+      font: "Helvetica",
+      fontSize: 10,
+      lineHeight: 1.3,
+    },
+    styles: {
+      orgName: { fontSize: 16, bold: true, color: "#7C3AED" },
+      docTitle: { fontSize: 12, color: "#64748B" },
+      contactName: { fontSize: 14, bold: true, color: "#1E293B" },
+      contactMeta: { fontSize: 9, color: "#64748B", margin: [0, 1, 0, 0] },
+      sectionHeader: { fontSize: 10, bold: true, color: "#475569", characterSpacing: 1 },
+      fieldLabel: { fontSize: 9, bold: true, color: "#64748B" },
+      fieldValue: { fontSize: 10, color: "#1E293B" },
+    },
+    pageSize: "A4" as const,
+    pageMargins: [40, 40, 40, 60],
+    footer: (currentPage: number, pageCount: number): Content => ({
+      columns: [
+        { text: `Generated: ${generatedAt}  ·  TFC CRM 2.0`, fontSize: 7, color: "#94A3B8", margin: [40, 0, 0, 0] },
+        { text: `Page ${currentPage} of ${pageCount}`, fontSize: 7, color: "#94A3B8", alignment: "right" as const, margin: [0, 0, 40, 0] },
       ],
       margin: [0, 20, 0, 0],
     }),

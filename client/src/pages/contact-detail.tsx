@@ -31,6 +31,8 @@ import {
 } from "@/components/ui/tooltip";
 import {
   ChevronLeft,
+  ChevronDown,
+  ChevronRight,
   Mail,
   Phone,
   Calendar,
@@ -91,6 +93,94 @@ function getAuthorInitials(name: string | undefined): string {
 // Helper to generate timestamp in consistent format
 function generateTimestamp(): string {
   return new Date().toISOString();
+}
+
+/** Expandable intake submission entry with full details + PDF download */
+function IntakeHistoryEntry({ sub, label, isLatest, defaultExpanded }: {
+  sub: { id: number; createdAt: string; payload: Record<string, unknown> };
+  label: string;
+  isLatest: boolean;
+  defaultExpanded: boolean;
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const p = sub.payload;
+
+  const detailFields: { label: string; key: string }[] = [
+    { label: "For", key: "requestingFor" },
+    { label: "Reason for Seeking", key: "reasonForSeeking" },
+    { label: "Reason for Therapy", key: "reasonForTherapy" },
+    { label: "Detailed Reason", key: "detailedReason" },
+    { label: "Modality", key: "modality" },
+    { label: "Insurance", key: "insurancePayer" },
+    { label: "Insurance Plan", key: "insurancePlan" },
+    { label: "Insurance ID", key: "insuranceId" },
+    { label: "Service Requested", key: "serviceRequested" },
+    { label: "Completed By", key: "formCompletedBy" },
+    { label: "DOB", key: "patientDob" },
+    { label: "Gender", key: "gender" },
+    { label: "Referral Source", key: "referralSource" },
+    { label: "Prior Services", key: "priorServices" },
+    { label: "Prior Provider", key: "priorProvider" },
+    { label: "Preferred Contact", key: "preferredContact" },
+  ];
+
+  return (
+    <div
+      className={cn(
+        "rounded-md border text-sm",
+        isLatest
+          ? "bg-blue-50/50 dark:bg-blue-950/20 border-blue-100 dark:border-blue-900/30"
+          : "bg-muted/30 border-border/50"
+      )}
+    >
+      {/* Collapsed header — always visible */}
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center justify-between p-2.5 text-left hover:bg-muted/40 rounded-md transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          {expanded
+            ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+            : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+          <span className="text-xs font-semibold text-muted-foreground">{label}</span>
+        </div>
+        <span className="text-[10px] text-muted-foreground">
+          {formatDate(sub.createdAt)}
+        </span>
+      </button>
+
+      {/* Expanded details */}
+      {expanded && (
+        <div className="px-2.5 pb-2.5 space-y-1.5">
+          <div className="border-t border-border/40 pt-2 space-y-1">
+            {detailFields.map((f) => {
+              const val = p[f.key];
+              if (!val) return null;
+              const display = Array.isArray(val)
+                ? (val as string[]).filter(Boolean).join(", ")
+                : String(val);
+              if (!display.trim()) return null;
+              return (
+                <div key={f.key} className="flex gap-2 text-xs">
+                  <span className="text-muted-foreground shrink-0 w-28">{f.label}:</span>
+                  <span className="font-medium text-foreground">{display}</span>
+                </div>
+              );
+            })}
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full text-xs mt-2"
+            onClick={() => window.open(`/api/intake/pdf/${sub.id}`, "_blank")}
+          >
+            <Download className="h-3.5 w-3.5 mr-1.5" />
+            Download Intake PDF
+          </Button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function ContactDetail() {
@@ -1459,8 +1549,8 @@ export default function ContactDetail() {
                 </CardContent>
               </Card>
 
-              {/* Intake History — shown when contact has multiple submissions */}
-              {intakeSubmissions.length > 1 && (
+              {/* Intake History — expandable per-submission view */}
+              {intakeSubmissions.length > 0 && (
                 <Card className="overflow-visible">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm font-medium flex items-center gap-2">
@@ -1468,43 +1558,25 @@ export default function ContactDetail() {
                       Intake History ({intakeSubmissions.length})
                     </CardTitle>
                     <p className="text-[10px] text-muted-foreground mt-0.5">
-                      Multiple intake submissions for this contact
+                      {intakeSubmissions.length === 1
+                        ? "Intake submission for this contact"
+                        : "Multiple intake submissions for this contact"}
                     </p>
                   </CardHeader>
                   <CardContent className="space-y-2">
                     {intakeSubmissions.map((sub, idx) => {
-                      const p = sub.payload;
+                      const p = sub.payload as Record<string, unknown>;
+                      const label = idx === 0
+                        ? `Latest Intake${p.requestingFor ? ` — ${String(p.requestingFor)}` : ""}`
+                        : `Previous Intake${p.requestingFor ? ` — ${String(p.requestingFor)}` : ""}`;
                       return (
-                        <div
+                        <IntakeHistoryEntry
                           key={sub.id}
-                          className={cn(
-                            "rounded-md p-2.5 border text-sm space-y-1",
-                            idx === 0
-                              ? "bg-blue-50/50 dark:bg-blue-950/20 border-blue-100 dark:border-blue-900/30"
-                              : "bg-muted/30 border-border/50"
-                          )}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-semibold text-muted-foreground">
-                              {idx === 0 ? "Latest Intake" : `Intake ${intakeSubmissions.length - idx}`}
-                            </span>
-                            <span className="text-[10px] text-muted-foreground">
-                              {formatDate(sub.createdAt)}
-                            </span>
-                          </div>
-                          {p.requestingFor && (
-                            <div><span className="text-muted-foreground text-xs">For:</span> <span className="font-medium">{String(p.requestingFor)}</span></div>
-                          )}
-                          {p.reasonForSeeking && (
-                            <div><span className="text-muted-foreground text-xs">Reason:</span> <span className="font-medium">{String(p.reasonForSeeking)}</span></div>
-                          )}
-                          {p.modality && (
-                            <div><span className="text-muted-foreground text-xs">Modality:</span> <span className="font-medium">{String(p.modality)}</span></div>
-                          )}
-                          {p.insurancePayer && (
-                            <div><span className="text-muted-foreground text-xs">Insurance:</span> <span className="font-medium">{String(p.insurancePayer)}</span></div>
-                          )}
-                        </div>
+                          sub={sub}
+                          label={label}
+                          isLatest={idx === 0}
+                          defaultExpanded={intakeSubmissions.length === 1}
+                        />
                       );
                     })}
                   </CardContent>
