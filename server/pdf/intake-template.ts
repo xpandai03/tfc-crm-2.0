@@ -359,9 +359,25 @@ export function buildSubmissionDocument(submission: FormSubmission): Record<stri
     ? [{ label: "Address", value: addressParts.join("\n") }]
     : [];
 
+  // --- Section: Participants ---
+  const participantContent: Content[] = [];
+  const participants = raw.participantNames;
+  if (Array.isArray(participants) && participants.length > 0) {
+    const participantFields: FieldRow[] = [];
+    for (const [idx, p] of (participants as Array<Record<string, unknown>>).entries()) {
+      const prefix = participants.length > 1 ? `Participant ${idx + 1}` : "Participant";
+      if (p.name) participantFields.push({ label: `${prefix} — Name`, value: String(p.name) });
+      if (p.dob) participantFields.push({ label: `${prefix} — DOB`, value: String(p.dob) });
+      if (p.email) participantFields.push({ label: `${prefix} — Email`, value: String(p.email) });
+      if (p.phone) participantFields.push({ label: `${prefix} — Phone`, value: String(p.phone) });
+    }
+    participantContent.push(...buildSection("PARTICIPANTS", participantFields));
+  }
+
   const content: Content[] = [
     ...header,
     ...buildSection("INTAKE DETAILS", intakeFields),
+    ...participantContent,
     ...buildSection("INSURANCE", insuranceFields),
     ...buildSection("REFERRAL & HISTORY", referralFields),
     ...buildSection("DEMOGRAPHICS", demoFields),
