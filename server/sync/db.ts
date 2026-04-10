@@ -2027,3 +2027,68 @@ export async function updateContactIntakeFields(
 
   return { updated: updatedFields, notFound: false };
 }
+
+// ============================================================================
+// Contact Identity Field Updates (name, email, phone)
+// ============================================================================
+
+const IDENTITY_FIELDS: Record<string, string> = {
+  name: "name",
+  email: "email",
+  phone: "phone",
+};
+
+export interface IdentityChangeDetail {
+  field: string;
+  oldValue: string | null;
+  newValue: string | null;
+}
+
+/**
+ * Update identity fields (name, email, phone) on an existing contact.
+ * Returns the list of fields that actually changed with old/new values.
+ */
+export async function updateContactIdentity(
+  contactId: number,
+  updates: Record<string, string>
+): Promise<{ changes: IdentityChangeDetail[]; notFound: boolean }> {
+  const pool = getPool();
+
+  const existingResult = await pool.query(
+    `SELECT name, email, phone FROM sync_contacts WHERE contact_id = $1`,
+    [contactId]
+  );
+  if (existingResult.rows.length === 0) return { changes: [], notFound: true };
+
+  const current = existingResult.rows[0] as { name: string; email: string | null; phone: string | null };
+
+  const setClauses: string[] = [];
+  const values: (string | null)[] = [];
+  const changes: IdentityChangeDetail[] = [];
+  let paramIdx = 1;
+
+  for (const [camelKey, newValue] of Object.entries(updates)) {
+    const col = IDENTITY_FIELDS[camelKey];
+    if (!col) continue;
+    const oldValue = (current as Record<string, string | null>)[col] ?? null;
+    const trimmed = newValue?.trim() || null;
+    if (trimmed === oldValue) continue;
+
+    setClauses.push(`${col} = $${paramIdx}`);
+    values.push(trimmed);
+    changes.push({ field: camelKey, oldValue, newValue: trimmed });
+    paramIdx++;
+  }
+
+  if (setClauses.length === 0) return { changes: [], notFound: false };
+
+  setClauses.push(`synced_at = NOW()`);
+  values.push(contactId as any);
+
+  await pool.query(
+    `UPDATE sync_contacts SET ${setClauses.join(", ")} WHERE contact_id = $${paramIdx}`,
+    values
+  );
+
+  return { changes, notFound: false };
+}

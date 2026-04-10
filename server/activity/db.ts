@@ -233,6 +233,13 @@ function formatActivitySummary(
     }
 
     case "contact_updated": {
+      const identityChanges = metadata.identityChanges as Array<{ field: string; oldValue: string | null; newValue: string | null }> | undefined;
+      if (identityChanges && Array.isArray(identityChanges) && identityChanges.length > 0) {
+        const parts = identityChanges.map(
+          (c) => `${c.field}: ${c.oldValue || "(empty)"} → ${c.newValue || "(empty)"}`
+        );
+        return `Updated contact details for ${name}\n${parts.join("\n")}`;
+      }
       const fields = String(metadata.fields || "");
       if (fields) return `Updated intake for ${name}: ${fields}`;
       return `Updated intake for ${name}`;
