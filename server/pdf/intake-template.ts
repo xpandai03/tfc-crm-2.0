@@ -89,7 +89,7 @@ function buildAddressValue(contact: SyncContact): string | null {
   return parts.length > 0 ? parts.join("\n") : null;
 }
 
-export function buildIntakeDocument(contact: SyncContact): Record<string, unknown> {
+export function buildIntakeDocument(contact: SyncContact, rawPayload?: Record<string, unknown> | null): Record<string, unknown> {
   const generatedAt = new Date().toLocaleDateString("en-US", {
     year: "numeric",
     month: "long",
@@ -181,9 +181,32 @@ export function buildIntakeDocument(contact: SyncContact): Record<string, unknow
     row("Priority", contact.priority),
   ].filter((f): f is FieldRow => f !== null);
 
+  // --- Section: Participants (from raw submission payload) ---
+  const participantContent: Content[] = [];
+  if (rawPayload) {
+    const participantList = Array.isArray(rawPayload.participants)
+      ? rawPayload.participants
+      : Array.isArray(rawPayload.participantNames)
+        ? rawPayload.participantNames
+        : [];
+    if (participantList.length > 0) {
+      const participantFields: FieldRow[] = [];
+      for (const [idx, p] of (participantList as Array<Record<string, unknown>>).entries()) {
+        const prefix = participantList.length > 1 ? `Participant ${idx + 1}` : "Participant";
+        const phone = p.phoneNumber ?? p.phone;
+        if (p.name) participantFields.push({ label: `${prefix} — Name`, value: String(p.name) });
+        if (p.dob) participantFields.push({ label: `${prefix} — DOB`, value: String(p.dob) });
+        if (p.email) participantFields.push({ label: `${prefix} — Email`, value: String(p.email) });
+        if (phone) participantFields.push({ label: `${prefix} — Phone`, value: String(phone) });
+      }
+      participantContent.push(...buildSection("PARTICIPANTS", participantFields));
+    }
+  }
+
   const content: Content[] = [
     ...header,
     ...buildSection("INTAKE DETAILS", intakeFields),
+    ...participantContent,
     ...buildSection("INSURANCE", insuranceFields),
     ...buildSection("REFERRAL & HISTORY", referralFields),
     ...buildSection("DEMOGRAPHICS", demoFields),
