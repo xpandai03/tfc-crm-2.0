@@ -175,6 +175,40 @@ function IntakeHistoryEntry({ sub, label, isLatest, defaultExpanded }: {
               );
             })}
           </div>
+          {/* Participant Names — array of { name, dob, email, phone } */}
+          {Array.isArray(p.participantNames) && (p.participantNames as Array<Record<string, unknown>>).length > 0 && (
+            <div className="border-t border-border/40 pt-2 space-y-2">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Participants</span>
+              {(p.participantNames as Array<Record<string, unknown>>).map((participant, idx) => (
+                <div key={idx} className="rounded border border-border/40 bg-muted/20 p-2 space-y-0.5">
+                  {participant.name && (
+                    <div className="flex gap-2 text-xs">
+                      <span className="text-muted-foreground shrink-0 w-28">Name:</span>
+                      <span className="font-medium text-foreground">{String(participant.name)}</span>
+                    </div>
+                  )}
+                  {participant.dob && (
+                    <div className="flex gap-2 text-xs">
+                      <span className="text-muted-foreground shrink-0 w-28">DOB:</span>
+                      <span className="font-medium text-foreground">{String(participant.dob)}</span>
+                    </div>
+                  )}
+                  {participant.email && (
+                    <div className="flex gap-2 text-xs">
+                      <span className="text-muted-foreground shrink-0 w-28">Email:</span>
+                      <span className="font-medium text-foreground">{String(participant.email)}</span>
+                    </div>
+                  )}
+                  {participant.phone && (
+                    <div className="flex gap-2 text-xs">
+                      <span className="text-muted-foreground shrink-0 w-28">Phone:</span>
+                      <span className="font-medium text-foreground">{String(participant.phone)}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           <Button
             variant="outline"
             size="sm"
