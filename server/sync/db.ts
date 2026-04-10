@@ -2092,3 +2092,45 @@ export async function updateContactIdentity(
 
   return { changes, notFound: false };
 }
+
+// ============================================================================
+// Delete Contact (full cascade)
+// ============================================================================
+
+/**
+ * Permanently delete a contact and all related records.
+ * Activity log entries are preserved for audit trail.
+ */
+export async function deleteSyncContact(contactId: number): Promise<{ deleted: boolean; name: string | null }> {
+  const pool = getPool();
+
+  const existing = await pool.query(
+    `SELECT name FROM sync_contacts WHERE contact_id = $1`,
+    [contactId]
+  );
+  if (existing.rows.length === 0) return { deleted: false, name: null };
+
+  const name = (existing.rows[0] as { name: string }).name;
+
+  const relatedTables = [
+    "form_submissions",
+    "contact_provider_assignments",
+    "reminders",
+    "intake_comments",
+    "attention_flags",
+    "email_snapshots",
+    "therapy_notes_records",
+  ];
+
+  for (const table of relatedTables) {
+    try {
+      await pool.query(`DELETE FROM ${table} WHERE contact_id = $1`, [contactId]);
+    } catch (e) {
+      console.warn(`[delete-contact] Failed to clean ${table} for ${contactId}:`, e);
+    }
+  }
+
+  await pool.query(`DELETE FROM sync_contacts WHERE contact_id = $1`, [contactId]);
+
+  return { deleted: true, name };
+}

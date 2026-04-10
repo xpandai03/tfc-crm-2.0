@@ -1,4 +1,4 @@
-import { useParams, Link } from "wouter";
+import { useParams, Link, useLocation } from "wouter";
 import { computeDaysWaiting } from "@/lib/days-waiting";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect, useMemo, useRef } from "react";
@@ -22,6 +22,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import {
   Tooltip,
@@ -55,8 +63,9 @@ import {
   Pencil,
   Save,
   X,
+  Trash2,
 } from "lucide-react";
-import { getContactSnapshot, updateContactStatus, addNoteToContact, deleteNote, deleteAssignment as deleteAssignmentApi, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, syncContactFromExcel, updateContactIntake, updateContactIdentity, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
+import { getContactSnapshot, updateContactStatus, addNoteToContact, deleteNote, deleteAssignment as deleteAssignmentApi, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, syncContactFromExcel, updateContactIntake, updateContactIdentity, deleteContact, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
 import { ReminderModal } from "@/components/ui/reminder-modal";
 import { AssignProviderModal } from "@/components/ui/assign-provider-modal";
 import { SendEmailModal } from "@/components/ui/send-email-modal";
@@ -226,6 +235,7 @@ function IntakeHistoryEntry({ sub, label, isLatest, defaultExpanded }: {
 
 export default function ContactDetail() {
   const params = useParams();
+  const [, navigate] = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
@@ -353,6 +363,31 @@ export default function ContactDetail() {
     }
     updateIdentityMutation.mutate(updates);
   };
+
+  // Delete contact state
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+
+  const deleteContactMutation = useMutation({
+    mutationFn: () => deleteContact(contactId!, "delete"),
+    onSuccess: (data) => {
+      toast({
+        title: "Contact deleted",
+        description: `${data.name} has been permanently removed`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/get-waitlist-board"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
+      navigate("/waitlist");
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Failed to delete contact",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
 
   // Intake edit mode state
   const [isEditingIntake, setIsEditingIntake] = useState(false);
@@ -2131,6 +2166,20 @@ export default function ContactDetail() {
                       </Button>
                     )
                   )}
+
+                  <Separator className="my-2" />
+
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
+                    size="sm"
+                    disabled={isLoading}
+                    onClick={() => { setDeleteConfirmText(""); setShowDeleteModal(true); }}
+                    data-testid="button-delete-contact"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete Contact
+                  </Button>
                 </CardContent>
               </Card>
             </div>
@@ -2204,6 +2253,58 @@ export default function ContactDetail() {
           }
         }}
       />
+
+      {/* Delete Contact Confirmation Dialog */}
+      <Dialog open={showDeleteModal} onOpenChange={setShowDeleteModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-red-600">Delete Contact</DialogTitle>
+            <DialogDescription>
+              This will permanently delete <span className="font-semibold text-foreground">{displayName}</span> and
+              all related records (submissions, assignments, reminders, comments).
+              This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <label className="text-sm text-muted-foreground">
+              Type <span className="font-mono font-semibold text-foreground">delete</span> to confirm
+            </label>
+            <Input
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder="delete"
+              className="font-mono"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && deleteConfirmText === "delete") {
+                  deleteContactMutation.mutate();
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowDeleteModal(false)}
+              disabled={deleteContactMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleteConfirmText !== "delete" || deleteContactMutation.isPending}
+              onClick={() => deleteContactMutation.mutate()}
+            >
+              {deleteContactMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4 mr-2" />
+              )}
+              Delete Permanently
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageLayout>
   );
 }
