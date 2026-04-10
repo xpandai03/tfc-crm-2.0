@@ -4935,11 +4935,17 @@ export async function registerRoutes(
         return res.status(404).json({ error: "No intake data available for this contact" });
       }
 
+      // Fetch latest submission to get participant data from raw payload
+      const submissions = await getSubmissionsForContact(contactId);
+      const latestPayload = submissions.length > 0
+        ? (submissions[0].payload as Record<string, unknown>)
+        : null;
+
       const pdfmake = require("pdfmake");
       pdfmake.addFonts(require("pdfmake/standard-fonts/Helvetica"));
 
       const { buildIntakeDocument } = await import("./pdf/intake-template");
-      const docDefinition = buildIntakeDocument(contact);
+      const docDefinition = buildIntakeDocument(contact, latestPayload);
       const pdfDoc = pdfmake.createPdf(docDefinition);
 
       const safeName = contact.name.replace(/[^a-zA-Z0-9\s-]/g, "").replace(/\s+/g, "-");
