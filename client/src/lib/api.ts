@@ -320,6 +320,18 @@ export async function updateContactIdentity(
 }
 
 // ============================================================================
+// Contact Delete API
+// ============================================================================
+
+export async function deleteContact(
+  contactId: number,
+  confirmation: string
+): Promise<{ success: boolean; contactId: number; name: string }> {
+  const response = await apiRequest("DELETE", `/api/contact/${contactId}`, { confirmation });
+  return response.json();
+}
+
+// ============================================================================
 // Sync API
 // ============================================================================
 

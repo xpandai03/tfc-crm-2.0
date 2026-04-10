@@ -54,6 +54,7 @@ import {
   fullSyncMigrationContacts,
   updateContactIntakeFields,
   updateContactIdentity,
+  deleteSyncContact,
   getWaitlistExportData,
   WAITLIST_EXPORT_COLUMNS,
   type SyncPayloadContact,
@@ -2402,6 +2403,45 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[identity-update] Error:", error);
       return res.status(500).json({ error: "Failed to update contact identity" });
+    }
+  });
+
+  // Delete a contact and all related records
+  app.delete("/api/contact/:id", async (req, res) => {
+    try {
+      const contactId = parseInt(req.params.id, 10);
+      if (isNaN(contactId) || contactId <= 0) {
+        return res.status(400).json({ error: "Invalid contact ID" });
+      }
+
+      const { confirmation } = req.body;
+      if (confirmation !== "delete") {
+        return res.status(400).json({ error: 'Confirmation must be the word "delete"' });
+      }
+
+      const actorEmail = (req as any).user?.email || "system";
+      const result = await deleteSyncContact(contactId);
+
+      if (!result.deleted) {
+        return res.status(404).json({ error: "Contact not found", contactId });
+      }
+
+      await logActivity({
+        type: "contact_updated",
+        actorEmail,
+        entityType: "contact",
+        entityId: String(contactId),
+        entityName: result.name || "Unknown",
+        metadata: { action: "deleted", deletedName: result.name },
+      });
+
+      boardCache = null;
+
+      console.log(`[delete-contact] Contact ${contactId} ("${result.name}") deleted by ${actorEmail}`);
+      return res.json({ success: true, contactId, name: result.name });
+    } catch (error) {
+      console.error("[delete-contact] Error:", error);
+      return res.status(500).json({ error: "Failed to delete contact" });
     }
   });
 
