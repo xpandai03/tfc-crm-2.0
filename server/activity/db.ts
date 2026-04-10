@@ -17,6 +17,7 @@ export type ActivityType =
   | "note_added"
   | "note_deleted"
   | "contact_updated"
+  | "contact_deleted"
   | "contact_assigned"
   | "assignment_deleted"
   | "provider_updated"
@@ -243,6 +244,10 @@ function formatActivitySummary(
       const fields = String(metadata.fields || "");
       if (fields) return `Updated intake for ${name}: ${fields}`;
       return `Updated intake for ${name}`;
+    }
+
+    case "contact_deleted": {
+      return `Deleted contact: ${name}`;
     }
 
     case "contact_assigned": {

@@ -2427,12 +2427,12 @@ export async function registerRoutes(
       }
 
       await logActivity({
-        type: "contact_updated",
+        type: "contact_deleted",
         actorEmail,
         entityType: "contact",
         entityId: String(contactId),
         entityName: result.name || "Unknown",
-        metadata: { action: "deleted", deletedName: result.name },
+        metadata: { deletedName: result.name, contactId },
       });
 
       boardCache = null;

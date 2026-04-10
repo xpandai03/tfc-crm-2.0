@@ -359,17 +359,22 @@ export function buildSubmissionDocument(submission: FormSubmission): Record<stri
     ? [{ label: "Address", value: addressParts.join("\n") }]
     : [];
 
-  // --- Section: Participants ---
+  // --- Section: Participants (supports both "participants" and legacy "participantNames") ---
   const participantContent: Content[] = [];
-  const participants = raw.participantNames;
-  if (Array.isArray(participants) && participants.length > 0) {
+  const participantList = Array.isArray(raw.participants)
+    ? raw.participants
+    : Array.isArray(raw.participantNames)
+      ? raw.participantNames
+      : [];
+  if (participantList.length > 0) {
     const participantFields: FieldRow[] = [];
-    for (const [idx, p] of (participants as Array<Record<string, unknown>>).entries()) {
-      const prefix = participants.length > 1 ? `Participant ${idx + 1}` : "Participant";
+    for (const [idx, p] of (participantList as Array<Record<string, unknown>>).entries()) {
+      const prefix = participantList.length > 1 ? `Participant ${idx + 1}` : "Participant";
+      const phone = p.phoneNumber ?? p.phone;
       if (p.name) participantFields.push({ label: `${prefix} — Name`, value: String(p.name) });
       if (p.dob) participantFields.push({ label: `${prefix} — DOB`, value: String(p.dob) });
       if (p.email) participantFields.push({ label: `${prefix} — Email`, value: String(p.email) });
-      if (p.phone) participantFields.push({ label: `${prefix} — Phone`, value: String(p.phone) });
+      if (phone) participantFields.push({ label: `${prefix} — Phone`, value: String(phone) });
     }
     participantContent.push(...buildSection("PARTICIPANTS", participantFields));
   }

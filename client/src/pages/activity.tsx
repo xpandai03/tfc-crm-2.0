@@ -27,6 +27,8 @@ function getEventIcon(type: string) {
       return <Trash2 className="h-4 w-4 text-red-500" />;
     case "contact_updated":
       return <Pencil className="h-4 w-4 text-purple-500" />;
+    case "contact_deleted":
+      return <Trash2 className="h-4 w-4 text-red-600" />;
     case "contact_assigned":
       return <UserPlus className="h-4 w-4 text-cyan-500" />;
     case "assignment_deleted":
@@ -141,7 +143,7 @@ export default function ActivityPage() {
                       <div className="mt-0.5 flex-shrink-0">{getEventIcon(event.type)}</div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm text-foreground">
-                          {event.entityType === "contact" && event.entityId ? (
+                          {event.entityType === "contact" && event.entityId && event.type !== "contact_deleted" ? (
                             <Link
                               href={`/contact/${event.entityId}`}
                               className="hover:underline"
