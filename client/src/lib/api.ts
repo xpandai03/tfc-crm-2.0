@@ -308,6 +308,18 @@ export async function updateContactIntake(
 }
 
 // ============================================================================
+// Contact Identity Edit API
+// ============================================================================
+
+export async function updateContactIdentity(
+  contactId: number,
+  updates: { name?: string; email?: string; phone?: string }
+): Promise<{ success: boolean; contactId: number; changes: Array<{ field: string; oldValue: string | null; newValue: string | null }> }> {
+  const response = await apiRequest("PATCH", `/api/contact/${contactId}/identity`, updates);
+  return response.json();
+}
+
+// ============================================================================
 // Sync API
 // ============================================================================
 

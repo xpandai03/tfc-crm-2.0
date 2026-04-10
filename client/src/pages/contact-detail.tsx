@@ -56,7 +56,7 @@ import {
   Save,
   X,
 } from "lucide-react";
-import { getContactSnapshot, updateContactStatus, addNoteToContact, deleteNote, deleteAssignment as deleteAssignmentApi, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, syncContactFromExcel, updateContactIntake, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
+import { getContactSnapshot, updateContactStatus, addNoteToContact, deleteNote, deleteAssignment as deleteAssignmentApi, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, syncContactFromExcel, updateContactIntake, updateContactIdentity, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
 import { ReminderModal } from "@/components/ui/reminder-modal";
 import { AssignProviderModal } from "@/components/ui/assign-provider-modal";
 import { SendEmailModal } from "@/components/ui/send-email-modal";
@@ -245,6 +245,80 @@ export default function ContactDetail() {
   const [showAssignProviderModal, setShowAssignProviderModal] = useState(false);
   const [isCreatingReminder, setIsCreatingReminder] = useState(false);
   const noteTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Contact identity edit mode (name, email, phone)
+  const [isEditingIdentity, setIsEditingIdentity] = useState(false);
+  const [identityEdits, setIdentityEdits] = useState<{ name: string; email: string; phone: string }>({ name: "", email: "", phone: "" });
+  const [identityErrors, setIdentityErrors] = useState<{ name?: string; email?: string }>({});
+
+  const startEditingIdentity = () => {
+    if (!contact) return;
+    setIdentityEdits({
+      name: contact.name || "",
+      email: contact.email || "",
+      phone: contact.phone || "",
+    });
+    setIdentityErrors({});
+    setIsEditingIdentity(true);
+  };
+
+  const cancelEditingIdentity = () => {
+    setIsEditingIdentity(false);
+    setIdentityEdits({ name: "", email: "", phone: "" });
+    setIdentityErrors({});
+  };
+
+  const validateIdentityEdits = (): boolean => {
+    const errors: { name?: string; email?: string } = {};
+    if (!identityEdits.name.trim()) errors.name = "Name is required";
+    if (identityEdits.email.trim()) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(identityEdits.email.trim())) errors.email = "Invalid email format";
+    }
+    setIdentityErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const updateIdentityMutation = useMutation({
+    mutationFn: (updates: { name?: string; email?: string; phone?: string }) =>
+      updateContactIdentity(contactId!, updates),
+    onSuccess: (data) => {
+      const count = data.changes?.length || 0;
+      toast({
+        title: "Contact updated",
+        description: `${count} field(s) saved`,
+      });
+      setIsEditingIdentity(false);
+      setIdentityEdits({ name: "", email: "", phone: "" });
+      setIdentityErrors({});
+      queryClient.invalidateQueries({ queryKey: ["/api/contact", contactId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/get-waitlist-board"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activity/contact", contactId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Failed to update contact",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSaveIdentity = () => {
+    if (!contact || !validateIdentityEdits()) return;
+    const updates: { name?: string; email?: string; phone?: string } = {};
+    if (identityEdits.name.trim() !== (contact.name || "")) updates.name = identityEdits.name.trim();
+    if (identityEdits.email.trim() !== (contact.email || "")) updates.email = identityEdits.email.trim();
+    if (identityEdits.phone.trim() !== (contact.phone || "")) updates.phone = identityEdits.phone.trim();
+    if (Object.keys(updates).length === 0) {
+      toast({ title: "No changes", description: "Nothing was modified" });
+      setIsEditingIdentity(false);
+      return;
+    }
+    updateIdentityMutation.mutate(updates);
+  };
 
   // Intake edit mode state
   const [isEditingIntake, setIsEditingIntake] = useState(false);
@@ -810,7 +884,7 @@ export default function ContactDetail() {
 
       // Merge activity_log events (emails, TN, etc.) into timeline
       const activityEvents: import("@/lib/timeline").TimelineEvent[] = contactActivities
-        .filter(a => ["email_sent", "therapy_notes_started", "therapy_notes_created", "therapy_notes_failed"].includes(a.type))
+        .filter(a => ["email_sent", "therapy_notes_started", "therapy_notes_created", "therapy_notes_failed", "contact_updated"].includes(a.type))
         .map(a => ({
           id: `activity-${a.id}`,
           type: "system" as const,
@@ -1001,47 +1075,102 @@ export default function ContactDetail() {
                   )}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-4 flex-wrap">
-                      <div>
+                      <div className="flex-1 min-w-0">
                         {isLoading ? (
                           <>
                             <Skeleton className="h-8 w-48 mb-2" />
                             <Skeleton className="h-5 w-32" />
                           </>
+                        ) : isEditingIdentity ? (
+                          <div className="space-y-2">
+                            <div>
+                              <Input
+                                value={identityEdits.name}
+                                onChange={(e) => setIdentityEdits(p => ({ ...p, name: e.target.value }))}
+                                placeholder="Full name"
+                                className={cn("text-lg font-semibold h-9", identityErrors.name && "border-destructive")}
+                                autoFocus
+                                onKeyDown={(e) => { if (e.key === "Enter") handleSaveIdentity(); if (e.key === "Escape") cancelEditingIdentity(); }}
+                              />
+                              {identityErrors.name && <p className="text-xs text-destructive mt-0.5">{identityErrors.name}</p>}
+                            </div>
+                            <p className="text-muted-foreground text-sm">{serviceSubtitle}</p>
+                          </div>
                         ) : (
-                          <>
-                            <h1 className="text-2xl font-semibold text-foreground" data-testid="text-contact-name">
-                              {displayName}
-                            </h1>
+                          <div className="group/identity">
+                            <div className="flex items-center gap-2">
+                              <h1 className="text-2xl font-semibold text-foreground" data-testid="text-contact-name">
+                                {displayName}
+                              </h1>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0 opacity-0 group-hover/identity:opacity-100 transition-opacity"
+                                onClick={startEditingIdentity}
+                                title="Edit contact details"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
                             <p className="text-muted-foreground">
                               {serviceSubtitle}
                             </p>
-                          </>
+                          </div>
                         )}
                       </div>
                       {isLoading ? (
                         <Skeleton className="h-10 w-[200px]" />
                       ) : (
                         <div className="flex items-end gap-2">
-                          <div className="flex flex-col gap-1">
-                            <span className="text-xs text-muted-foreground font-medium">Workflow Status</span>
-                            <Select
-                              value={currentStatusCode.toString()}
-                              onValueChange={(val) => handleStatusChange(parseInt(val, 10))}
-                            >
-                              <SelectTrigger className="w-[200px]" data-testid="select-status">
-                                <SelectValue>
-                                  {STATUS_LABELS[currentStatusCode] || `Status ${currentStatusCode}`}
-                                </SelectValue>
-                              </SelectTrigger>
-                              <SelectContent>
-                                {Object.entries(STATUS_LABELS).map(([code, label]) => (
-                                  <SelectItem key={code} value={code}>
-                                    {code} - {label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
+                          {isEditingIdentity && (
+                            <div className="flex items-center gap-1.5">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 text-xs"
+                                onClick={cancelEditingIdentity}
+                                disabled={updateIdentityMutation.isPending}
+                              >
+                                <X className="h-3.5 w-3.5 mr-1" />
+                                Cancel
+                              </Button>
+                              <Button
+                                size="sm"
+                                className="h-8 text-xs"
+                                onClick={handleSaveIdentity}
+                                disabled={updateIdentityMutation.isPending}
+                              >
+                                {updateIdentityMutation.isPending ? (
+                                  <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                                ) : (
+                                  <Save className="h-3.5 w-3.5 mr-1" />
+                                )}
+                                Save
+                              </Button>
+                            </div>
+                          )}
+                          {!isEditingIdentity && (
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs text-muted-foreground font-medium">Workflow Status</span>
+                              <Select
+                                value={currentStatusCode.toString()}
+                                onValueChange={(val) => handleStatusChange(parseInt(val, 10))}
+                              >
+                                <SelectTrigger className="w-[200px]" data-testid="select-status">
+                                  <SelectValue>
+                                    {STATUS_LABELS[currentStatusCode] || `Status ${currentStatusCode}`}
+                                  </SelectValue>
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {Object.entries(STATUS_LABELS).map(([code, label]) => (
+                                    <SelectItem key={code} value={code}>
+                                      {code} - {label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1052,6 +1181,38 @@ export default function ContactDetail() {
                           <Skeleton className="h-5 w-32" />
                           <Skeleton className="h-5 w-28" />
                         </>
+                      ) : isEditingIdentity ? (
+                        <div className="flex flex-wrap gap-3">
+                          <div className="flex-1 min-w-[180px]">
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <Mail className="h-3.5 w-3.5 text-muted-foreground" />
+                              <span className="text-xs text-muted-foreground">Email</span>
+                            </div>
+                            <Input
+                              type="email"
+                              value={identityEdits.email}
+                              onChange={(e) => setIdentityEdits(p => ({ ...p, email: e.target.value }))}
+                              placeholder="email@example.com"
+                              className={cn("h-8 text-sm", identityErrors.email && "border-destructive")}
+                              onKeyDown={(e) => { if (e.key === "Enter") handleSaveIdentity(); if (e.key === "Escape") cancelEditingIdentity(); }}
+                            />
+                            {identityErrors.email && <p className="text-xs text-destructive mt-0.5">{identityErrors.email}</p>}
+                          </div>
+                          <div className="flex-1 min-w-[160px]">
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <Phone className="h-3.5 w-3.5 text-muted-foreground" />
+                              <span className="text-xs text-muted-foreground">Phone</span>
+                            </div>
+                            <Input
+                              type="tel"
+                              value={identityEdits.phone}
+                              onChange={(e) => setIdentityEdits(p => ({ ...p, phone: e.target.value }))}
+                              placeholder="505-000-0000"
+                              className="h-8 text-sm"
+                              onKeyDown={(e) => { if (e.key === "Enter") handleSaveIdentity(); if (e.key === "Escape") cancelEditingIdentity(); }}
+                            />
+                          </div>
+                        </div>
                       ) : (
                         <>
                           {contact?.email && (

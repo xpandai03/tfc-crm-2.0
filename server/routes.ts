@@ -53,6 +53,7 @@ import {
   mergeMigrationContacts,
   fullSyncMigrationContacts,
   updateContactIntakeFields,
+  updateContactIdentity,
   getWaitlistExportData,
   WAITLIST_EXPORT_COLUMNS,
   type SyncPayloadContact,
@@ -2316,6 +2317,91 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[intake-update] Error:", error);
       return res.status(500).json({ error: "Failed to update intake fields" });
+    }
+  });
+
+  // Update contact identity fields (name, email, phone)
+  app.patch("/api/contact/:id/identity", async (req, res) => {
+    try {
+      const contactId = parseInt(req.params.id, 10);
+      if (isNaN(contactId) || contactId <= 0) {
+        return res.status(400).json({ error: "Invalid contact ID" });
+      }
+
+      const { name, email, phone } = req.body;
+      const updates: Record<string, string> = {};
+
+      if (typeof name === "string" && name.trim()) updates.name = name.trim();
+      if (typeof email === "string") updates.email = email.trim();
+      if (typeof phone === "string") updates.phone = phone.trim();
+
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ error: "At least one field (name, email, phone) is required" });
+      }
+
+      if (updates.name !== undefined && updates.name.length === 0) {
+        return res.status(400).json({ error: "Name cannot be empty" });
+      }
+
+      if (updates.email !== undefined && updates.email.length > 0) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(updates.email)) {
+          return res.status(400).json({ error: "Invalid email format" });
+        }
+      }
+
+      const result = await updateContactIdentity(contactId, updates);
+
+      if (result.notFound) {
+        return res.status(404).json({ error: "Contact not found", contactId });
+      }
+
+      if (result.changes.length === 0) {
+        return res.json({ success: true, contactId, changes: [], message: "No changes detected" });
+      }
+
+      const actorEmail = (req as any).user?.email || "system";
+      const actorInitials = actorEmail === "system"
+        ? "SYS"
+        : actorEmail.split("@")[0].substring(0, 3).toUpperCase();
+
+      const contact = await getSyncContactById(contactId);
+      const contactName = contact?.name || "Unknown";
+
+      const changeSummaryParts = result.changes.map(
+        (c) => `${c.field}: ${c.oldValue || "(empty)"} → ${c.newValue || "(empty)"}`
+      );
+
+      const timestamp = new Date().toISOString();
+      try {
+        appendSyncContactNote(
+          contactId,
+          `[System] Contact details updated by ${actorInitials} — ${changeSummaryParts.join(", ")}`,
+          actorInitials,
+          timestamp
+        );
+      } catch (e) {
+        console.warn(`[identity-update] Failed to log timeline note:`, e);
+      }
+
+      await logActivity({
+        type: "contact_updated",
+        actorEmail,
+        entityType: "contact",
+        entityId: String(contactId),
+        entityName: contactName,
+        metadata: {
+          identityChanges: result.changes,
+          summary: `Updated contact details for ${contactName}`,
+        },
+      });
+
+      boardCache = null;
+
+      return res.json({ success: true, contactId, changes: result.changes });
+    } catch (error) {
+      console.error("[identity-update] Error:", error);
+      return res.status(500).json({ error: "Failed to update contact identity" });
     }
   });
 
