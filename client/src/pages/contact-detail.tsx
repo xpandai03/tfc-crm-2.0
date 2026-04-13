@@ -70,7 +70,7 @@ import { ReminderModal } from "@/components/ui/reminder-modal";
 import { AssignProviderModal } from "@/components/ui/assign-provider-modal";
 import { SendEmailModal } from "@/components/ui/send-email-modal";
 import { AssignmentSelector } from "@/components/ui/assignment-selector";
-import { useDataSource } from "@/lib/data-source-context";
+import { useDataSource, type DataSource } from "@/lib/data-source-context";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import type { ContactSnapshot, WaitlistContact } from "@shared/schema";
@@ -276,7 +276,7 @@ export default function ContactDetail() {
 
   useEffect(() => {
     if (contactData?._source) {
-      updateSource(contactData._source as "mock" | "live" | "fallback");
+      updateSource(contactData._source as DataSource);
       updateSyncTime();
 
       // Defensive: Log data integrity warnings for missing critical fields
@@ -730,8 +730,10 @@ export default function ContactDetail() {
     },
     onSuccess: (_data, variables) => {
       toast({ title: "Note added" });
-      queryClient.invalidateQueries({ queryKey: ["/api/contact", variables.contactId], refetchType: "active" });
-      queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"], refetchType: "active" });
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/contact", variables.contactId], refetchType: "active" });
+        queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"], refetchType: "active" });
+      }, 300);
     },
     onError: (error, variables, context) => {
       if (context?.previousData) {

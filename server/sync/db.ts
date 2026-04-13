@@ -1165,10 +1165,6 @@ export async function appendSyncContactNote(
   timestamp: string
 ): Promise<void> {
   const pool = getPool();
-  const existingResult = await pool.query(
-    `SELECT last_note FROM sync_contacts WHERE contact_id = $1`, [contactId]
-  );
-  const existing = existingResult.rows[0] as { last_note: string | null } | undefined;
 
   // Format note in CRM header format that parseNotesRobust recognizes:
   // [XX | MM/DD/YYYY, HH:MM AM]
@@ -1184,15 +1180,17 @@ export async function appendSyncContactNote(
   const formattedTime = `${hour12}:${minutes} ${ampm}`;
   const newEntry = `[${author} | ${formattedDate}, ${formattedTime}]\n${note}`;
 
-  const updated = existing?.last_note
-    ? `${newEntry}\n\n${existing.last_note}`
-    : newEntry;
-
+  // Single atomic UPDATE — no SELECT race window
   await pool.query(`
     UPDATE sync_contacts
-    SET last_note = $1, last_contact = $2, synced_at = NOW()
+    SET last_note = CASE
+      WHEN last_note IS NULL OR last_note = '' THEN $1
+      ELSE $1 || chr(10) || chr(10) || last_note
+    END,
+    last_contact = $2,
+    synced_at = NOW()
     WHERE contact_id = $3
-  `, [updated, timestamp.split("T")[0], contactId]);
+  `, [newEntry, timestamp.split("T")[0], contactId]);
 }
 
 /**
