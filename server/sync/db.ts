@@ -282,6 +282,9 @@ export async function initSyncTables(): Promise<void> {
   try {
     await pool.query(`ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS submitted_at TEXT`);
   } catch (_) { /* column already exists */ }
+  try {
+    await pool.query(`ALTER TABLE sync_contacts ADD COLUMN IF NOT EXISTS source_submission_id INTEGER`);
+  } catch (_) { /* column already exists */ }
 
   console.log("[sync-db] Sync tables initialized");
 }
@@ -1000,6 +1003,7 @@ export async function insertIntakeContact(fields: {
   state?: string | null;
   zipCode?: string | null;
   county?: string | null;
+  sourceSubmissionId?: number | null;
 }): Promise<void> {
   const pool = getPool();
   const today = new Date().toISOString().split("T")[0];
@@ -1021,7 +1025,8 @@ export async function insertIntakeContact(fields: {
       street_address, city, state, zip_code, county,
 
       last_contact, last_note,
-      synced_at, sync_hash
+      synced_at, sync_hash,
+      source_submission_id
     ) VALUES (
       $1, $2, $3, $4,
       'New -- No Outreach', 100, $5,
@@ -1038,7 +1043,8 @@ export async function insertIntakeContact(fields: {
       $25, $26, $27, $28, $29,
 
       $30, $31,
-      NOW(), $32
+      NOW(), $32,
+      $33
     )
     ON CONFLICT(contact_id) DO UPDATE SET
       name = EXCLUDED.name,
@@ -1070,6 +1076,7 @@ export async function insertIntakeContact(fields: {
         THEN sync_contacts.last_note || chr(10) || EXCLUDED.last_note
         ELSE COALESCE(EXCLUDED.last_note, sync_contacts.last_note)
       END,
+      source_submission_id = COALESCE(EXCLUDED.source_submission_id, sync_contacts.source_submission_id),
       synced_at = NOW()
   `, [
     fields.contactId,
@@ -1109,6 +1116,7 @@ export async function insertIntakeContact(fields: {
     today,
     fields.lastNote || null,
     `intake-${fields.contactId}`,
+    fields.sourceSubmissionId ?? null,
   ]);
 
   console.log(`[sync-db] Intake contact upserted: ${fields.contactId} (${fields.name})`);
@@ -1465,23 +1473,25 @@ export interface FormSubmission {
   payload: Record<string, unknown>;
 }
 
-/** Insert a submission from the existing intake flow (backwards-compatible). */
+/** Insert a submission from the existing intake flow. Returns the new row ID. */
 export async function insertFormSubmission(fields: {
   source: string;
   contactId: number;
   name: string;
   payload: unknown;
-}): Promise<void> {
+}): Promise<number> {
   const pool = getPool();
-  await pool.query(`
+  const result = await pool.query(`
     INSERT INTO form_submissions (source, form_type, contact_id, name, payload)
     VALUES ($1, 'intake', $2, $3, $4)
+    RETURNING id
   `, [
     fields.source,
     fields.contactId,
     fields.name,
     JSON.stringify(fields.payload),
   ]);
+  return result.rows[0].id as number;
 }
 
 /** Insert a generic form submission (unified ingestion). */
