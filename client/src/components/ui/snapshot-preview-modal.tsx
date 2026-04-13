@@ -30,8 +30,30 @@ interface SnapshotData {
   subject: string;
   bodyHtml: string;
   sentByEmail: string;
+  senderEmail: string | null;
+  recipientEmail: string | null;
   ccEmails: string | string[];
   sentAt: string;
+}
+
+const DEFAULT_SENDER_EMAIL = "no-reply@hipaacheck.ai";
+
+/**
+ * Parse a Postgres-serialized timestamp. The column was originally TIMESTAMPTZ
+ * but is now reported as TEXT in information_schema, so values may arrive as
+ * "2026-04-13 23:14:07.190572+00" (space separator, two-digit UTC offset) —
+ * not strict ISO 8601. Normalize before passing to Date().
+ */
+function parseSentAt(raw: string | null | undefined): Date | null {
+  if (!raw) return null;
+  // Convert "YYYY-MM-DD HH:MM:SS.ffffff+00" → "YYYY-MM-DDTHH:MM:SS.ffffff+00:00"
+  let normalized = raw.replace(" ", "T");
+  normalized = normalized.replace(/([+-]\d{2})$/, "$1:00");
+  const d = new Date(normalized);
+  if (!isNaN(d.getTime())) return d;
+  // Fallback: append Z if tz completely missing
+  const fallback = new Date(raw + "Z");
+  return isNaN(fallback.getTime()) ? null : fallback;
 }
 
 function parseCcEmails(raw: string | string[] | null | undefined): string[] {
@@ -134,7 +156,8 @@ export function SnapshotPreviewModal({
         );
       }
 
-      const dateStr = new Date(snapshot.sentAt).toISOString().split("T")[0];
+      const sentDateForFilename = parseSentAt(snapshot.sentAt) ?? new Date();
+      const dateStr = sentDateForFilename.toISOString().split("T")[0];
       const filename = `email-snapshot-${snapshot.templateId}-${snapshot.contactId}-${dateStr}.pdf`;
 
       const worker = html2pdf()
@@ -178,11 +201,19 @@ export function SnapshotPreviewModal({
   };
 
   const ccList = snapshot ? parseCcEmails(snapshot.ccEmails) : [];
-  const toLabel = ccList.length > 0 ? ccList.join(", ") : "Client";
-  const sentLabel = snapshot
-    ? new Date(snapshot.sentAt).toLocaleString("en-US", {
-        dateStyle: "full",
-        timeStyle: "short",
+  const fromLabel = snapshot?.senderEmail || DEFAULT_SENDER_EMAIL;
+  const toLabel = snapshot?.recipientEmail || "—";
+  const ccLabel = ccList.join(", ");
+  const sentDate = snapshot ? parseSentAt(snapshot.sentAt) : null;
+  const sentLabel = sentDate
+    ? sentDate.toLocaleString("en-US", {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZoneName: "short",
       })
     : "";
   const logoSrc = logoDataUri ?? "/tfc-logo.jpg";
@@ -242,12 +273,18 @@ export function SnapshotPreviewModal({
                     <tbody>
                       <tr>
                         <td style={{ padding: "4px 0", fontWeight: 600, width: 120 }}>From:</td>
-                        <td style={{ padding: "4px 0" }}>{snapshot.sentByEmail}</td>
+                        <td style={{ padding: "4px 0" }}>{fromLabel}</td>
                       </tr>
                       <tr>
                         <td style={{ padding: "4px 0", fontWeight: 600 }}>To:</td>
                         <td style={{ padding: "4px 0" }}>{toLabel}</td>
                       </tr>
+                      {ccLabel && (
+                        <tr>
+                          <td style={{ padding: "4px 0", fontWeight: 600 }}>CC:</td>
+                          <td style={{ padding: "4px 0" }}>{ccLabel}</td>
+                        </tr>
+                      )}
                       <tr>
                         <td style={{ padding: "4px 0", fontWeight: 600 }}>Subject:</td>
                         <td style={{ padding: "4px 0" }}>{snapshot.subject}</td>

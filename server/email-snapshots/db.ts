@@ -22,6 +22,8 @@ export async function initEmailSnapshotsTable(): Promise<void> {
       subject TEXT NOT NULL,
       body_html TEXT NOT NULL,
       sent_by_email TEXT NOT NULL,
+      sender_email TEXT,
+      recipient_email TEXT,
       cc_emails TEXT NOT NULL DEFAULT '[]',
       sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
@@ -32,12 +34,19 @@ export async function initEmailSnapshotsTable(): Promise<void> {
       ON email_snapshots(contact_id)
   `);
 
-  // Additive migration: add cc_emails column if missing (existing tables)
-  try {
-    await pool.query(`ALTER TABLE email_snapshots ADD COLUMN cc_emails TEXT NOT NULL DEFAULT '[]'`);
-    console.log("[email-snapshots-db] Added cc_emails column");
-  } catch {
-    // Column already exists — expected on subsequent startups
+  // Additive migrations for existing tables
+  const additiveColumns: Array<[string, string]> = [
+    ["cc_emails", `ALTER TABLE email_snapshots ADD COLUMN cc_emails TEXT NOT NULL DEFAULT '[]'`],
+    ["sender_email", `ALTER TABLE email_snapshots ADD COLUMN sender_email TEXT`],
+    ["recipient_email", `ALTER TABLE email_snapshots ADD COLUMN recipient_email TEXT`],
+  ];
+  for (const [name, sql] of additiveColumns) {
+    try {
+      await pool.query(sql);
+      console.log(`[email-snapshots-db] Added ${name} column`);
+    } catch {
+      // Column already exists — expected on subsequent startups
+    }
   }
 
   console.log("[email-snapshots-db] Table initialized");
@@ -52,8 +61,8 @@ export async function saveEmailSnapshot(params: CreateEmailSnapshotParams): Prom
   const ccJson = JSON.stringify(params.ccEmails || []);
 
   const result = await pool.query(
-    `INSERT INTO email_snapshots (contact_id, template_id, subject, body_html, sent_by_email, cc_emails)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO email_snapshots (contact_id, template_id, subject, body_html, sent_by_email, sender_email, recipient_email, cc_emails)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING id`,
     [
       params.contactId,
@@ -61,6 +70,8 @@ export async function saveEmailSnapshot(params: CreateEmailSnapshotParams): Prom
       params.subject,
       params.bodyHtml,
       params.sentByEmail,
+      params.senderEmail,
+      params.recipientEmail,
       ccJson,
     ]
   );
@@ -79,13 +90,15 @@ export async function getEmailSnapshot(id: number): Promise<EmailSnapshot | null
   const result = await pool.query(
     `SELECT
       id,
-      contact_id   as "contactId",
-      template_id  as "templateId",
+      contact_id    as "contactId",
+      template_id   as "templateId",
       subject,
-      body_html    as "bodyHtml",
+      body_html     as "bodyHtml",
       sent_by_email as "sentByEmail",
-      cc_emails    as "ccEmails",
-      sent_at      as "sentAt"
+      sender_email  as "senderEmail",
+      recipient_email as "recipientEmail",
+      cc_emails     as "ccEmails",
+      sent_at       as "sentAt"
     FROM email_snapshots
     WHERE id = $1`,
     [id]
