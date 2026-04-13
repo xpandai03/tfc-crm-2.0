@@ -3605,10 +3605,9 @@ export async function registerRoutes(
         emailId: sendResult.emailId,
       });
 
-      // Save email snapshot for qualifying templates (fire-and-forget)
-      const QUALIFYING_TEMPLATES = ["appointment-confirmation", "post-appointment-survey", "intake-form-reminder"];
+      // Save email snapshot for every send that produced rendered HTML (fire-and-forget)
       let snapshotSaved = false;
-      if (QUALIFYING_TEMPLATES.includes(templateId) && sendResult.renderedHtml) {
+      if (sendResult.renderedHtml) {
         try {
           await saveEmailSnapshot({
             contactId,
@@ -3624,8 +3623,7 @@ export async function registerRoutes(
         }
       }
 
-      const snapshotTag = (!snapshotSaved && QUALIFYING_TEMPLATES.includes(templateId)) ? " (ECC missing)" : "";
-      const noteContent = `[Email] ${templateName} sent${snapshotTag}${fieldsSuffix}`;
+      const noteContent = `[Email] ${templateName} sent${fieldsSuffix}`;
 
       await logActivity({
         type: "email_sent",
