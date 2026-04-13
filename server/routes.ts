@@ -3810,8 +3810,9 @@ export async function registerRoutes(
       const contactId = await generateIntakeContactId();
 
       // Immutable audit log — capture raw submission before any processing
+      let submissionId: number | null = null;
       try {
-        await insertFormSubmission({
+        submissionId = await insertFormSubmission({
           source: "rfs_v2",
           contactId,
           name: b.name.trim(),
@@ -3827,6 +3828,7 @@ export async function registerRoutes(
         email: s(b.email),
         phone: s(b.phone),
         lastNote,
+        sourceSubmissionId: submissionId,
 
         serviceRequested: s(b.serviceRequested) || reasonForTherapy,
         requestingFor: s(b.requestingFor),
