@@ -475,8 +475,9 @@ export async function syncContacts(contacts: SyncPayloadContact[]): Promise<{
       synced++;
     }
 
-    // Delete contacts no longer in Excel
-    const allIdsResult = await client.query(`SELECT contact_id FROM sync_contacts`);
+    // Delete contacts no longer in Excel (only n8n-sourced IDs < 900k)
+    // CRM-native contacts (900k+) are created via /api/intake and must survive sync
+    const allIdsResult = await client.query(`SELECT contact_id FROM sync_contacts WHERE contact_id < 900000`);
     const allIds = allIdsResult.rows as { contact_id: number }[];
 
     for (const row of allIds) {
