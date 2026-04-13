@@ -2200,12 +2200,11 @@ export async function registerRoutes(
       });
 
       if (DATA_MODE === "live") {
-        // Write-through: update sync cache for instant timeline update
-        try {
-          const contact = await getSyncContactById(contactId);
-          appendSyncContactNote(contactId, note.trim(), author.trim(), timestamp);
-          console.log(`[add-note] Sync cache updated for contactId ${contactId}`);
+        const contact = await getSyncContactById(contactId);
+        await appendSyncContactNote(contactId, note.trim(), author.trim(), timestamp);
+        console.log(`[add-note] Sync cache updated for contactId ${contactId}`);
 
+        try {
           await logActivity({
             type: "note_added",
             actorEmail: (req as any).user?.email || "system",
@@ -2215,7 +2214,7 @@ export async function registerRoutes(
             metadata: { preview: note.trim().substring(0, 100) },
           });
         } catch (e) {
-          console.warn(`[add-note] Failed to update sync cache:`, e);
+          console.warn(`[add-note] Activity log failed for contactId ${contactId} (non-blocking)`);
         }
         boardCache = null;
 
@@ -2269,8 +2268,9 @@ export async function registerRoutes(
         return res.json({ success: true, contactId, note: newNote });
       }
     } catch (error) {
-      console.error("Error adding note:", error);
-      return res.status(500).json({ error: "Failed to add note" });
+      const cId = req.body?.contactId;
+      console.error(`[add-note] DB write failed for contactId ${cId}:`, error instanceof Error ? error.message : error);
+      return res.status(500).json({ error: "Failed to save note. Please try again." });
     }
   });
 

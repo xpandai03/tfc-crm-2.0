@@ -16,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import { AlertTriangle, Clock, CalendarCheck, AlertCircle, CheckCircle2, Inbox, User } from "lucide-react";
 import { getWaitlistSummary, getWaitlistContacts, addNoteToContact, updateContactStatus, getAttentionFlags, type WithSource } from "@/lib/api";
 import { computeDaysWaiting } from "@/lib/days-waiting";
-import { useDataSource } from "@/lib/data-source-context";
+import { useDataSource, type DataSource } from "@/lib/data-source-context";
 import { useAuth } from "@/lib/auth-context";
 import {
   stringStatusToCode,
@@ -70,7 +70,7 @@ function getFirstName(fullName: string | undefined): string {
 export default function Home() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const { updateSummarySource, updateContactsSource, updateSyncTime, lastSyncTime, dataMode, summarySource, contactsSource, isContactsLive, isFullyLive } = useDataSource();
+  const { updateSummarySource, updateContactsSource, updateSyncTime, summarySource, isFullyLive } = useDataSource();
 
   // Derive author initials from authenticated user
   const authorInitials = getAuthorInitials(user?.name);
@@ -90,12 +90,8 @@ export default function Home() {
   // Task ownership filter state
   const [showOnlyMine, setShowOnlyMine] = useState(false);
 
-  // Check data sources for honest indicators
-  // Only show as live when user has explicitly enabled live mode AND data is actually live
-  const isSummaryLive = dataMode === "live" && summarySource === "live";
-  const isDataFullyLive = dataMode === "live" && isFullyLive;
+  const isDataFullyLive = isFullyLive;
 
-  // Phase 3: Actions are only enabled in live mode with live data
   const actionsEnabled = isDataFullyLive;
 
   const { 
@@ -143,14 +139,14 @@ export default function Home() {
 
   useEffect(() => {
     if (summaryData?._source) {
-      updateSummarySource(summaryData._source as "mock" | "live" | "fallback");
+      updateSummarySource(summaryData._source as DataSource);
       updateSyncTime();
     }
   }, [summaryData, updateSummarySource, updateSyncTime]);
 
   useEffect(() => {
     if (contactsData?._source) {
-      updateContactsSource(contactsData._source as "mock" | "live" | "fallback");
+      updateContactsSource(contactsData._source as DataSource);
     }
   }, [contactsData, updateContactsSource]);
 
@@ -172,11 +168,10 @@ export default function Home() {
     },
     onSuccess: (_, variables) => {
       toast({ title: "Note added", description: "Note saved successfully." });
-
-      // Mark contact as handled
       setHandledContacts(prev => new Set(prev).add(variables.contactId.toString()));
-      // Invalidate to force fresh data from server
-      queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"], refetchType: "active" });
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"], refetchType: "active" });
+      }, 300);
     },
     onError: (error) => {
       toast({ title: "Failed to add note", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" });
@@ -398,15 +393,11 @@ export default function Home() {
       <FallbackBanner
         show={!isDataFullyLive}
         message={
-          dataMode === "mock"
-            ? "Viewing demo data"
-            : isSummaryLive && !isContactsLive
-              ? "Aggregate metrics are live — contact data is demo"
-              : summarySource === "fallback"
-                ? "Live data temporarily unavailable — showing cached data"
-                : "Viewing demo data"
+          summarySource === "fallback" || summarySource === "error"
+            ? "Live data temporarily unavailable — please refresh in a moment"
+            : "Viewing demo data"
         }
-        variant="info"
+        variant={summarySource === "fallback" || summarySource === "error" ? "warning" : "info"}
       />
       <div className="space-y-8">
         <div className="flex items-start justify-between gap-4 flex-wrap">

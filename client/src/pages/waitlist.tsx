@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { StatusLegendModal } from "@/components/ui/status-legend-modal";
 import { getWaitlistBoard, updateContactStatus, addNoteToContact, getAttentionFlags } from "@/lib/api";
-import { useDataSource } from "@/lib/data-source-context";
+import { useDataSource, type DataSource } from "@/lib/data-source-context";
 import { computeDaysWaiting } from "@/lib/days-waiting";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -209,7 +209,7 @@ export default function Waitlist() {
 
   useEffect(() => {
     if (contactsData?._source) {
-      updateContactsSource(contactsData._source as "mock" | "live" | "fallback");
+      updateContactsSource(contactsData._source as DataSource);
       updateSyncTime();
     }
   }, [contactsData, updateContactsSource, updateSyncTime]);
@@ -298,8 +298,10 @@ export default function Waitlist() {
     },
     onSuccess: (_data, variables) => {
       toast({ title: "Note added", description: "Note saved successfully." });
-      queryClient.invalidateQueries({ queryKey: ["/api/get-waitlist-board"], refetchType: "active" });
-      queryClient.invalidateQueries({ queryKey: ["/api/contact", variables.contactId], refetchType: "active" });
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/get-waitlist-board"], refetchType: "active" });
+        queryClient.invalidateQueries({ queryKey: ["/api/contact", variables.contactId], refetchType: "active" });
+      }, 300);
     },
     onError: (error) => {
       toast({ title: "Failed to add note", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" });
