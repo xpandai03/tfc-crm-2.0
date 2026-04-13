@@ -1,10 +1,11 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { DataSourceProvider } from "@/lib/data-source-context";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
+import { isRestrictedUser } from "@shared/access-control";
 import Home from "@/pages/home";
 import Waitlist from "@/pages/waitlist";
 import ContactDetail from "@/pages/contact-detail";
@@ -16,10 +17,18 @@ import AdminMigrate from "@/pages/admin-migrate";
 import Login from "@/pages/login";
 import NotFound from "@/pages/not-found";
 
+function GuardedHome() {
+  const { user } = useAuth();
+  if (isRestrictedUser(user?.email)) {
+    return <Redirect to="/waitlist" />;
+  }
+  return <Home />;
+}
+
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={Home} />
+      <Route path="/" component={GuardedHome} />
       <Route path="/waitlist" component={Waitlist} />
       <Route path="/contact/:id" component={ContactDetail} />
       <Route path="/insights" component={Insights} />
