@@ -64,6 +64,8 @@ export interface SendResult {
   emailId?: string;
   renderedHtml?: string;
   renderedSubject?: string;
+  senderEmail?: string;
+  recipientEmail?: string;
   ccEmails?: string[];
 }
 
@@ -226,6 +228,8 @@ export async function sendTemplatedEmail(params: {
       success: true,
       renderedHtml: rendered.bodyHtml,
       renderedSubject: rendered.subject,
+      senderEmail: FROM_EMAIL,
+      recipientEmail: contact.email,
       ccEmails: [],
     };
   }
@@ -291,6 +295,8 @@ export async function sendTemplatedEmail(params: {
       emailId: result.data?.id,
       renderedHtml: rendered.bodyHtml,
       renderedSubject: rendered.subject,
+      senderEmail: FROM_EMAIL,
+      recipientEmail: contact.email,
       ccEmails: uniqueCc,
     };
   } catch (error) {

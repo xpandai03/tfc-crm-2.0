@@ -3615,6 +3615,8 @@ export async function registerRoutes(
             subject: sendResult.renderedSubject || templateName,
             bodyHtml: sendResult.renderedHtml,
             sentByEmail: userEmail,
+            senderEmail: sendResult.senderEmail || "no-reply@hipaacheck.ai",
+            recipientEmail: sendResult.recipientEmail || contactForEmail.email,
             ccEmails: sendResult.ccEmails,
           });
           snapshotSaved = true;
