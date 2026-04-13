@@ -242,6 +242,7 @@ export function buildTimelineEvents(
 
   const events: TimelineEvent[] = [];
   const source = snapshot._source || "mock";
+  const claimedSnapshotIds = new Set<number>();
 
   // Process notes array
   try {
@@ -267,23 +268,36 @@ export function buildTimelineEvents(
               noteDate: parsedDate,
               snapshotsCount: snapshots?.length ?? 0,
             });
-            // Try to match a snapshot by templateId and timestamp proximity
             let matchedSnapshotId: number | undefined;
-            if (emailParsed.templateId && snapshots && parsedDate) {
+            if (snapshots && snapshots.length > 0 && parsedDate) {
               const noteTime = new Date(parsedDate).getTime();
-              for (const snap of snapshots) {
-                if (snap.templateId !== emailParsed.templateId) continue;
-                const snapTime = new Date(snap.sentAt).getTime();
-                // Match within 5 minutes
-                if (Math.abs(noteTime - snapTime) < 5 * 60 * 1000) {
-                  matchedSnapshotId = snap.id;
-                  break;
+
+              if (emailParsed.templateId) {
+                let bestDelta = Infinity;
+                for (const snap of snapshots) {
+                  if (snap.templateId !== emailParsed.templateId) continue;
+                  if (claimedSnapshotIds.has(snap.id)) continue;
+                  const delta = Math.abs(new Date(snap.sentAt).getTime() - noteTime);
+                  if (delta < bestDelta) {
+                    bestDelta = delta;
+                    matchedSnapshotId = snap.id;
+                  }
+                }
+              } else {
+                const DAY_MS = 24 * 60 * 60 * 1000;
+                let bestDelta = Infinity;
+                for (const snap of snapshots) {
+                  if (claimedSnapshotIds.has(snap.id)) continue;
+                  const delta = Math.abs(new Date(snap.sentAt).getTime() - noteTime);
+                  if (delta < DAY_MS && delta < bestDelta) {
+                    bestDelta = delta;
+                    matchedSnapshotId = snap.id;
+                  }
                 }
               }
-              // If no time match, fall back to most recent snapshot with same templateId
-              if (!matchedSnapshotId) {
-                const match = snapshots.find((s) => s.templateId === emailParsed.templateId);
-                if (match) matchedSnapshotId = match.id;
+
+              if (matchedSnapshotId != null) {
+                claimedSnapshotIds.add(matchedSnapshotId);
               }
             }
 
