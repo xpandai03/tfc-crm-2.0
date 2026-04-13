@@ -3806,33 +3806,8 @@ export async function registerRoutes(
       if (s(b.notes)) lines.push(`Notes: ${s(b.notes)}`);
       const lastNote = lines.join("\n");
 
-      // Dedup: check if contact already exists by email+name or phone+name
-      const email = s(b.email);
-      const phone = s(b.phone);
-      const nameNorm = b.name.trim().toLowerCase();
-      let existingId: number | null = null;
-
-      if (email && email !== "none@none.com" && email !== "none@gmail.com" && email !== "unknown@gmail.com") {
-        const match = (await getAllSyncContacts()).find(c =>
-          c.email?.toLowerCase() === email.toLowerCase() &&
-          c.name.toLowerCase() === nameNorm
-        );
-        if (match) existingId = match.contactId;
-      }
-      if (!existingId && phone) {
-        const match = (await getAllSyncContacts()).find(c =>
-          c.phone === phone &&
-          c.name.toLowerCase() === nameNorm
-        );
-        if (match) existingId = match.contactId;
-      }
-
-      const contactId = existingId ?? await generateIntakeContactId();
-      const isUpdate = !!existingId;
-
-      if (isUpdate) {
-        console.log(`[INTAKE] Dedup match: existing contact ${contactId} for "${b.name.trim()}" (${email || phone})`);
-      }
+      // Each RFS submission creates its own independent contact record
+      const contactId = await generateIntakeContactId();
 
       // Immutable audit log — capture raw submission before any processing
       try {
