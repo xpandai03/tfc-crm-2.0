@@ -275,16 +275,20 @@ export async function initSyncTables(): Promise<void> {
       ON form_submissions(form_type)
   `);
 
-  // Migrate: add columns if missing (safe for existing DBs)
-  try {
-    await pool.query(`ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS form_type TEXT NOT NULL DEFAULT 'intake'`);
-  } catch (_) { /* column already exists */ }
-  try {
-    await pool.query(`ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS submitted_at TEXT`);
-  } catch (_) { /* column already exists */ }
-  try {
-    await pool.query(`ALTER TABLE sync_contacts ADD COLUMN IF NOT EXISTS source_submission_id INTEGER`);
-  } catch (_) { /* column already exists */ }
+  // Additive column migrations — only run when RUN_MIGRATIONS=true to avoid
+  // unnecessary ALTER TABLE pressure on every cold start during rapid deploys
+  if (process.env.RUN_MIGRATIONS === "true") {
+    console.log("[sync-db] RUN_MIGRATIONS=true — running column migrations");
+    try {
+      await pool.query(`ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS form_type TEXT NOT NULL DEFAULT 'intake'`);
+    } catch (_) { /* column already exists */ }
+    try {
+      await pool.query(`ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS submitted_at TEXT`);
+    } catch (_) { /* column already exists */ }
+    try {
+      await pool.query(`ALTER TABLE sync_contacts ADD COLUMN IF NOT EXISTS source_submission_id INTEGER`);
+    } catch (_) { /* column already exists */ }
+  }
 
   console.log("[sync-db] Sync tables initialized");
 }

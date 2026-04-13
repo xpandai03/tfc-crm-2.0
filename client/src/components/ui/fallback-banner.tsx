@@ -22,16 +22,12 @@ function formatTimeAgo(date: Date): string {
 
 export function FallbackBanner({
   show,
-  message = "Live data temporarily unavailable - showing demo data",
+  message = "Unable to load data. The database may be temporarily unavailable. Please refresh the page.",
   variant = "warning",
   lastSyncTime,
   onRefresh,
   isRefreshing = false
 }: FallbackBannerProps) {
-  // DISABLED: App now always shows live Excel data
-  // To re-enable, remove this early return
-  return null;
-
   const [dismissed, setDismissed] = useState(false);
   const [timeAgo, setTimeAgo] = useState<string>("");
 

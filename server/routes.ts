@@ -1644,15 +1644,24 @@ export async function registerRoutes(
           
           return res.json({ ...normalizedData, _source: "live" });
         } catch (liveError) {
-          console.warn("Live data fetch failed, falling back to mock:", liveError);
-          return res.json({ ...getMockWaitlistSummary(), _source: "fallback" });
+          console.error("[SUMMARY] Live data fetch failed:", liveError);
+          return res.status(503).json({
+            error: "Database temporarily unavailable. Please refresh in a moment.",
+            _source: "error",
+          });
         }
       } else {
-        return res.json({ ...getMockWaitlistSummary(), _source: "mock" });
+        return res.status(503).json({
+          error: "Database temporarily unavailable. Please refresh in a moment.",
+          _source: "error",
+        });
       }
     } catch (error) {
       console.error("Error fetching waitlist summary:", error);
-      return res.status(500).json({ error: "Failed to fetch waitlist summary" });
+      return res.status(503).json({
+        error: "Database temporarily unavailable. Please refresh in a moment.",
+        _source: "error",
+      });
     }
   });
 
@@ -1813,8 +1822,11 @@ export async function registerRoutes(
             // If contacts array is missing or empty, that's still valid data (just means no contacts)
             // Only fall back if the structure is completely wrong
             if (data.contacts === undefined) {
-              console.warn("[WAITLIST-CONTACTS] No contacts field in response, falling back to mock");
-              return res.json({ contacts: getMockWaitlistContacts(), _source: "fallback" });
+              console.error("[WAITLIST-CONTACTS] No contacts field in n8n response");
+              return res.status(503).json({
+                error: "Database temporarily unavailable. Please refresh in a moment.",
+                _source: "error",
+              });
             }
             // If contacts exists but isn't an array, treat as empty array rather than falling back
             console.warn("[WAITLIST-CONTACTS] contacts is not an array, treating as empty array");
@@ -1828,12 +1840,17 @@ export async function registerRoutes(
           if (errorStack) {
             console.error("[WAITLIST-CONTACTS] Error stack:", errorStack);
           }
-          console.warn("[WAITLIST-CONTACTS] Falling back to mock data");
-          return res.json({ contacts: getMockWaitlistContacts(), _source: "fallback" });
+          console.error("[WAITLIST-CONTACTS] All data sources failed");
+          return res.status(503).json({
+            error: "Database temporarily unavailable. Please refresh in a moment.",
+            _source: "error",
+          });
         }
       } else {
-        console.log("[WAITLIST-CONTACTS] DATA_MODE is 'mock', returning mock data");
-        return res.json({ contacts: getMockWaitlistContacts(), _source: "mock" });
+        return res.status(503).json({
+          error: "Database temporarily unavailable. Please refresh in a moment.",
+          _source: "error",
+        });
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1984,17 +2001,24 @@ export async function registerRoutes(
           // Return the response with preserved/ensured _source field
           return res.json({ ...data, _source: source });
         } catch (liveError) {
-          console.warn("Live board fetch failed, falling back to mock:", liveError);
-          const fallbackContacts = await enrichContactsWithProvider(getMockWaitlistContacts());
-          return res.json({ contacts: fallbackContacts, _source: "fallback" });
+          console.error("[BOARD] All data sources failed:", liveError);
+          return res.status(503).json({
+            error: "Database temporarily unavailable. Please refresh in a moment.",
+            _source: "error",
+          });
         }
       } else {
-        const mockContacts = await enrichContactsWithProvider(getMockWaitlistContacts());
-        return res.json({ contacts: mockContacts, _source: "mock" });
+        return res.status(503).json({
+          error: "Database temporarily unavailable. Please refresh in a moment.",
+          _source: "error",
+        });
       }
     } catch (error) {
       console.error("Error fetching waitlist board:", error);
-      return res.status(500).json({ error: "Failed to fetch waitlist board" });
+      return res.status(503).json({
+        error: "Database temporarily unavailable. Please refresh in a moment.",
+        _source: "error",
+      });
     }
   });
 
