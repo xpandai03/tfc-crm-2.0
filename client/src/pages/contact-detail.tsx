@@ -74,7 +74,7 @@ import { useDataSource, type DataSource } from "@/lib/data-source-context";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import type { ContactSnapshot, WaitlistContact } from "@shared/schema";
-import { buildTimelineEvents, formatFullDate, type EmailSnapshotMeta, type TimelineEvent } from "@/lib/timeline";
+import { buildTimelineEvents, formatFullDate, matchSnapshotForEmailEvent, type EmailSnapshotMeta, type TimelineEvent } from "@/lib/timeline";
 import { ProviderMatchingModal } from "@/components/ui/provider-matching-modal";
 import { CreateTnModal } from "@/components/ui/create-tn-modal";
 import { cn, formatDate, formatDob } from "@/lib/utils";
@@ -955,6 +955,9 @@ export default function ContactDetail() {
   const timelineEvents = useMemo(() => {
     if (!contact) return [];
     try {
+      // Shared claim set so activity-log and notes-path matchers don't double-assign a snapshot
+      const claimedSnapshotIds = new Set<number>();
+
       const baseEvents = buildTimelineEvents(
         {
           ...contact,
@@ -962,19 +965,36 @@ export default function ContactDetail() {
         },
         snapshotsData?.snapshots,
         assignments,
+        claimedSnapshotIds,
       );
 
-      // Merge activity_log events (emails, TN, etc.) into timeline
-      const activityEvents: import("@/lib/timeline").TimelineEvent[] = contactActivities
+      // Merge activity_log events (emails, TN, etc.) into timeline.
+      // Preserve `email_sent` type so the violet Mail icon + Download Snapshot button render.
+      const activityEvents: TimelineEvent[] = contactActivities
         .filter(a => ["email_sent", "therapy_notes_started", "therapy_notes_created", "therapy_notes_failed", "contact_updated"].includes(a.type))
-        .map(a => ({
-          id: `activity-${a.id}`,
-          type: "system" as const,
-          timestamp: a.createdAt,
-          content: a.summary,
-          author: a.actorEmail === "system" ? "System" : a.actorEmail.split("@")[0].substring(0, 3).toUpperCase(),
-          source: "live" as const,
-        }));
+        .map((a): TimelineEvent => {
+          const isEmail = a.type === "email_sent";
+          const templateId = isEmail ? (a.metadata?.template as string | undefined) ?? null : null;
+          const snapshotId = isEmail
+            ? matchSnapshotForEmailEvent(
+                templateId,
+                new Date(a.createdAt).getTime(),
+                snapshotsData?.snapshots,
+                claimedSnapshotIds,
+              )
+            : undefined;
+
+          return {
+            id: `activity-${a.id}`,
+            type: isEmail ? "email_sent" : "system",
+            timestamp: a.createdAt,
+            content: a.summary,
+            author: a.actorEmail === "system" ? "System" : a.actorEmail.split("@")[0].substring(0, 3).toUpperCase(),
+            source: "live",
+            emailTemplate: isEmail ? (a.metadata?.templateName as string | undefined) : undefined,
+            snapshotId,
+          };
+        });
 
       // Combine and sort by timestamp descending
       const all = [...baseEvents, ...activityEvents];

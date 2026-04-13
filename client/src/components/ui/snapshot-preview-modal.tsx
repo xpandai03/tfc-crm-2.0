@@ -3,6 +3,7 @@
  *
  * Renders stored email HTML in a visible DOM context (identical to the
  * send-email-modal preview), then generates a PDF from the painted node.
+ * PDF output prepends a branded metadata header (TFC logo + From/To/Subject/Sent).
  */
 
 import { useState, useRef, useEffect } from "react";
@@ -24,11 +25,45 @@ interface SnapshotPreviewModalProps {
 
 interface SnapshotData {
   id: number;
+  contactId: number;
   templateId: string;
   subject: string;
   bodyHtml: string;
   sentByEmail: string;
+  ccEmails: string | string[];
   sentAt: string;
+}
+
+function parseCcEmails(raw: string | string[] | null | undefined): string[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetch a same-origin image and return it as a base64 data URI.
+ * Guarantees the image renders in html2canvas without CORS/tainting issues.
+ */
+async function imageUrlToDataUri(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, { credentials: "omit" });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(String(reader.result));
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.warn("[snapshot-pdf] Logo fetch failed, falling back to URL:", err);
+    return null;
+  }
 }
 
 export function SnapshotPreviewModal({
@@ -40,12 +75,15 @@ export function SnapshotPreviewModal({
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [logoDataUri, setLogoDataUri] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
 
   // Fetch snapshot when modal opens
   useEffect(() => {
     if (isOpen && snapshotId) {
       fetchSnapshot(snapshotId);
+      // Preload logo as data URI so html2canvas never sees a network request
+      imageUrlToDataUri("/tfc-logo.jpg").then(setLogoDataUri);
     }
     if (!isOpen) {
       setSnapshot(null);
@@ -71,7 +109,6 @@ export function SnapshotPreviewModal({
   const handleDownloadPdf = async () => {
     if (!contentRef.current || !snapshot) return;
 
-    // Validate the DOM node is actually rendered
     const el = contentRef.current;
     const w = el.offsetWidth;
     const h = el.offsetHeight;
@@ -88,32 +125,22 @@ export function SnapshotPreviewModal({
     setError(null);
 
     try {
-      // Dynamic import — html2pdf.js is a UMD module, Vite wraps CJS as { default: ... }
       const mod = await import("html2pdf.js");
       const html2pdf = mod.default || mod;
-      console.log("[snapshot-pdf] html2pdf import:", {
-        modType: typeof mod,
-        modDefault: typeof mod.default,
-        html2pdfType: typeof html2pdf,
-      });
 
       if (typeof html2pdf !== "function") {
         throw new Error(
-          `html2pdf is not a function (got ${typeof html2pdf}). ` +
-          `Module keys: ${Object.keys(mod).join(", ")}`
+          `html2pdf is not a function (got ${typeof html2pdf}). Module keys: ${Object.keys(mod).join(", ")}`
         );
       }
 
-      const safeName = (snapshot.subject || "email-snapshot")
-        .replace(/[^a-zA-Z0-9\s-]/g, "")
-        .replace(/\s+/g, "-")
-        .substring(0, 60);
+      const dateStr = new Date(snapshot.sentAt).toISOString().split("T")[0];
+      const filename = `email-snapshot-${snapshot.templateId}-${snapshot.contactId}-${dateStr}.pdf`;
 
-      // Generate PDF as blob for reliable download
       const worker = html2pdf()
         .set({
           margin: 10,
-          filename: `${safeName}.pdf`,
+          filename,
           html2canvas: {
             scale: 2,
             useCORS: true,
@@ -124,19 +151,16 @@ export function SnapshotPreviewModal({
         })
         .from(el);
 
-      // Try .save() first (simplest path), with blob fallback
       try {
         await worker.save();
         console.log("[snapshot-pdf] PDF saved successfully via .save()");
       } catch (saveErr) {
         console.warn("[snapshot-pdf] .save() failed, trying blob fallback:", saveErr);
-        // Fallback: generate blob manually
         const pdfBlob: Blob = await worker.outputPdf("blob");
-        console.log("[snapshot-pdf] Blob generated:", pdfBlob.size, "bytes");
         const blobUrl = URL.createObjectURL(pdfBlob);
         const a = document.createElement("a");
         a.href = blobUrl;
-        a.download = `${safeName}.pdf`;
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -144,11 +168,7 @@ export function SnapshotPreviewModal({
         console.log("[snapshot-pdf] PDF downloaded via blob fallback");
       }
     } catch (err) {
-      // Log the FULL error with stack trace
       console.error("[snapshot-pdf] PDF generation failed:", err);
-      console.error("[snapshot-pdf] Error name:", (err as Error)?.name);
-      console.error("[snapshot-pdf] Error message:", (err as Error)?.message);
-      console.error("[snapshot-pdf] Error stack:", (err as Error)?.stack);
       setError(
         `PDF generation failed: ${(err as Error)?.message || "Unknown error"}. Check browser console for details.`
       );
@@ -156,6 +176,16 @@ export function SnapshotPreviewModal({
       setIsGenerating(false);
     }
   };
+
+  const ccList = snapshot ? parseCcEmails(snapshot.ccEmails) : [];
+  const toLabel = ccList.length > 0 ? ccList.join(", ") : "Client";
+  const sentLabel = snapshot
+    ? new Date(snapshot.sentAt).toLocaleString("en-US", {
+        dateStyle: "full",
+        timeStyle: "short",
+      })
+    : "";
+  const logoSrc = logoDataUri ?? "/tfc-logo.jpg";
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -181,27 +211,63 @@ export function SnapshotPreviewModal({
 
         {snapshot && !isLoading && (
           <div className="space-y-3">
-            {/* Subject line — same style as send-email-modal */}
-            <div className="border rounded-lg overflow-hidden">
-              <div className="px-4 py-2 bg-muted border-b">
-                <span className="text-xs text-muted-foreground">Subject: </span>
-                <span className="text-sm font-medium">{snapshot.subject}</span>
+            {/* Captured region: metadata header + email body.
+                Everything inside contentRef is rendered into the PDF. */}
+            <div className="border rounded-lg overflow-hidden bg-white">
+              <div ref={contentRef} className="bg-white text-sm">
+                {/* Branded metadata header */}
+                <div
+                  style={{
+                    fontFamily: "Arial, sans-serif",
+                    padding: "24px 32px",
+                    borderBottom: "2px solid #e5e7eb",
+                    marginBottom: 0,
+                    background: "#ffffff",
+                  }}
+                >
+                  <img
+                    src={logoSrc}
+                    alt="The Family Connection"
+                    style={{ height: 48, marginBottom: 16, display: "block" }}
+                    crossOrigin="anonymous"
+                  />
+                  <table
+                    style={{
+                      width: "100%",
+                      fontSize: 13,
+                      color: "#374151",
+                      borderCollapse: "collapse",
+                    }}
+                  >
+                    <tbody>
+                      <tr>
+                        <td style={{ padding: "4px 0", fontWeight: 600, width: 120 }}>From:</td>
+                        <td style={{ padding: "4px 0" }}>{snapshot.sentByEmail}</td>
+                      </tr>
+                      <tr>
+                        <td style={{ padding: "4px 0", fontWeight: 600 }}>To:</td>
+                        <td style={{ padding: "4px 0" }}>{toLabel}</td>
+                      </tr>
+                      <tr>
+                        <td style={{ padding: "4px 0", fontWeight: 600 }}>Subject:</td>
+                        <td style={{ padding: "4px 0" }}>{snapshot.subject}</td>
+                      </tr>
+                      <tr>
+                        <td style={{ padding: "4px 0", fontWeight: 600 }}>Sent:</td>
+                        <td style={{ padding: "4px 0" }}>{sentLabel}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Email body — exactly as the client received it */}
+                <div
+                  className="p-4"
+                  style={{ minHeight: 100 }}
+                  dangerouslySetInnerHTML={{ __html: snapshot.bodyHtml }}
+                />
               </div>
-
-              {/* Email body — visible, painted, ref'd for PDF capture.
-                  Identical rendering to send-email-modal preview. */}
-              <div
-                ref={contentRef}
-                className="p-4 bg-white text-sm"
-                style={{ minHeight: 100 }}
-                dangerouslySetInnerHTML={{ __html: snapshot.bodyHtml }}
-              />
             </div>
-
-            <p className="text-xs text-muted-foreground">
-              Sent: {new Date(snapshot.sentAt + "Z").toLocaleString()} by{" "}
-              {snapshot.sentByEmail}
-            </p>
           </div>
         )}
 
