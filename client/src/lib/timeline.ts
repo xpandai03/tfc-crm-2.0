@@ -229,10 +229,60 @@ export interface AssignmentMeta {
   assignedAt: string;
 }
 
+/**
+ * Match an email event to the closest unclaimed snapshot by templateId (+ date).
+ *
+ * - If templateId is provided: closest-by-date match among snapshots with
+ *   matching templateId, no time window restriction.
+ * - If templateId is null (e.g. [Email] note with unrecognized template name):
+ *   closest-by-date match within a 1-day window across all templates.
+ *
+ * Mutates `claimed` by adding the matched snapshot id.
+ */
+export function matchSnapshotForEmailEvent(
+  templateId: string | null | undefined,
+  eventTimeMs: number,
+  snapshots: EmailSnapshotMeta[] | undefined,
+  claimed: Set<number>,
+): number | undefined {
+  if (!snapshots || snapshots.length === 0 || !Number.isFinite(eventTimeMs)) {
+    return undefined;
+  }
+
+  let matched: number | undefined;
+  let bestDelta = Infinity;
+
+  if (templateId) {
+    for (const snap of snapshots) {
+      if (snap.templateId !== templateId) continue;
+      if (claimed.has(snap.id)) continue;
+      const delta = Math.abs(new Date(snap.sentAt).getTime() - eventTimeMs);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        matched = snap.id;
+      }
+    }
+  } else {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    for (const snap of snapshots) {
+      if (claimed.has(snap.id)) continue;
+      const delta = Math.abs(new Date(snap.sentAt).getTime() - eventTimeMs);
+      if (delta < DAY_MS && delta < bestDelta) {
+        bestDelta = delta;
+        matched = snap.id;
+      }
+    }
+  }
+
+  if (matched != null) claimed.add(matched);
+  return matched;
+}
+
 export function buildTimelineEvents(
   snapshot: ContactSnapshot | null | undefined,
   snapshots?: EmailSnapshotMeta[],
   assignments?: AssignmentMeta[],
+  claimedSnapshotIds: Set<number> = new Set<number>(),
 ): TimelineEvent[] {
   // Guard: null/undefined snapshot
   if (!snapshot || typeof snapshot !== "object") {
@@ -242,7 +292,6 @@ export function buildTimelineEvents(
 
   const events: TimelineEvent[] = [];
   const source = snapshot._source || "mock";
-  const claimedSnapshotIds = new Set<number>();
 
   // Process notes array
   try {
@@ -269,36 +318,13 @@ export function buildTimelineEvents(
               snapshotsCount: snapshots?.length ?? 0,
             });
             let matchedSnapshotId: number | undefined;
-            if (snapshots && snapshots.length > 0 && parsedDate) {
-              const noteTime = new Date(parsedDate).getTime();
-
-              if (emailParsed.templateId) {
-                let bestDelta = Infinity;
-                for (const snap of snapshots) {
-                  if (snap.templateId !== emailParsed.templateId) continue;
-                  if (claimedSnapshotIds.has(snap.id)) continue;
-                  const delta = Math.abs(new Date(snap.sentAt).getTime() - noteTime);
-                  if (delta < bestDelta) {
-                    bestDelta = delta;
-                    matchedSnapshotId = snap.id;
-                  }
-                }
-              } else {
-                const DAY_MS = 24 * 60 * 60 * 1000;
-                let bestDelta = Infinity;
-                for (const snap of snapshots) {
-                  if (claimedSnapshotIds.has(snap.id)) continue;
-                  const delta = Math.abs(new Date(snap.sentAt).getTime() - noteTime);
-                  if (delta < DAY_MS && delta < bestDelta) {
-                    bestDelta = delta;
-                    matchedSnapshotId = snap.id;
-                  }
-                }
-              }
-
-              if (matchedSnapshotId != null) {
-                claimedSnapshotIds.add(matchedSnapshotId);
-              }
+            if (parsedDate) {
+              matchedSnapshotId = matchSnapshotForEmailEvent(
+                emailParsed.templateId,
+                new Date(parsedDate).getTime(),
+                snapshots,
+                claimedSnapshotIds,
+              );
             }
 
             events.push({
