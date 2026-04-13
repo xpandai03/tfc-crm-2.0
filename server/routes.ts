@@ -3556,7 +3556,6 @@ export async function registerRoutes(
         dynamicFields: sanitizedFields,
       });
 
-      // Build audit note content (used for timeline logging after response is sent)
       const templates = await getTemplateList();
       const templateName = templates.find((t) => t.id === templateId)?.name || templateId;
       const dynamicFieldDetails: string[] = [];
@@ -3564,17 +3563,12 @@ export async function registerRoutes(
       if (sanitizedFields.appointmentDatetime) dynamicFieldDetails.push(`Appt: ${sanitizedFields.appointmentDatetime}`);
       if (sanitizedFields.surveyLink) dynamicFieldDetails.push(`Survey: ${sanitizedFields.surveyLink}`);
       const fieldsSuffix = dynamicFieldDetails.length > 0 ? ` | ${dynamicFieldDetails.join(", ")}` : "";
-      const noteContent = `[Email] ${templateName} sent${eccStatus === "missing" ? " (ECC missing)" : ""}${fieldsSuffix}`;
 
       console.log(
         `[send-email] ${sendResult.success ? "SUCCESS" : "FAILED"}: ` +
         `"${templateName}" to ${contactForEmail.email} by ${userEmail} (ECC: ${eccStatus})`
       );
 
-      // IMPORTANT: Return response IMMEDIATELY — don't block on timeline logging.
-      // The n8n addNote fetch can take 10-30s, and combined with the contact snapshot
-      // fetch earlier, the total request time can exceed Fly's 60s proxy timeout,
-      // causing the client to receive an empty response body.
       if (!sendResult.success) {
         return res.status(502).json({
           success: false,
@@ -3582,7 +3576,6 @@ export async function registerRoutes(
         });
       }
 
-      // Send success response to client immediately
       res.json({
         success: true,
         emailId: sendResult.emailId,
@@ -3590,6 +3583,7 @@ export async function registerRoutes(
 
       // Save email snapshot for qualifying templates (fire-and-forget)
       const QUALIFYING_TEMPLATES = ["appointment-confirmation", "post-appointment-survey", "intake-form-reminder"];
+      let snapshotSaved = false;
       if (QUALIFYING_TEMPLATES.includes(templateId) && sendResult.renderedHtml) {
         try {
           await saveEmailSnapshot({
@@ -3600,12 +3594,15 @@ export async function registerRoutes(
             sentByEmail: userEmail,
             ccEmails: sendResult.ccEmails,
           });
+          snapshotSaved = true;
         } catch (snapshotErr) {
-          console.error("[send-email] Failed to save email snapshot (non-blocking):", snapshotErr);
+          console.error(`[send-email] Snapshot save failed: contactId=${contactId} templateId=${templateId}`, snapshotErr);
         }
       }
 
-      // Log email_sent activity
+      const snapshotTag = (!snapshotSaved && QUALIFYING_TEMPLATES.includes(templateId)) ? " (ECC missing)" : "";
+      const noteContent = `[Email] ${templateName} sent${snapshotTag}${fieldsSuffix}`;
+
       await logActivity({
         type: "email_sent",
         actorEmail: userEmail,
@@ -3617,6 +3614,8 @@ export async function registerRoutes(
           template: templateId,
           templateName,
           recipientEmail: contactForEmail.email,
+          eccStatus,
+          snapshotSaved,
         },
       });
 
