@@ -2277,6 +2277,7 @@ export default function ContactDetail() {
             queryClient.invalidateQueries({ queryKey: ["/api/contact", contactId] });
             queryClient.invalidateQueries({ queryKey: ["/api/activity/contact", contactId] });
             queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/email-snapshots", contactId] });
           } else {
             toast({
               title: "Failed to send email",
