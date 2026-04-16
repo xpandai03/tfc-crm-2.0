@@ -253,11 +253,12 @@ export function matchSnapshotForEmailEvent(
   let bestDelta = Infinity;
 
   if (templateId) {
+    const MAX_MATCH_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
     for (const snap of snapshots) {
       if (snap.templateId !== templateId) continue;
       if (claimed.has(snap.id)) continue;
       const delta = Math.abs(new Date(snap.sentAt).getTime() - eventTimeMs);
-      if (delta < bestDelta) {
+      if (delta < MAX_MATCH_WINDOW_MS && delta < bestDelta) {
         bestDelta = delta;
         matched = snap.id;
       }
