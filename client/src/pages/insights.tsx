@@ -417,18 +417,47 @@ export default function Insights() {
     return b[1] - a[1];
   });
 
-  // Avg time per ACTIVE status code, sorted by avgSeconds desc.
-  // Skip codes with no logged data (countWithData === 0) — nothing to show.
-  const avgTimeByStatus = (statusDurationsData?.byStatusCode ?? [])
-    .filter((b) => isActiveStatus(b.statusCode) && b.countWithData > 0 && b.avgSeconds !== null)
-    .map((b) => ({
-      statusCode: b.statusCode,
-      label: getStatusLabel(b.statusCode),
-      avgDays: Math.floor((b.avgSeconds as number) / 86400),
-      countWithData: b.countWithData,
-      countTotal: b.countTotal,
-    }))
-    .sort((a, b) => b.avgDays - a.avgDays);
+  // Treat null OR zero seconds as "no measurable tenure". The endpoint contract
+  // says null = "no logged event places this contact on its current status",
+  // but in practice we also see a flood of 0-second readings (sub-86400-second
+  // floors from very recent transitions, plus a suspected backend zero-vs-null
+  // ambiguity). Both render identically as "no data" — better than letting
+  // 0-day entries pull averages down or dominate "longest" rankings.
+  const hasMeasurableDuration = (s: number | null | undefined): s is number =>
+    s !== null && s !== undefined && s > 0;
+
+  // Recompute per-code averages client-side from byContact so we can apply the
+  // zero-exclusion rule. The server's byStatusCode.avgSeconds excludes nulls
+  // but not zeros, so it can't be trusted here.
+  const samplesByCode = new Map<number, number[]>();
+  const totalsByCode = new Map<number, number>();
+  for (const row of statusDurationsData?.byContact ?? []) {
+    if (row.statusCode === null) continue;
+    totalsByCode.set(row.statusCode, (totalsByCode.get(row.statusCode) ?? 0) + 1);
+    if (!hasMeasurableDuration(row.timeInCurrentStatusSeconds)) continue;
+    const arr = samplesByCode.get(row.statusCode) ?? [];
+    arr.push(row.timeInCurrentStatusSeconds);
+    samplesByCode.set(row.statusCode, arr);
+  }
+  const avgTimeByStatus: Array<{
+    statusCode: number;
+    label: string;
+    avgDays: number;
+    countWithData: number;
+    countTotal: number;
+  }> = [];
+  samplesByCode.forEach((samples, statusCode) => {
+    if (!isActiveStatus(statusCode)) return;
+    const avgSeconds = samples.reduce((s, v) => s + v, 0) / samples.length;
+    avgTimeByStatus.push({
+      statusCode,
+      label: getStatusLabel(statusCode),
+      avgDays: Math.floor(avgSeconds / 86400),
+      countWithData: samples.length,
+      countTotal: totalsByCode.get(statusCode) ?? samples.length,
+    });
+  });
+  avgTimeByStatus.sort((a, b) => b.avgDays - a.avgDays);
   const maxAvgDays = avgTimeByStatus.length > 0 ? Math.max(...avgTimeByStatus.map((a) => a.avgDays), 1) : 1;
 
   // Build a contactId → name lookup once so the "Longest in current status"
@@ -442,7 +471,7 @@ export default function Insights() {
   const longestInCurrentStatus = (statusDurationsData?.byContact ?? [])
     .filter(
       (b) =>
-        b.timeInCurrentStatusSeconds !== null &&
+        hasMeasurableDuration(b.timeInCurrentStatusSeconds) &&
         b.statusCode !== null &&
         isActiveStatus(b.statusCode),
     )

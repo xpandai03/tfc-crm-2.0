@@ -297,10 +297,15 @@ export default function ContactDetail() {
     staleTime: 60_000,
   });
 
+  // Treat null OR zero seconds as "no measurable tenure" — see notes on the
+  // insights page for the rationale (sub-86400-second floors and the zero-vs-
+  // null ambiguity both render as the empty state).
   const statusDurationDays = useMemo(() => {
     if (!statusDurationsData || contactId === null) return null;
     const row = statusDurationsData.byContact.find((b) => b.contactId === contactId);
-    if (!row || row.timeInCurrentStatusSeconds === null) return null;
+    if (!row || row.timeInCurrentStatusSeconds === null || row.timeInCurrentStatusSeconds <= 0) {
+      return null;
+    }
     return Math.floor(row.timeInCurrentStatusSeconds / 86400);
   }, [statusDurationsData, contactId]);
 
@@ -1409,7 +1414,14 @@ export default function ContactDetail() {
                       {getStatusLabelByCode(contact.statusCode)} for {statusDurationDays}{" "}
                       {statusDurationDays === 1 ? "day" : "days"}
                     </p>
-                  ) : null}
+                  ) : (
+                    <div data-testid="text-status-duration-empty">
+                      <p className="text-2xl font-bold text-foreground">—</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Tracking begins on next status change
+                      </p>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
               <Card className="overflow-visible bg-white dark:bg-gray-800/90">
