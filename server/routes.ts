@@ -60,8 +60,17 @@ import {
   type SyncPayloadContact,
   type MigrationContact,
 } from "./sync/db";
-import { logActivity, getRecentActivity, getStaffActivitySummary, getActivityForContact } from "./activity/db";
-import { isRestrictedUser } from "@shared/access-control";
+import {
+  logActivity,
+  logStatusChange,
+  getRecentActivity,
+  getStaffActivitySummary,
+  getActivityForContact,
+  getStatusDurations,
+} from "./activity/db";
+import { isRestrictedUser, canAccessReferralUpload } from "@shared/access-control";
+import { getStatusLabel } from "@shared/status-codes";
+import { extractReferralData } from "./referral/extract";
 import * as XLSX from "xlsx";
 import * as path from "path";
 
@@ -750,6 +759,7 @@ export async function registerRoutes(
                 priority: (detailed.priority as string) || null,
                 rfsLink: (detailed.rfsLink as string) || (detailed.rfs as string) || null,
                 documentLink: (detailed.documentLink as string) || (detailed.documents as string) || null,
+                intakeSource: syncContact.intakeSource,
                 statusCode,
                 umbrella,
                 status: syncContact.status || "intake",
@@ -2075,32 +2085,28 @@ export async function registerRoutes(
 
       if (DATA_MODE === "live") {
         // Write-through: update sync cache first for instant UI feedback
-        const statusCodeToString: Record<number, string> = {
-          100: "intake", 101: "waiting", 102: "waiting",
-          200: "ready_to_schedule", 201: "waiting", 202: "scheduled", 203: "waiting",
-          300: "on_hold", 400: "closed",
-        };
+        const prev = await getSyncContactById(contactId);
         try {
-          const prev = await getSyncContactById(contactId);
-          await updateSyncContactStatus(contactId, statusCode, statusCodeToString[statusCode] || "unknown");
+          await updateSyncContactStatus(contactId, statusCode, getStatusLabel(statusCode));
           console.log(`[update-status] Sync cache updated for contactId ${contactId}`);
-
-          await logActivity({
-            type: "status_changed",
-            actorEmail: (req as any).user?.email || "system",
-            entityType: "contact",
-            entityId: String(contactId),
-            entityName: prev?.name || "",
-            metadata: {
-              from: prev?.statusCode ?? "",
-              fromLabel: prev?.status ?? "",
-              to: statusCode,
-              toLabel: statusCodeToString[statusCode] || "unknown",
-            },
-          });
         } catch (e) {
+          // Cache failure is non-fatal — n8n sync will reconcile.
           console.warn(`[update-status] Failed to update sync cache:`, e);
         }
+
+        // Status logging is hardened: errors propagate to the route handler,
+        // which surfaces a 500 to the caller. status_changed events are the
+        // only authoritative record of when a contact entered a status, so
+        // silent drops would corrupt the time-in-status insights.
+        await logStatusChange({
+          actorEmail: (req as any).user?.email || "system",
+          contactId,
+          contactName: prev?.name || "",
+          fromCode: prev?.statusCode ?? null,
+          fromLabel: prev?.status ?? null,
+          toCode: statusCode,
+          toLabel: getStatusLabel(statusCode),
+        });
 
         // Clear board cache so next read picks up the change
         boardCache = null;
@@ -2147,23 +2153,12 @@ export async function registerRoutes(
         }
       } else {
         // Mock mode - update by index
-        const statusCodeToString: Record<number, string> = {
-          100: "intake",
-          101: "waiting",
-          102: "waiting",
-          200: "ready_to_schedule",
-          201: "waiting",
-          202: "scheduled",
-          203: "waiting",
-          300: "on_hold",
-          400: "closed",
-        };
-
         const contact = mockContacts[contactId - 1];
         if (!contact) {
           return res.status(404).json({ error: "Contact not found", contactId });
         }
-        contact.status = statusCodeToString[statusCode] || contact.status;
+        const label = getStatusLabel(statusCode);
+        contact.status = label === "unknown" ? contact.status : label;
         return res.json({ success: true, contactId, newStatus: statusCode });
       }
     } catch (error) {
@@ -3357,6 +3352,51 @@ export async function registerRoutes(
     }
   });
 
+  // POST /api/referral/extract — Upload a referral PDF and get extracted JSON back.
+  // Gated to the REFERRAL_UPLOAD_EMAILS allowlist. PDF is processed in memory only
+  // (never written to disk) and sent to AWS Bedrock for extraction. Extracted patient
+  // data is never logged.
+  const referralUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 20 * 1024 * 1024 },
+    fileFilter: (_req: any, file: any, cb: any) => {
+      if (file.mimetype === "application/pdf") {
+        cb(null, true);
+      } else {
+        cb(new Error("Only PDF files are accepted"));
+      }
+    },
+  });
+
+  app.post("/api/referral/extract", referralUpload.single("pdf"), async (req: any, res: any) => {
+    const userEmail = req.user?.email?.toLowerCase() ?? "";
+    if (!canAccessReferralUpload(userEmail)) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: "No PDF file provided" });
+    }
+
+    try {
+      const extracted = await extractReferralData(req.file.buffer);
+
+      const hasAnyData = Object.values(extracted).some((v) => v !== null);
+      if (!hasAnyData) {
+        return res.status(422).json({
+          error: "This PDF does not appear to contain patient referral information. Please upload the complete referral document.",
+        });
+      }
+
+      return res.json(extracted);
+    } catch (err) {
+      console.error("[api/referral/extract] Extraction failed:", (err as Error).message);
+      return res.status(500).json({
+        error: "Failed to process the referral PDF. Please try again.",
+      });
+    }
+  });
+
   // GET /api/email-config - Provider list + location list for the Send Email modal
   app.get("/api/email-config", (_req, res) => {
     try {
@@ -3802,7 +3842,7 @@ export async function registerRoutes(
   // Direct Intake API (Form → CRM DB, no Excel/n8n in the path)
   // ============================================================================
 
-  app.post("/api/intake", async (req, res) => {
+  app.post("/api/intake", async (req: any, res) => {
     try {
       const b = req.body;
 
@@ -3818,6 +3858,13 @@ export async function registerRoutes(
         ? b.reasonForTherapy.join(", ")
         : s(b.reasonForTherapy);
 
+      // Optional intake source flag — default preserves existing public RFS behavior
+      const rawSource = typeof b.source === "string" ? b.source.trim() : "";
+      const isUploadedReferral = rawSource === "uploaded_referral";
+      const intakeSource = isUploadedReferral ? "uploaded_referral" : "website_form";
+      const submissionSource = isUploadedReferral ? "uploaded_referral" : "rfs_v2";
+      const referralAuth = s(b.referralAuth) || s(b.referralNumber);
+
       // Build readable last_note for timeline display
       const lines: string[] = [`Intake ${now}`];
       if (s(b.requestingFor)) lines.push(`Requesting For: ${s(b.requestingFor)}`);
@@ -3826,6 +3873,7 @@ export async function registerRoutes(
       if (s(b.modality)) lines.push(`Modality: ${s(b.modality)}`);
       if (s(b.insurancePayer)) lines.push(`Insurance: ${s(b.insurancePayer)}`);
       if (s(b.referralSource)) lines.push(`Referral: ${s(b.referralSource)}`);
+      if (referralAuth) lines.push(`Referral #: ${referralAuth}`);
       if (s(b.notes)) lines.push(`Notes: ${s(b.notes)}`);
       const lastNote = lines.join("\n");
 
@@ -3836,7 +3884,7 @@ export async function registerRoutes(
       let submissionId: number | null = null;
       try {
         submissionId = await insertFormSubmission({
-          source: "rfs_v2",
+          source: submissionSource,
           contactId,
           name: b.name.trim(),
           payload: b,
@@ -3852,6 +3900,8 @@ export async function registerRoutes(
         phone: s(b.phone),
         lastNote,
         sourceSubmissionId: submissionId,
+        intakeSource,
+        referralAuth,
 
         serviceRequested: s(b.serviceRequested) || reasonForTherapy,
         requestingFor: s(b.requestingFor),
@@ -3884,16 +3934,30 @@ export async function registerRoutes(
 
       boardCache = null;
 
-      await logActivity({
-        type: "submission_received",
-        actorEmail: "system",
-        entityType: "contact",
-        entityId: String(contactId),
-        entityName: b.name.trim(),
-        metadata: { formType: "Intake", source: "rfs_v2" },
-      });
+      if (isUploadedReferral) {
+        await logActivity({
+          type: "referral_uploaded",
+          actorEmail: req.user?.email || "system",
+          entityType: "contact",
+          entityId: String(contactId),
+          entityName: b.name.trim(),
+          metadata: {
+            referralSource: s(b.referralSource) || "",
+            staffName: s(b.formCompletedBy) || req.user?.name || "",
+          },
+        });
+      } else {
+        await logActivity({
+          type: "submission_received",
+          actorEmail: "system",
+          entityType: "contact",
+          entityId: String(contactId),
+          entityName: b.name.trim(),
+          metadata: { formType: "Intake", source: "rfs_v2" },
+        });
+      }
 
-      console.log(`[INTAKE] New contact created: ${contactId} (${b.name.trim()})`);
+      console.log(`[INTAKE] New contact created: ${contactId} (${b.name.trim()}) source=${intakeSource}`);
 
       return res.json({ success: true, contactId });
     } catch (error) {
@@ -5111,6 +5175,21 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[activity] Error fetching staff summary:", error);
       return res.status(500).json({ error: "Failed to fetch staff summary" });
+    }
+  });
+
+  // Time-in-status: per-contact tenure and per-code aggregates.
+  // Auth: same surface as the rest of /api/activity (session-mounted middleware).
+  // NULL byContact[].timeInCurrentStatusSeconds means "no logged event places
+  // this contact on its current status_code" — typically a sync-driven contact
+  // whose status mutations predate the status_changed logging coverage.
+  app.get("/api/insights/status-durations", async (_req, res) => {
+    try {
+      const result = await getStatusDurations();
+      return res.json(result);
+    } catch (error) {
+      console.error("[insights] Error computing status durations:", error);
+      return res.status(500).json({ error: "Failed to compute status durations" });
     }
   });
 

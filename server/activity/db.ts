@@ -24,7 +24,8 @@ export type ActivityType =
   | "email_sent"
   | "therapy_notes_started"
   | "therapy_notes_created"
-  | "therapy_notes_failed";
+  | "therapy_notes_failed"
+  | "referral_uploaded";
 
 export interface LogActivityParams {
   type: ActivityType;
@@ -62,12 +63,39 @@ export async function initActivityTable(): Promise<void> {
       entity_id     TEXT,
       entity_name   TEXT,
       metadata      TEXT NOT NULL DEFAULT '{}',
-      created_at    TEXT NOT NULL DEFAULT (NOW())
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+
+  // Idempotent migration: pre-existing installs had created_at TEXT.
+  // Convert in place if still TEXT; preserves existing ISO-string values via cast.
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'activity_log'
+          AND column_name = 'created_at'
+          AND data_type = 'text'
+      ) THEN
+        ALTER TABLE activity_log
+          ALTER COLUMN created_at DROP DEFAULT,
+          ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at::timestamptz,
+          ALTER COLUMN created_at SET DEFAULT NOW();
+      END IF;
+    END $$;
+  `);
+
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_activity_log_created
       ON activity_log(created_at DESC);
+  `);
+
+  // Supports the per-contact most-recent-status-event lookup used by /api/insights/status-durations.
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_activity_log_status_lookup
+      ON activity_log(entity_id, type, created_at DESC)
+      WHERE type = 'status_changed';
   `);
 }
 
@@ -96,6 +124,47 @@ export async function logActivity(params: LogActivityParams): Promise<void> {
 }
 
 // ============================================================================
+// Hardened Status-Change Logging
+// ============================================================================
+//
+// status_changed events feed the time-in-status insights endpoint and are the
+// only authoritative record of when a contact entered its current status. We
+// deliberately do NOT swallow errors here — callers must decide what to do.
+// Other activity types continue to use the best-effort logActivity().
+//
+// Schema invariant (matches the existing UI write path at routes.ts):
+//   metadata = { from, fromLabel, to, toLabel }
+
+export interface LogStatusChangeParams {
+  actorEmail: string;
+  contactId: number;
+  contactName?: string;
+  fromCode: number | null;
+  fromLabel?: string | null;
+  toCode: number;
+  toLabel?: string | null;
+}
+
+export async function logStatusChange(p: LogStatusChangeParams): Promise<void> {
+  const pool = getPool();
+  await pool.query(
+    `INSERT INTO activity_log (type, actor_email, entity_type, entity_id, entity_name, metadata)
+     VALUES ('status_changed', $1, 'contact', $2, $3, $4)`,
+    [
+      p.actorEmail,
+      String(p.contactId),
+      p.contactName ?? "",
+      JSON.stringify({
+        from: p.fromCode ?? "",
+        fromLabel: p.fromLabel ?? "",
+        to: p.toCode,
+        toLabel: p.toLabel ?? "",
+      }),
+    ],
+  );
+}
+
+// ============================================================================
 // Read
 // ============================================================================
 
@@ -110,7 +179,7 @@ export async function getRecentActivity(limit: number = 100): Promise<Activity[]
       entity_id     AS "entityId",
       entity_name   AS "entityName",
       metadata,
-      created_at    AS "createdAt"
+      created_at::text AS "createdAt"
     FROM activity_log
     ORDER BY created_at DESC
     LIMIT $1
@@ -143,7 +212,7 @@ export async function getActivityForContact(contactId: number, limit: number = 5
       entity_id     AS "entityId",
       entity_name   AS "entityName",
       metadata,
-      created_at    AS "createdAt"
+      created_at::text AS "createdAt"
     FROM activity_log
     WHERE entity_type = 'contact' AND entity_id = $1
     ORDER BY created_at DESC
@@ -185,6 +254,137 @@ export async function getStaffActivitySummary(days: number = 7): Promise<StaffAc
     ORDER BY count DESC
   `, [`${days} days`]);
   return rows as StaffActivitySummary[];
+}
+
+// ============================================================================
+// Time-in-Status Aggregation
+// ============================================================================
+//
+// "Time in current status" = NOW() - timestamp of the most recent
+// status_changed event whose `to` equals the contact's current status_code.
+//
+// Returns NULL for that contact when no logged event places them on their
+// current status — for example, sync-driven status mutations were not logged
+// before this feature shipped, and the n8n batch sync still doesn't log.
+// NULL is the honest answer; we do not synthesize a duration.
+
+export interface ContactStatusDuration {
+  contactId: number;
+  statusCode: number | null;
+  timeInCurrentStatusSeconds: number | null;
+}
+
+export interface StatusDurationAggregate {
+  statusCode: number;
+  countTotal: number;
+  countWithData: number;
+  avgSeconds: number | null;
+  medianSeconds: number | null;
+  p90Seconds: number | null;
+}
+
+export interface StatusDurationsResult {
+  byContact: ContactStatusDuration[];
+  byStatusCode: StatusDurationAggregate[];
+  generatedAt: string;
+}
+
+export async function getStatusDurations(): Promise<StatusDurationsResult> {
+  const pool = getPool();
+
+  const { rows: contactRows } = await pool.query(`
+    WITH last_landing AS (
+      SELECT
+        a.entity_id,
+        (a.metadata::jsonb ->> 'to')::int AS landed_code,
+        a.created_at::timestamptz AS landed_at,
+        ROW_NUMBER() OVER (
+          PARTITION BY a.entity_id, (a.metadata::jsonb ->> 'to')
+          ORDER BY a.created_at::timestamptz DESC
+        ) AS rn
+      FROM activity_log a
+      WHERE a.type = 'status_changed'
+        AND a.entity_type = 'contact'
+    )
+    SELECT
+      c.contact_id          AS "contactId",
+      c.status_code         AS "statusCode",
+      CASE
+        WHEN ll.landed_at IS NOT NULL
+        THEN EXTRACT(EPOCH FROM (NOW() - ll.landed_at))
+        ELSE NULL
+      END AS "timeInCurrentStatusSeconds"
+    FROM sync_contacts c
+    LEFT JOIN last_landing ll
+      ON ll.entity_id   = c.contact_id::text
+     AND ll.landed_code = c.status_code
+     AND ll.rn          = 1
+    WHERE c.contact_id IS NOT NULL
+    ORDER BY "timeInCurrentStatusSeconds" DESC NULLS LAST
+  `);
+
+  const byContact: ContactStatusDuration[] = (contactRows as Array<{
+    contactId: number;
+    statusCode: number | null;
+    timeInCurrentStatusSeconds: string | number | null;
+  }>).map((r) => ({
+    contactId: Number(r.contactId),
+    statusCode: r.statusCode === null ? null : Number(r.statusCode),
+    timeInCurrentStatusSeconds:
+      r.timeInCurrentStatusSeconds === null
+        ? null
+        : Number(r.timeInCurrentStatusSeconds),
+  }));
+
+  const groups = new Map<number, number[]>();
+  const totals = new Map<number, number>();
+  for (const row of byContact) {
+    if (row.statusCode === null) continue;
+    totals.set(row.statusCode, (totals.get(row.statusCode) ?? 0) + 1);
+    if (row.timeInCurrentStatusSeconds !== null) {
+      const arr = groups.get(row.statusCode) ?? [];
+      arr.push(row.timeInCurrentStatusSeconds);
+      groups.set(row.statusCode, arr);
+    }
+  }
+
+  const byStatusCode: StatusDurationAggregate[] = [];
+  totals.forEach((countTotal, statusCode) => {
+    const samples = (groups.get(statusCode) ?? []).slice().sort((a, b) => a - b);
+    const countWithData = samples.length;
+    const avgSeconds =
+      countWithData === 0
+        ? null
+        : samples.reduce((s, v) => s + v, 0) / countWithData;
+    const medianSeconds = countWithData === 0 ? null : percentile(samples, 0.5);
+    const p90Seconds = countWithData === 0 ? null : percentile(samples, 0.9);
+    byStatusCode.push({
+      statusCode,
+      countTotal,
+      countWithData,
+      avgSeconds,
+      medianSeconds,
+      p90Seconds,
+    });
+  });
+  byStatusCode.sort((a, b) => a.statusCode - b.statusCode);
+
+  return {
+    byContact,
+    byStatusCode,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function percentile(sortedAsc: number[], p: number): number {
+  if (sortedAsc.length === 0) return 0;
+  if (sortedAsc.length === 1) return sortedAsc[0];
+  const idx = (sortedAsc.length - 1) * p;
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sortedAsc[lo];
+  const frac = idx - lo;
+  return sortedAsc[lo] * (1 - frac) + sortedAsc[hi] * frac;
 }
 
 // ============================================================================
@@ -289,6 +489,12 @@ function formatActivitySummary(
       const reason = String(metadata.failureReason || "unknown error");
       const short = reason.length > 80 ? reason.slice(0, 80) + "…" : reason;
       return `TherapyNotes creation failed for ${name}: ${short}`;
+    }
+
+    case "referral_uploaded": {
+      const staff = String(metadata.staffName || "staff");
+      const source = String(metadata.referralSource || "referral");
+      return `Referral uploaded by ${staff} — ${source} for ${name}`;
     }
 
     default:
