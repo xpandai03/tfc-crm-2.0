@@ -12,6 +12,8 @@
 
 import crypto from "crypto";
 import { getPool } from "../db/pool";
+import { logStatusChange } from "../activity/db";
+import { getStatusLabel } from "@shared/status-codes";
 
 const MONTH_NAMES: Record<string, number> = {
   january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
@@ -149,6 +151,9 @@ export interface SyncContact {
   lastContact: string | null;
   lastNote: string | null;
 
+  // Origin
+  intakeSource: string | null;
+
   // Sync metadata
   syncedAt: string;
   syncHash: string | null;
@@ -224,6 +229,8 @@ export async function initSyncTables(): Promise<void> {
       last_contact       TEXT,
       last_note          TEXT,
 
+      intake_source      TEXT DEFAULT 'website_form',
+
       synced_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       sync_hash          TEXT
     )
@@ -287,6 +294,9 @@ export async function initSyncTables(): Promise<void> {
     } catch (_) { /* column already exists */ }
     try {
       await pool.query(`ALTER TABLE sync_contacts ADD COLUMN IF NOT EXISTS source_submission_id INTEGER`);
+    } catch (_) { /* column already exists */ }
+    try {
+      await pool.query(`ALTER TABLE sync_contacts ADD COLUMN IF NOT EXISTS intake_source TEXT DEFAULT 'website_form'`);
     } catch (_) { /* column already exists */ }
   }
 
@@ -581,6 +591,7 @@ export async function getAllSyncContacts(): Promise<SyncContact[]> {
       document_link AS "documentLink",
       last_contact AS "lastContact",
       last_note AS "lastNote",
+      intake_source AS "intakeSource",
       synced_at AS "syncedAt",
       sync_hash AS "syncHash"
     FROM sync_contacts
@@ -824,6 +835,7 @@ export async function getSyncContactById(contactId: number): Promise<SyncContact
       document_link AS "documentLink",
       last_contact AS "lastContact",
       last_note AS "lastNote",
+      intake_source AS "intakeSource",
       synced_at AS "syncedAt",
       sync_hash AS "syncHash"
     FROM sync_contacts
@@ -1008,6 +1020,8 @@ export async function insertIntakeContact(fields: {
   zipCode?: string | null;
   county?: string | null;
   sourceSubmissionId?: number | null;
+  intakeSource?: string | null;
+  referralAuth?: string | null;
 }): Promise<void> {
   const pool = getPool();
   const today = new Date().toISOString().split("T")[0];
@@ -1023,12 +1037,14 @@ export async function insertIntakeContact(fields: {
       prior_provider, preferred_contact, custody, flags, priority,
 
       insurance_payer, insurance_plan, insurance_id,
+      referral_auth,
 
       patient_dob, gender,
 
       street_address, city, state, zip_code, county,
 
       last_contact, last_note,
+      intake_source,
       synced_at, sync_hash,
       source_submission_id
     ) VALUES (
@@ -1041,14 +1057,16 @@ export async function insertIntakeContact(fields: {
       $15, $16, $17, $18, $19,
 
       $20, $21, $22,
+      $23,
 
-      $23, $24,
+      $24, $25,
 
-      $25, $26, $27, $28, $29,
+      $26, $27, $28, $29, $30,
 
-      $30, $31,
-      NOW(), $32,
-      $33
+      $31, $32,
+      $33,
+      NOW(), $34,
+      $35
     )
     ON CONFLICT(contact_id) DO UPDATE SET
       name = EXCLUDED.name,
@@ -1068,6 +1086,7 @@ export async function insertIntakeContact(fields: {
       insurance_payer = COALESCE(EXCLUDED.insurance_payer, sync_contacts.insurance_payer),
       insurance_plan = COALESCE(EXCLUDED.insurance_plan, sync_contacts.insurance_plan),
       insurance_id = COALESCE(EXCLUDED.insurance_id, sync_contacts.insurance_id),
+      referral_auth = COALESCE(EXCLUDED.referral_auth, sync_contacts.referral_auth),
       patient_dob = COALESCE(EXCLUDED.patient_dob, sync_contacts.patient_dob),
       gender = COALESCE(EXCLUDED.gender, sync_contacts.gender),
       street_address = COALESCE(EXCLUDED.street_address, sync_contacts.street_address),
@@ -1080,6 +1099,7 @@ export async function insertIntakeContact(fields: {
         THEN sync_contacts.last_note || chr(10) || EXCLUDED.last_note
         ELSE COALESCE(EXCLUDED.last_note, sync_contacts.last_note)
       END,
+      intake_source = COALESCE(EXCLUDED.intake_source, sync_contacts.intake_source),
       source_submission_id = COALESCE(EXCLUDED.source_submission_id, sync_contacts.source_submission_id),
       synced_at = NOW()
   `, [
@@ -1107,6 +1127,7 @@ export async function insertIntakeContact(fields: {
     fields.insurancePayer || null,
     fields.insurancePlan || null,
     fields.insuranceId || null,
+    fields.referralAuth || null,
 
     fields.patientDob || null,
     fields.gender || null,
@@ -1119,6 +1140,7 @@ export async function insertIntakeContact(fields: {
 
     today,
     fields.lastNote || null,
+    fields.intakeSource || "website_form",
     `intake-${fields.contactId}`,
     fields.sourceSubmissionId ?? null,
   ]);
@@ -1323,7 +1345,10 @@ export async function enrichSyncContact(contactId: number, detailed: Record<stri
  * Used by the manual "Sync Contact Now" feature.
  * IMPORTANT: This does NOT delete other contacts — it only upserts one row.
  */
-export async function upsertSingleContact(contact: SyncPayloadContact): Promise<void> {
+export async function upsertSingleContact(
+  contact: SyncPayloadContact,
+  options: { actorEmail?: string } = {},
+): Promise<void> {
   const pool = getPool();
   const id = Number(contact.contactId);
   if (isNaN(id)) return;
@@ -1340,6 +1365,16 @@ export async function upsertSingleContact(contact: SyncPayloadContact): Promise<
 
   const normalizedDateAdded =
     normalizeDateValue(contact.dateAdded) ?? deriveDateFromDays(contact.daysOnWaitlist);
+
+  // Capture prior status for status_changed activity logging. We read this
+  // BEFORE the upsert so we can detect a transition. New contacts (no prior
+  // row) are creations, not transitions, and are intentionally not logged.
+  const prior = await pool.query<{ status_code: number | null; name: string | null }>(
+    `SELECT status_code, name FROM sync_contacts WHERE contact_id = $1`,
+    [id],
+  );
+  const priorStatusCode = prior.rows[0]?.status_code ?? null;
+  const priorName = prior.rows[0]?.name ?? null;
 
   await pool.query(`
     INSERT INTO sync_contacts (
@@ -1458,6 +1493,25 @@ export async function upsertSingleContact(contact: SyncPayloadContact): Promise<
   ]);
 
   console.log(`[sync-db] Upserted single contact ${id} (no delete of other rows)`);
+
+  // Log status_changed only when an existing contact's code actually moved.
+  // Hardened: errors propagate to the caller (matches the UI write path).
+  const newStatusCode = num(contact.statusCode);
+  if (
+    priorStatusCode !== null &&
+    newStatusCode !== null &&
+    priorStatusCode !== newStatusCode
+  ) {
+    await logStatusChange({
+      actorEmail: options.actorEmail || "system",
+      contactId: id,
+      contactName: priorName ?? str(contact.name) ?? "",
+      fromCode: priorStatusCode,
+      fromLabel: getStatusLabel(priorStatusCode),
+      toCode: newStatusCode,
+      toLabel: getStatusLabel(newStatusCode),
+    });
+  }
 }
 
 // ============================================================================
@@ -1926,9 +1980,13 @@ export async function fullSyncMigrationContacts(
       try {
         const hash = `fullsync-${c.contactId}-${c.statusCode}-${(c.lastNote || "").length}`;
         const checkResult = await client.query(
-          `SELECT sync_hash FROM sync_contacts WHERE contact_id = $1`, [c.contactId]
+          `SELECT sync_hash, status_code, name FROM sync_contacts WHERE contact_id = $1`,
+          [c.contactId],
         );
-        const existing = checkResult.rows[0] as { sync_hash: string | null } | undefined;
+        const existing = checkResult.rows[0] as
+          | { sync_hash: string | null; status_code: number | null; name: string | null }
+          | undefined;
+        const priorStatusCode = existing?.status_code ?? null;
 
         const result = await client.query(upsertSql, [
           c.contactId, c.name, c.email, c.phone, c.status, c.statusCode,
@@ -1950,6 +2008,27 @@ export async function fullSyncMigrationContacts(
           updated++;
         } else {
           unchanged++;
+        }
+
+        // status_changed log: only on real transitions for existing contacts.
+        // New rows are creations (priorStatusCode null) — not logged.
+        const newStatusCode =
+          c.statusCode === undefined || c.statusCode === null ? null : Number(c.statusCode);
+        if (
+          priorStatusCode !== null &&
+          newStatusCode !== null &&
+          !Number.isNaN(newStatusCode) &&
+          priorStatusCode !== newStatusCode
+        ) {
+          await logStatusChange({
+            actorEmail: "system",
+            contactId: c.contactId,
+            contactName: existing?.name ?? c.name ?? "",
+            fromCode: priorStatusCode,
+            fromLabel: getStatusLabel(priorStatusCode),
+            toCode: newStatusCode,
+            toLabel: getStatusLabel(newStatusCode),
+          });
         }
       } catch (err) {
         errors.push({
