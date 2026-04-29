@@ -5,6 +5,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { PageLayout } from "@/components/layout/page-layout";
 import { AIInsightPanel } from "@/components/ui/ai-insight-panel";
 import { getStatusLabel } from "@/components/ui/status-badge";
+import { getStatusLabel as getStatusLabelByCode } from "@/lib/status-config";
 import { Timeline } from "@/components/ui/timeline";
 import { TimelineErrorBoundary } from "@/components/ui/timeline-error-boundary";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -64,6 +65,7 @@ import {
   Save,
   X,
   Trash2,
+  Hourglass,
 } from "lucide-react";
 import { getContactSnapshot, updateContactStatus, addNoteToContact, deleteNote, deleteAssignment as deleteAssignmentApi, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, syncContactFromExcel, updateContactIntake, updateContactIdentity, deleteContact, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
 import { ReminderModal } from "@/components/ui/reminder-modal";
@@ -273,6 +275,34 @@ export default function ContactDetail() {
   });
 
   const contact = contactData;
+
+  // Time-in-status: pulls the same payload the insights page uses, finds this
+  // contact's row. Returns null when no logged status_changed event places this
+  // contact on its current status_code (e.g., n8n-driven contacts with no UI
+  // mutation since logging shipped). React Query dedupes across pages.
+  const { data: statusDurationsData } = useQuery<{
+    byContact: Array<{
+      contactId: number;
+      statusCode: number | null;
+      timeInCurrentStatusSeconds: number | null;
+    }>;
+  }>({
+    queryKey: ["/api/insights/status-durations"],
+    queryFn: async () => {
+      const res = await fetch("/api/insights/status-durations", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch status durations");
+      return res.json();
+    },
+    enabled: isValidId,
+    staleTime: 60_000,
+  });
+
+  const statusDurationDays = useMemo(() => {
+    if (!statusDurationsData || contactId === null) return null;
+    const row = statusDurationsData.byContact.find((b) => b.contactId === contactId);
+    if (!row || row.timeInCurrentStatusSeconds === null) return null;
+    return Math.floor(row.timeInCurrentStatusSeconds / 86400);
+  }, [statusDurationsData, contactId]);
 
   useEffect(() => {
     if (contactData?._source) {
@@ -1200,10 +1230,19 @@ export default function ContactDetail() {
                           </div>
                         ) : (
                           <div className="group/identity">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <h1 className="text-2xl font-semibold text-foreground" data-testid="text-contact-name">
                                 {displayName}
                               </h1>
+                              {contact?.intakeSource === "uploaded_referral" && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-blue-600 border-blue-300 dark:text-blue-400 dark:border-blue-700"
+                                  data-testid="badge-uploaded-referral"
+                                >
+                                  Uploaded Referral
+                                </Badge>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1352,6 +1391,25 @@ export default function ContactDetail() {
                       {daysWaiting}
                     </p>
                   )}
+                </CardContent>
+              </Card>
+              <Card className="overflow-visible bg-white dark:bg-gray-800/90">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <Hourglass className="h-4 w-4" />
+                    <span className="text-xs">Status Duration</span>
+                  </div>
+                  {isLoading ? (
+                    <Skeleton className="h-5 w-24" />
+                  ) : statusDurationDays !== null && contact?.statusCode !== undefined ? (
+                    <p
+                      className="text-sm font-medium text-foreground"
+                      data-testid="text-status-duration"
+                    >
+                      {getStatusLabelByCode(contact.statusCode)} for {statusDurationDays}{" "}
+                      {statusDurationDays === 1 ? "day" : "days"}
+                    </p>
+                  ) : null}
                 </CardContent>
               </Card>
               <Card className="overflow-visible bg-white dark:bg-gray-800/90">

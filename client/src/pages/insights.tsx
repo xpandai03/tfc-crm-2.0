@@ -7,10 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/page-loader";
 import { FallbackBanner } from "@/components/ui/fallback-banner";
-import { Download, AlertCircle, ChevronRight, Users } from "lucide-react";
+import { Download, AlertCircle, ChevronRight, Users, Hourglass } from "lucide-react";
+import { useLocation } from "wouter";
 import { getWaitlistSummary, getWaitlistContacts, type WithSource } from "@/lib/api";
 import { computeDaysWaiting } from "@/lib/days-waiting";
-import { useDataSource } from "@/lib/data-source-context";
+import { useDataSource, type DataSource } from "@/lib/data-source-context";
 import { normalizeInsurance } from "@/lib/insurance-utils";
 import { useAuth } from "@/lib/auth-context";
 import { isRestrictedUser } from "@shared/access-control";
@@ -93,7 +94,7 @@ export default function Insights() {
   const { user } = useAuth();
   if (isRestrictedUser(user?.email)) return <Redirect to="/" />;
 
-  const { updateSummarySource, updateContactsSource, updateSyncTime, lastSyncTime, dataMode, summarySource, contactsSource, isContactsLive, isFullyLive } = useDataSource();
+  const { updateSummarySource, updateContactsSource, updateSyncTime, summarySource, isFullyLive } = useDataSource();
   // Drill-down navigation handler - navigates to Waitlist List View with filter applied
   const handleDrillDown = useCallback((filterType: "insurance" | "modality" | "umbrella", value: string) => {
     const encoded = encodeURIComponent(value);
@@ -103,10 +104,7 @@ export default function Insights() {
     window.location.href = targetUrl;
   }, []);
   
-  // Check data sources for honest indicators
-  // Only show as live when user has explicitly enabled live mode AND data is actually live
-  const isSummaryLive = dataMode === "live" && summarySource === "live";
-  const isDataFullyLive = dataMode === "live" && isFullyLive;
+  const isDataFullyLive = isFullyLive;
 
   const { 
     data: summaryData, 
@@ -137,6 +135,37 @@ export default function Insights() {
     },
   });
 
+  // Time-in-status: aggregates across active codes + per-contact tenure list.
+  // Endpoint returns durations in seconds; we round to days for display.
+  // Inactive codes (103/104/203/204/205/400) are filtered out client-side
+  // since the endpoint returns all codes for the contact-detail use case.
+  type StatusDurationsResponse = {
+    byContact: Array<{
+      contactId: number;
+      statusCode: number | null;
+      timeInCurrentStatusSeconds: number | null;
+    }>;
+    byStatusCode: Array<{
+      statusCode: number;
+      countTotal: number;
+      countWithData: number;
+      avgSeconds: number | null;
+      medianSeconds: number | null;
+      p90Seconds: number | null;
+    }>;
+    generatedAt: string;
+  };
+  const { data: statusDurationsData } = useQuery<StatusDurationsResponse>({
+    queryKey: ["/api/insights/status-durations"],
+    queryFn: async () => {
+      const res = await fetch("/api/insights/status-durations", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch status durations");
+      return res.json();
+    },
+  });
+
+  const [, setLocation] = useLocation();
+
   const isLoading = summaryLoading || contactsLoading;
   const error = summaryError || contactsError;
 
@@ -144,14 +173,14 @@ export default function Insights() {
 
   useEffect(() => {
     if (summaryData?._source) {
-      updateSummarySource(summaryData._source as "mock" | "live" | "fallback");
+      updateSummarySource(summaryData._source as DataSource);
       updateSyncTime();
     }
   }, [summaryData, updateSummarySource, updateSyncTime]);
 
   useEffect(() => {
     if (contactsData?._source) {
-      updateContactsSource(contactsData._source as "mock" | "live" | "fallback");
+      updateContactsSource(contactsData._source as DataSource);
     }
   }, [contactsData, updateContactsSource]);
 
@@ -388,20 +417,57 @@ export default function Insights() {
     return b[1] - a[1];
   });
 
+  // Avg time per ACTIVE status code, sorted by avgSeconds desc.
+  // Skip codes with no logged data (countWithData === 0) — nothing to show.
+  const avgTimeByStatus = (statusDurationsData?.byStatusCode ?? [])
+    .filter((b) => isActiveStatus(b.statusCode) && b.countWithData > 0 && b.avgSeconds !== null)
+    .map((b) => ({
+      statusCode: b.statusCode,
+      label: getStatusLabel(b.statusCode),
+      avgDays: Math.floor((b.avgSeconds as number) / 86400),
+      countWithData: b.countWithData,
+      countTotal: b.countTotal,
+    }))
+    .sort((a, b) => b.avgDays - a.avgDays);
+  const maxAvgDays = avgTimeByStatus.length > 0 ? Math.max(...avgTimeByStatus.map((a) => a.avgDays), 1) : 1;
+
+  // Build a contactId → name lookup once so the "Longest in current status"
+  // list can show names without an extra fetch.
+  const contactNameById = new Map<number, string>();
+  for (const c of contacts) {
+    if (c.contactId !== undefined && c.contactId !== null) {
+      contactNameById.set(c.contactId, c.name || "Unknown");
+    }
+  }
+  const longestInCurrentStatus = (statusDurationsData?.byContact ?? [])
+    .filter(
+      (b) =>
+        b.timeInCurrentStatusSeconds !== null &&
+        b.statusCode !== null &&
+        isActiveStatus(b.statusCode),
+    )
+    .sort(
+      (a, b) =>
+        (b.timeInCurrentStatusSeconds as number) - (a.timeInCurrentStatusSeconds as number),
+    )
+    .slice(0, 10)
+    .map((b) => ({
+      contactId: b.contactId,
+      name: contactNameById.get(b.contactId) || `#${b.contactId}`,
+      statusLabel: getStatusLabel(b.statusCode),
+      days: Math.floor((b.timeInCurrentStatusSeconds as number) / 86400),
+    }));
+
   return (
     <PageLayout>
       <FallbackBanner 
         show={!isDataFullyLive} 
         message={
-          dataMode === "mock"
-            ? "Viewing demo data"
-            : isSummaryLive && !isContactsLive 
-              ? "Aggregate metrics are live — contact-level data is demo"
-              : summarySource === "fallback" 
-                ? "Live data temporarily unavailable — showing cached data"
-                : "Viewing demo data"
+          summarySource === "fallback" || summarySource === "error"
+            ? "Live data temporarily unavailable — please refresh in a moment"
+            : "Viewing demo data"
         }
-        variant="info"
+        variant={summarySource === "fallback" || summarySource === "error" ? "warning" : "info"}
       />
       <div className="space-y-8">
         <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -495,6 +561,92 @@ export default function Insights() {
                     </div>
                   </div>
                 ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Avg Time per Status (active codes only) */}
+          <Card className="overflow-visible">
+            <CardHeader>
+              <CardTitle className="text-base font-medium flex items-center gap-2">
+                <Hourglass className="h-4 w-4" />
+                Avg Time per Status
+              </CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">
+                Active statuses only · NULL contacts (no logged event) excluded
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {avgTimeByStatus.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    No status duration data yet
+                  </p>
+                ) : (
+                  avgTimeByStatus.map((row) => (
+                    <div key={row.statusCode} className="space-y-1.5">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">{row.label}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-foreground">{row.avgDays} days</span>
+                          <span className="text-xs text-muted-foreground">
+                            ({row.countWithData}/{row.countTotal})
+                          </span>
+                        </div>
+                      </div>
+                      <div className="h-2 bg-muted/50 backdrop-blur-sm rounded-full overflow-hidden border border-white/20 dark:border-gray-700/30">
+                        <div
+                          className="h-full bg-gradient-to-r from-primary via-primary/90 to-primary rounded-full transition-all duration-500"
+                          style={{ width: `${(row.avgDays / maxAvgDays) * 100}%` }}
+                          data-testid={`bar-avg-status-${row.statusCode}`}
+                        />
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Longest in Current Status (active only, top 10, click to drill) */}
+          <Card className="overflow-visible">
+            <CardHeader>
+              <CardTitle className="text-base font-medium">Longest in Current Status</CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">
+                Top 10 active contacts by time-in-status · Click to view detail
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {longestInCurrentStatus.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    No status duration data yet
+                  </p>
+                ) : (
+                  longestInCurrentStatus.map((row) => (
+                    <div
+                      key={row.contactId}
+                      onClick={() => setLocation(`/contact/${row.contactId}`)}
+                      className="group flex items-center justify-between p-3 rounded-lg bg-white dark:bg-gray-800/90 border border-gray-200/60 dark:border-gray-700/40 shadow-sm transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer hover:border-primary/30"
+                      data-testid={`row-longest-status-${row.contactId}`}
+                    >
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-sm font-medium text-foreground group-hover:text-primary transition-colors truncate">
+                          {row.name}
+                        </span>
+                        <span className="text-xs text-muted-foreground truncate">
+                          {row.statusLabel}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Badge variant="secondary" className="shadow-sm">
+                          {row.days} {row.days === 1 ? "day" : "days"}
+                        </Badge>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </CardContent>
           </Card>
