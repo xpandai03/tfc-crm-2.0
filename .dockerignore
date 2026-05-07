@@ -4,3 +4,14 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+
+# Data dumps and CSV exports — never ship to production image
+# (pre-backfill-*.csv contains contact PII)
+*.sql
+*.csv
+
+# Internal scratch / audit docs at repo root — not needed at runtime
+/*.md
+!/README.md
+migration.json
+n8n-*.json
