@@ -26,6 +26,7 @@ import {
 } from "@/lib/provider-insurance-data";
 import type { InsuranceCategory } from "@/lib/insurance-utils";
 import { transformApiProvider, type ProviderWithInsurance } from "@/lib/provider-api";
+import type { SkillEntry } from "@/lib/providers";
 import { PatientMatchingModal } from "@/components/ui/patient-matching-modal";
 import { useAuth } from "@/lib/auth-context";
 import { isRestrictedUser } from "@shared/access-control";
@@ -42,10 +43,10 @@ interface Provider {
   credentials: string;
   location: string;
   ageGroups: {
-    "Adults (18+)": Record<string, string>;
-    "Adolescents (12-17)": Record<string, string>;
-    "Children (6-11)": Record<string, string>;
-    "Children (0-5)": Record<string, string>;
+    "Adults (18+)": Record<string, SkillEntry>;
+    "Adolescents (12-17)": Record<string, SkillEntry>;
+    "Children (6-11)": Record<string, SkillEntry>;
+    "Children (0-5)": Record<string, SkillEntry>;
   };
   notes: string;
   // CRM-managed provider fields
@@ -77,30 +78,23 @@ async function getProviders(): Promise<ProvidersResponse> {
 }
 
 /**
- * Render a capability value with appropriate styling
- * Preserves raw values: "x", "x - Slow", "Slow", etc.
+ * Render a capability badge from a SkillEntry. Preserves raw spreadsheet
+ * text in the badge label so practice managers can see exactly what Sandra
+ * wrote. Annotation overlays (slow / supervision) are added by the caller
+ * in AgeGroupSection.
  */
-function CapabilityBadge({ value }: { value: string }) {
-  const normalized = value.toLowerCase().trim();
-
-  // Determine badge variant based on value
-  let variant: "default" | "secondary" | "outline" = "default";
-  if (normalized.includes("slow")) {
-    variant = "secondary";
-  } else if (normalized === "x" || normalized === "x ") {
-    variant = "default";
-  }
-
+function CapabilityBadge({ entry }: { entry: SkillEntry }) {
+  const isSlow = entry.pace === "slow";
   return (
     <Badge
-      variant={variant}
+      variant={isSlow ? "secondary" : "default"}
       className={
-        normalized.includes("slow")
+        isSlow
           ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400 border-amber-200 dark:border-amber-800"
           : "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 border-green-200 dark:border-green-800"
       }
     >
-      {value}
+      {entry.raw || (entry.hasSkill ? "x" : "")}
     </Badge>
   );
 }
@@ -175,7 +169,7 @@ function AgeGroupSection({
   capabilities
 }: {
   label: string;
-  capabilities: Record<string, string>;
+  capabilities: Record<string, SkillEntry>;
 }) {
   const entries = Object.entries(capabilities);
 
@@ -187,10 +181,10 @@ function AgeGroupSection({
     <div className="space-y-2">
       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{label}</p>
       <div className="flex flex-wrap gap-1.5">
-        {entries.map(([specialty, value]) => (
+        {entries.map(([specialty, entry]) => (
           <div key={specialty} className="flex items-center gap-1">
             <span className="text-xs text-muted-foreground">{specialty}:</span>
-            <CapabilityBadge value={value} />
+            <CapabilityBadge entry={entry} />
           </div>
         ))}
       </div>
@@ -475,16 +469,22 @@ function buildInitialState(provider: Provider | null): EditFormState {
     return { name: "", credentials: "", location: "", ageGroupCaps, selectedInsurances: new Set(), notes: "" };
   }
 
-  // Build caps from provider's existing ageGroups data
+  // Build caps from provider's existing ageGroups data. The API now returns
+  // SkillEntry objects per skill cell; the modal only edits hasSkill + pace
+  // (no supervision UI in Phase 1, per locked decision S6 — supervision
+  // values come from the spreadsheet only). Existing supervision flags on
+  // a skill are preserved as long as the manager doesn't deselect the cell.
   const ageGroupCaps: Record<string, Record<string, CapState>> = {};
   for (const [group, specs] of Object.entries(AGE_GROUP_SPECIALTIES)) {
     ageGroupCaps[group] = {};
     const existing = provider.ageGroups[group as keyof typeof provider.ageGroups] || {};
     for (const s of specs) {
-      const raw = existing[s]?.toLowerCase().trim() || "";
-      if (raw.includes("slow")) ageGroupCaps[group][s] = "x - Slow";
-      else if (raw === "x" || raw === "x ") ageGroupCaps[group][s] = "x";
-      else ageGroupCaps[group][s] = "";
+      const entry = existing[s];
+      if (entry?.hasSkill) {
+        ageGroupCaps[group][s] = entry.pace === "slow" ? "x - Slow" : "x";
+      } else {
+        ageGroupCaps[group][s] = "";
+      }
     }
   }
 
