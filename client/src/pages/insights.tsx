@@ -489,14 +489,13 @@ export default function Insights() {
 
   return (
     <PageLayout>
-      <FallbackBanner 
-        show={!isDataFullyLive} 
-        message={
-          summarySource === "fallback" || summarySource === "error"
-            ? "Live data temporarily unavailable — please refresh in a moment"
-            : "Viewing demo data"
-        }
-        variant={summarySource === "fallback" || summarySource === "error" ? "warning" : "info"}
+      {/* Only banner real fallback/error states. Mirrors the home.tsx
+          fix in commit 960e1a6 — "Viewing demo data" was stale because
+          the underlying data has been live production for a while. */}
+      <FallbackBanner
+        show={summarySource === "fallback"}
+        message="Live data temporarily unavailable — please refresh in a moment"
+        variant="warning"
       />
       <div className="space-y-8">
         <div className="flex items-start justify-between gap-4 flex-wrap">
