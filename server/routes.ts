@@ -3083,6 +3083,46 @@ export async function registerRoutes(
         console.warn("[providers] Failed to load CRM providers:", e);
       }
 
+      // Merge self-reported availability (provider_availability table).
+      // Populated by the standalone Fly.io form via POST /api/provider-availability
+      // and by manual CRM edits via PATCH /api/provider-availability.
+      //
+      // Keying: provider_availability is keyed by lowercased email, but the
+      // composed providers array is keyed by name. We bridge through
+      // PROVIDER_LIST (name → email). Providers without a row leave the
+      // three new fields undefined — distinguishes "never submitted" from
+      // explicit zero on the frontend (D2). CRM-managed providers without
+      // a PROVIDER_LIST entry skip the merge silently (audit §2b gap).
+      try {
+        const { getProviderEmail } = await import("./email/provider-location-config");
+        const availabilityRows = await getAllProviderAvailability();
+        const availabilityByEmail = new Map<string, ProviderAvailability>();
+        for (const row of availabilityRows) {
+          availabilityByEmail.set(row.providerEmail.trim().toLowerCase(), row);
+        }
+        let mergedCount = 0;
+        for (const p of providers) {
+          const prov = p as Record<string, unknown>;
+          const name = typeof prov.name === "string" ? prov.name : "";
+          if (!name) continue;
+          const email = getProviderEmail(name);
+          if (!email) continue;
+          const row = availabilityByEmail.get(email.trim().toLowerCase());
+          if (!row) continue;
+          prov.acceptingClients = row.acceptingClients;
+          prov.specialConsiderations = row.specialConsiderations;
+          prov.lastFormSubmittedAt = row.lastFormSubmittedAt;
+          mergedCount++;
+        }
+        if (availabilityRows.length > 0) {
+          console.log(
+            `[providers] Merged availability for ${mergedCount}/${availabilityRows.length} providers`
+          );
+        }
+      } catch (e) {
+        console.warn("[providers] Failed to load provider availability:", e);
+      }
+
       // Update cache
       providerDataCache = {
         providers,
