@@ -84,3 +84,60 @@ export function bucketReason(rawToken: string): ReasonCanonical | typeof REASON_
   if (isCanonicalReason(t)) return t;
   return REASON_OTHER_LEGACY;
 }
+
+/**
+ * Normalize an inbound reasonForTherapy value (string or array) into a
+ * canonical comma-separated string. Used by /api/intake to validate
+ * submissions.
+ *
+ * Behavior per token (after split + trim):
+ *   - Empty → skipped.
+ *   - Canonical (in REASON_CANONICALS) → kept as-is.
+ *   - "Other: <text>" or "Other (legacy free-text)" or bare "Other" →
+ *     kept verbatim (the staff form's Other-with-text path).
+ *   - Anything else → dropped from the normalized output AND added to
+ *     the `unknown` array so the caller can decide whether to warn or
+ *     reject (D-A6: staff path warns, website path rejects).
+ *
+ * Dedupes within the cell. Order follows REASON_CANONICALS for the
+ * canonical tokens; "Other" tokens are appended afterward.
+ */
+export function normalizeReasonForTherapy(raw: unknown): {
+  normalized: string;
+  unknown: string[];
+} {
+  if (raw == null) return { normalized: "", unknown: [] };
+  const tokens: string[] = [];
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (typeof item === "string") {
+        for (const part of item.split(",")) tokens.push(part);
+      }
+    }
+  } else if (typeof raw === "string") {
+    for (const part of raw.split(",")) tokens.push(part);
+  } else {
+    return { normalized: "", unknown: [] };
+  }
+
+  const accepted = new Set<string>();
+  const otherTokens: string[] = [];
+  const unknown: string[] = [];
+  for (const part of tokens) {
+    const t = part.trim();
+    if (!t) continue;
+    if (REASON_SET.has(t)) {
+      accepted.add(t);
+    } else if (t.startsWith("Other:") || t === REASON_OTHER_LEGACY || t === "Other") {
+      // Preserve the Other-prefixed token verbatim, dedupe within cell.
+      if (!otherTokens.includes(t)) otherTokens.push(t);
+    } else {
+      unknown.push(t);
+    }
+  }
+
+  // Order canonical tokens stably (REASON_CANONICALS order), then Other tokens.
+  const orderedCanonicals = REASON_CANONICALS.filter((c) => accepted.has(c));
+  const normalized = [...orderedCanonicals, ...otherTokens].join(", ");
+  return { normalized, unknown };
+}
