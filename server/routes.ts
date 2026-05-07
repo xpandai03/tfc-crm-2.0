@@ -14,6 +14,9 @@ import {
   getAllProviderOverrides,
   getProviderOverride,
   upsertProviderOverride,
+  getAllProviderAvailability,
+  upsertProviderAvailability,
+  type ProviderAvailability,
 } from "./reminders";
 import {
   getTnRecord,
@@ -73,6 +76,7 @@ import { getStatusLabel } from "@shared/status-codes";
 import { extractReferralData } from "./referral/extract";
 import * as XLSX from "xlsx";
 import * as path from "path";
+import { z } from "zod";
 
 // Configuration for mock vs live data mode
 // Change to "live" to use real n8n webhooks instead of mock data
@@ -90,6 +94,11 @@ const READ_SOURCE: ReadSource = (process.env.READ_SOURCE as ReadSource) || "auto
 
 // Shared secret for n8n sync endpoint authentication (no default — must be set per environment)
 const SYNC_API_KEY = process.env.SYNC_API_KEY || "";
+
+// Shared secret for the standalone Fly.io provider availability form. The form
+// POSTs to /api/provider-availability with this key in the X-Provider-Form-Key
+// header. Empty in this environment → endpoint returns 503.
+const PROVIDER_FORM_API_KEY = process.env.PROVIDER_FORM_API_KEY || "";
 
 /**
  * Check if we should read from sync cache.
@@ -3251,6 +3260,143 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[providers] Error updating provider override:", error);
       return res.status(500).json({ error: "Failed to update provider" });
+    }
+  });
+
+  // ============================================================================
+  // Provider Availability API (standalone Fly.io form → CRM)
+  // ============================================================================
+  //
+  // The standalone provider availability form (separate Fly.io app) POSTs
+  // here on every submission. We:
+  //   1. Auth-gate via X-Provider-Form-Key header (shared secret).
+  //   2. Resolve provider identity by email through PROVIDER_LIST. Unknown
+  //      email → 404 (no upsert; we don't trust the form to invent providers).
+  //   3. Upsert to provider_availability (last-write-wins on duplicate
+  //      submissions per locked decision D1).
+  //   4. Mirror to form_submissions for an append-only audit trail
+  //      (best-effort — return 200 even if audit write fails).
+  //   5. Log provider_availability_submitted activity event with synthetic
+  //      "provider_form" actor (D3).
+  const providerAvailabilityRequestSchema = z.object({
+    providerEmail: z
+      .string()
+      .trim()
+      .min(1, "providerEmail is required")
+      .email("providerEmail must be a valid email"),
+    acceptingClients: z
+      .number()
+      .int("acceptingClients must be an integer")
+      .nonnegative("acceptingClients must be >= 0"),
+    specialConsiderations: z
+      .string()
+      .max(2000, "specialConsiderations must be <= 2000 characters")
+      .optional()
+      .nullable(),
+  });
+
+  app.post("/api/provider-availability", async (req, res) => {
+    try {
+      // Auth — shared secret in X-Provider-Form-Key header
+      if (!PROVIDER_FORM_API_KEY) {
+        console.warn("[provider-availability] Endpoint blocked — PROVIDER_FORM_API_KEY not configured");
+        return res.status(503).json({ error: "Provider availability endpoint not configured for this environment" });
+      }
+      if (req.headers["x-provider-form-key"] !== PROVIDER_FORM_API_KEY) {
+        return res.status(401).json({ error: "unauthorized" });
+      }
+
+      // Validation
+      const parsed = providerAvailabilityRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "validation_error", issues: parsed.error.issues });
+      }
+      const body = parsed.data;
+
+      // Resolve email → provider identity. Unknown email = no upsert.
+      const { getProviderByEmail } = await import("./email/provider-location-config");
+      const providerEntry = getProviderByEmail(body.providerEmail);
+      if (!providerEntry) {
+        return res.status(404).json({ error: "provider_not_found", email: body.providerEmail });
+      }
+
+      // Server stamps time. Ignore client-supplied timestamps per D7 (form
+      // payload doesn't carry one anyway, but be explicit for safety).
+      const submittedAt = new Date().toISOString();
+
+      // Source-of-truth write
+      let upserted;
+      try {
+        upserted = await upsertProviderAvailability({
+          providerEmail: providerEntry.email,
+          providerName: providerEntry.name,
+          acceptingClients: body.acceptingClients,
+          specialConsiderations: body.specialConsiderations ?? null,
+          lastFormSubmittedAt: submittedAt,
+        });
+      } catch (err) {
+        console.error("[provider-availability] Upsert failed:", err);
+        return res.status(500).json({ error: "internal_error" });
+      }
+
+      // Bust the GET /api/providers cache so the new value surfaces on the
+      // next read without waiting for the 5-minute TTL.
+      providerDataCache = null;
+
+      // Audit mirror to form_submissions — best-effort, sequential. If this
+      // fails AFTER a successful upsert, log loudly server-side and STILL
+      // return 200 — the form must not retry a write that already landed.
+      try {
+        await insertSubmission({
+          formType: "provider_availability",
+          source: "provider_availability_form",
+          submittedAt,
+          contactId: null,
+          name: providerEntry.name,
+          data: {
+            providerEmail: providerEntry.email,
+            providerName: providerEntry.name,
+            acceptingClients: body.acceptingClients,
+            specialConsiderations: body.specialConsiderations ?? null,
+            rawBody: req.body,
+          },
+        });
+      } catch (err) {
+        console.error(
+          "[provider-availability] Audit write to form_submissions FAILED after successful upsert " +
+            `for ${providerEntry.email} — recoverable from logs, returning 200 anyway:`,
+          err
+        );
+      }
+
+      // Activity log — synthetic actor per D3 keeps providers out of the
+      // staff activity leaderboard. Real provider email goes in entityId.
+      await logActivity({
+        type: "provider_availability_submitted",
+        actorEmail: "provider_form",
+        entityType: "provider",
+        entityId: providerEntry.email,
+        entityName: providerEntry.name,
+        metadata: {
+          acceptingClients: body.acceptingClients,
+          specialConsiderations: body.specialConsiderations ?? null,
+        },
+      });
+
+      console.log(
+        `[provider-availability] Upserted ${providerEntry.name} <${providerEntry.email}> ` +
+          `(clients=${body.acceptingClients})`
+      );
+
+      return res.json({
+        success: true,
+        providerEmail: upserted.providerEmail,
+        providerName: providerEntry.name,
+        submittedAt,
+      });
+    } catch (error) {
+      console.error("[provider-availability] Unexpected error:", error);
+      return res.status(500).json({ error: "internal_error" });
     }
   });
 
