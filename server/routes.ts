@@ -3440,6 +3440,104 @@ export async function registerRoutes(
     }
   });
 
+  // PATCH /api/provider-availability — manual edit by a logged-in CRM user.
+  //
+  // Session-authed (Azure AD) — NOT in publicPostPaths. Per locked decision
+  // D4, this is a separate endpoint from the form's POST: extending PATCH
+  // /api/providers/:id only matches CRM-managed rows, and PATCH
+  // /api/providers/override layers capacity into a skill-overlay table
+  // (layering mistake). New endpoint keeps concerns clean.
+  //
+  // Form-vs-manual precedence (D1) is implemented by the upsert: the next
+  // form submission overwrites manual values, last-write-wins. Both events
+  // are visible in the activity log so practice managers can see the
+  // history.
+  //
+  // Manual edits do NOT update lastFormSubmittedAt (manual edit ≠ form
+  // submission).
+  const providerAvailabilityPatchSchema = z.object({
+    providerName: z.string().trim().min(1, "providerName is required"),
+    acceptingClients: z
+      .number()
+      .int("acceptingClients must be an integer")
+      .nonnegative("acceptingClients must be >= 0")
+      .optional(),
+    specialConsiderations: z
+      .string()
+      .max(2000, "specialConsiderations must be <= 2000 characters")
+      .nullable()
+      .optional(),
+  });
+
+  app.patch("/api/provider-availability", async (req, res) => {
+    try {
+      const parsed = providerAvailabilityPatchSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "validation_error", issues: parsed.error.issues });
+      }
+      const body = parsed.data;
+
+      // Resolve providerName → email → ProviderEntry. CRM-managed providers
+      // without a PROVIDER_LIST entry can't have their availability edited
+      // here today (audit §2b gap, out of scope).
+      const { getProviderEmail, getProviderByEmail } = await import("./email/provider-location-config");
+      const email = getProviderEmail(body.providerName);
+      if (!email) {
+        return res.status(404).json({ error: "provider_not_found", providerName: body.providerName });
+      }
+      const providerEntry = getProviderByEmail(email);
+      if (!providerEntry) {
+        return res.status(404).json({ error: "provider_not_found", providerName: body.providerName });
+      }
+
+      // Diff for activity log — only log the fields the user actually
+      // changed. Mirrors the existing PATCH /api/providers/override pattern.
+      const fieldsUpdated: string[] = [];
+      if (body.acceptingClients !== undefined) fieldsUpdated.push("accepting clients");
+      if (body.specialConsiderations !== undefined) fieldsUpdated.push("special considerations");
+
+      if (fieldsUpdated.length === 0) {
+        return res.json({ success: true, fieldsUpdated: [] });
+      }
+
+      // Upsert. Note: lastFormSubmittedAt is intentionally omitted — manual
+      // edit doesn't bump the form-submission timestamp.
+      try {
+        await upsertProviderAvailability({
+          providerEmail: providerEntry.email,
+          providerName: providerEntry.name,
+          ...(body.acceptingClients !== undefined ? { acceptingClients: body.acceptingClients } : {}),
+          ...(body.specialConsiderations !== undefined ? { specialConsiderations: body.specialConsiderations } : {}),
+        });
+      } catch (err) {
+        console.error("[provider-availability] PATCH upsert failed:", err);
+        return res.status(500).json({ error: "internal_error" });
+      }
+
+      providerDataCache = null;
+
+      // Activity log — real staff email as actor (D3 — synthetic
+      // "provider_form" actor is for form submissions only). Reuse existing
+      // provider_updated event type.
+      await logActivity({
+        type: "provider_updated",
+        actorEmail: (req as any).user?.email || "system",
+        entityType: "provider",
+        entityId: providerEntry.name,
+        entityName: providerEntry.name,
+        metadata: {
+          providerName: providerEntry.name,
+          fieldsUpdated,
+        },
+      });
+
+      return res.json({ success: true, fieldsUpdated });
+    } catch (error) {
+      console.error("[provider-availability] PATCH unexpected error:", error);
+      return res.status(500).json({ error: "internal_error" });
+    }
+  });
+
   // ============================================================================
   // Email Automation API (v1 - Admin-Triggered Only)
   // ============================================================================
