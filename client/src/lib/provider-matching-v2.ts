@@ -30,6 +30,7 @@ import {
 import type { ProviderWithInsurance } from "./provider-api";
 import type { ContactSnapshot } from "@shared/schema";
 import type { ProviderMatch, MatchReason } from "./provider-matching";
+import { isAcceptingByCapacity } from "./provider-matching";
 
 // ============================================================================
 // v2 Matching Context
@@ -320,6 +321,10 @@ export function computeProviderScoreV2(
   // --- Hard filters ---
 
   if (!provider.acceptingNewPatients) return null;
+
+  // Capacity-aware check (Phase 2). Provider with acceptingClients === 0
+  // is filtered out; undefined falls through (no submission yet).
+  if (!isAcceptingByCapacity(provider)) return null;
 
   if (context.ageGroup) {
     if (!providerServesAgeGroup(provider, context.ageGroup)) return null;

@@ -368,6 +368,25 @@ function hasAdditionalSpecialty(provider: Provider, keywords: string[]): boolean
 }
 
 /**
+ * Capacity-aware "accepting new patients" check, derived from
+ * provider_availability via the GET /api/providers merge.
+ *
+ *   - acceptingClients undefined → no submission yet, fall through (everyone
+ *     passes the filter). Preserves pre-form matching behavior so providers
+ *     without a row aren't silently filtered out.
+ *   - acceptingClients === 0     → provider has explicitly closed capacity, fail.
+ *   - acceptingClients > 0       → provider has open capacity, pass.
+ *
+ * Phase 2 v1: single integer; supervision/pace from SkillEntry annotations
+ * (Phase 1) do NOT affect scoring yet. Lane will revisit.
+ */
+export function isAcceptingByCapacity(provider: Provider | ProviderWithInsurance): boolean {
+  const n = provider.acceptingClients;
+  if (typeof n !== "number") return true; // no data → fall through
+  return n > 0;
+}
+
+/**
  * Compute match score for a single provider
  * @param provider - Provider to score (may include acceptedInsurances)
  * @param context - Matching context derived from contact
@@ -383,8 +402,16 @@ export function computeProviderScore(
   let score = SCORES.BASE;
   let hasSlowMarker = false;
 
-  // Hard constraint: Must be accepting new patients
+  // Hard constraint: Must be accepting new patients (legacy boolean —
+  // historical placeholder, always true today; left in place as belt-and-
+  // -suspenders against future data sources that set it to false).
   if (!provider.acceptingNewPatients) {
+    return null;
+  }
+
+  // Hard constraint: Capacity-aware acceptance check from provider_availability.
+  // See isAcceptingByCapacity() above for the no-data fall-through semantics.
+  if (!isAcceptingByCapacity(provider)) {
     return null;
   }
 
