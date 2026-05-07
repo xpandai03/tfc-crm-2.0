@@ -45,6 +45,8 @@ interface WaitlistListViewProps {
   initialModalityFilter?: string | null;
   initialStatusFilter?: string | null;
   initialUmbrellaFilter?: string | null;
+  initialReasonFilter?: string | null;       // matches a reasonForTherapy MCQ token
+  initialServiceTypeFilter?: string | null;  // matches requestingFor exactly
 }
 
 /**
@@ -167,13 +169,15 @@ const umbrellaColors: Record<UmbrellaId, string> = {
   INS: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
 };
 
-export function WaitlistListView({ 
-  contacts, 
+export function WaitlistListView({
+  contacts,
   currentUserEmail,
   initialInsuranceFilter,
   initialModalityFilter,
   initialStatusFilter,
   initialUmbrellaFilter,
+  initialReasonFilter,
+  initialServiceTypeFilter,
 }: WaitlistListViewProps) {
   // Attention flags (TanStack Query deduplicates — zero extra network cost)
   const { data: flagsData } = useQuery({
@@ -195,6 +199,8 @@ export function WaitlistListView({
   const [hideInactive, setHideInactive] = useState(true);
   const [insuranceFilter, setInsuranceFilter] = useState<string>(initialInsuranceFilter || "all");
   const [modalityFilter, setModalityFilter] = useState<string>(initialModalityFilter || "all");
+  const [reasonFilter, setReasonFilter] = useState<string>(initialReasonFilter || "all");
+  const [serviceTypeFilter, setServiceTypeFilter] = useState<string>(initialServiceTypeFilter || "all");
 
   // Update filters when initial props change (e.g., from URL navigation)
   useEffect(() => {
@@ -202,7 +208,9 @@ export function WaitlistListView({
     if (initialModalityFilter) setModalityFilter(initialModalityFilter);
     if (initialStatusFilter) setStatusFilter(initialStatusFilter);
     if (initialUmbrellaFilter) setUmbrellaFilter(initialUmbrellaFilter as UmbrellaId);
-  }, [initialInsuranceFilter, initialModalityFilter, initialStatusFilter, initialUmbrellaFilter]);
+    if (initialReasonFilter) setReasonFilter(initialReasonFilter);
+    if (initialServiceTypeFilter) setServiceTypeFilter(initialServiceTypeFilter);
+  }, [initialInsuranceFilter, initialModalityFilter, initialStatusFilter, initialUmbrellaFilter, initialReasonFilter, initialServiceTypeFilter]);
 
   // Sort state
   const [sortField, setSortField] = useState<SortField>("daysOnWaitlist");
@@ -283,6 +291,30 @@ export function WaitlistListView({
         }
       }
 
+      // Reason for Therapy filter — multi-value field stored as comma-separated
+      // string OR array. Match if the selected reason appears as one of the
+      // contact's tokens (per Bucket A migration, all tokens are canonical
+      // or "Other (legacy free-text)" so exact-string compare is reliable).
+      if (reasonFilter !== "all") {
+        const raw = (contact as { reasonForTherapy?: string | string[] | null }).reasonForTherapy;
+        const tokens: string[] = Array.isArray(raw)
+          ? raw.map((s) => String(s).trim()).filter(Boolean)
+          : typeof raw === "string"
+            ? raw.split(",").map((s) => s.trim()).filter(Boolean)
+            : [];
+        if (!tokens.includes(reasonFilter)) {
+          return false;
+        }
+      }
+
+      // Service Type filter — single-value, matches contact.requestingFor exactly
+      if (serviceTypeFilter !== "all") {
+        const requestingFor = (contact as { requestingFor?: string | null }).requestingFor?.trim() ?? "";
+        if (requestingFor !== serviceTypeFilter) {
+          return false;
+        }
+      }
+
       // Search filter (case-insensitive substring match)
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase().trim();
@@ -294,7 +326,7 @@ export function WaitlistListView({
 
       return true;
     });
-  }, [contacts, umbrellaFilter, statusFilter, searchQuery, hideInactive, insuranceFilter, modalityFilter]);
+  }, [contacts, umbrellaFilter, statusFilter, searchQuery, hideInactive, insuranceFilter, modalityFilter, reasonFilter, serviceTypeFilter]);
 
   // Sort contacts
   const sortedContacts = useMemo(() => {
