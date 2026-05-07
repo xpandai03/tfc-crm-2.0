@@ -4,3 +4,5 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+# PHI-adjacent prod data dump; never commit
+BUCKET-A-PROD-DATA.txt

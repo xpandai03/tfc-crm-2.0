@@ -30,30 +30,49 @@ import type { WaitlistSummary, WaitlistContact } from "@shared/schema";
 /**
  * Modality normalization mapping (raw values → canonical categories)
  * Maps form options and historical values to display categories
+ *
+ * TODO: consolidate this map with waitlist-list-view.tsx — the two copies
+ * have drifted independently in the past. See follow-up PR (D-C2 from
+ * insights cleanup audit).
  */
 const MODALITY_NORMALIZATION_MAP: Record<string, string> = {
   // Hybrid
   "hybrid": "Hybrid",
+  "hybrid - ll": "Hybrid",
 
   // In Person - Albuquerque (ABQ)
   "in person - albuquerque": "In Person ABQ",
   "in person-abq": "In Person ABQ",
   "in person abq": "In Person ABQ",
+  "in person- albuquerque": "In Person ABQ",
+  "in person - abq": "In Person ABQ",
   "abq": "In Person ABQ",
   "albuquerque": "In Person ABQ",
 
   // In Person - Rio Rancho (RR)
   "in person - rio rancho": "In Person RR",
   "in person-rio rancho": "In Person RR",
+  "in person- rio rancho": "In Person RR",
+  "in person - rr": "In Person RR",
   "in person rr": "In Person RR",
   "rio rancho": "In Person RR",
 
-  // In Person (generic - includes Los Lunas, combined options, and old values without location)
+  // In Person - Los Lunas (LL) — split out from generic "In Person" per
+  // Insights cleanup Bucket C. Previously rolled into the generic bucket
+  // which hid ~118 LL contacts from Amanda's modality breakdown.
+  "in person - los lunas": "In Person LL",
+  "in person- los lunas": "In Person LL",
+  "in person los lunas": "In Person LL",
+  "in-person los lunas": "In Person LL",
+  "in person ll": "In Person LL",
+  "los lunas": "In Person LL",
+  "ll": "In Person LL",
+
+  // In Person (generic - combined options, and old values without location)
   "in person": "In Person",
-  "in person - los lunas": "In Person",
   "in person - albuquerque or rio rancho": "In Person",
+  "in person- albuquerque or rio rancho": "In Person",
   "in-person": "In Person",
-  "in person los lunas": "In Person",
 
   // Telehealth
   "telehealth": "Telehealth",
@@ -63,6 +82,7 @@ const MODALITY_NORMALIZATION_MAP: Record<string, string> = {
 
   // Flexible/Flex
   "flexible (open to any option)": "Flex",
+  "flexible (open to any option).": "Flex",
   "flexible": "Flex",
   "flex": "Flex",
   "open to any option": "Flex",
