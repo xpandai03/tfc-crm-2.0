@@ -44,9 +44,8 @@ interface ReviewFormProps {
 const REQUESTING_FOR_OPTIONS = [
   "Myself",
   "My Child",
-  "My Partner",
+  "My Partner & Myself",
   "My Family",
-  "Couples",
   "Other",
 ];
 
