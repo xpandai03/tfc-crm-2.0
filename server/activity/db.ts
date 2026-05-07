@@ -21,6 +21,7 @@ export type ActivityType =
   | "contact_assigned"
   | "assignment_deleted"
   | "provider_updated"
+  | "provider_availability_submitted"
   | "email_sent"
   | "therapy_notes_started"
   | "therapy_notes_created"
@@ -249,6 +250,7 @@ export async function getStaffActivitySummary(days: number = 7): Promise<StaffAc
       COUNT(*) AS count
     FROM activity_log
     WHERE actor_email != 'system'
+      AND actor_email != 'provider_form'
       AND created_at::timestamptz >= NOW() - $1::INTERVAL
     GROUP BY actor_email
     ORDER BY count DESC
@@ -470,6 +472,15 @@ function formatActivitySummary(
         return `Updated provider ${name} (${fieldsUpdated.join(", ")})`;
       }
       return `Updated provider ${name}`;
+    }
+
+    case "provider_availability_submitted": {
+      const count = metadata.acceptingClients;
+      const hasNotes = !!metadata.specialConsiderations;
+      if (typeof count === "number") {
+        return `${name} submitted availability — accepting ${count} new patient${count === 1 ? "" : "s"}${hasNotes ? " (+ note)" : ""}`;
+      }
+      return `${name} submitted availability`;
     }
 
     case "email_sent": {
