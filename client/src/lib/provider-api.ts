@@ -259,8 +259,9 @@ export function useProviders() {
 }
 
 /**
- * Check if providers have any insurance data
- * Useful for displaying a warning if Column 30 isn't populated
+ * Check if any providers have insurance data. Useful for displaying a
+ * warning if the snapshot at provider-insurance-data.ts is empty for the
+ * loaded roster.
  */
 export function hasInsuranceData(providers: ProviderWithInsurance[]): boolean {
   return providers.some(p => p.acceptedInsurances.length > 0);
