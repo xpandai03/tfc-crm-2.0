@@ -22,6 +22,18 @@ export type AgeGroup = "adults" | "adolescents" | "children_6_11" | "children_0_
 // Capability level for a specialty
 export type CapabilityLevel = "full" | "slow" | "none";
 
+// Skill annotation shape, mirrored from the server-side parser at
+// server/routes.ts. The /api/providers response carries this object per
+// skill cell (instead of the old raw string). See parseSkillCell on the
+// server for the full grammar.
+export type SkillPace = "normal" | "slow";
+export interface SkillEntry {
+  hasSkill: boolean;
+  pace: SkillPace | null;
+  supervision: { supervisor: string } | null;
+  raw: string;
+}
+
 // Provider location codes (3 TFC locations)
 // Note: "Corp" (Corporate) is treated as ABQ
 export type ProviderLocation = "ABQ" | "LL" | "RR";

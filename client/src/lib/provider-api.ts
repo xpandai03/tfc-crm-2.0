@@ -8,11 +8,9 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   type InsuranceCategory,
-  parseInsuranceList,
 } from "./insurance-utils";
 import {
   getProviderInsurances,
-  hasProviderInsuranceData,
   PROVIDERS_WITHOUT_INSURANCE_DATA,
 } from "./provider-insurance-data";
 import {
@@ -23,10 +21,17 @@ import {
   type ProviderLocation,
   type AgeGroupCapabilities,
   type SpecialtyCapability,
+  type SkillEntry,
 } from "./providers";
 
 /**
- * Raw provider data as returned from /api/providers
+ * Raw provider data as returned from /api/providers.
+ *
+ * Each skill cell is now a structured SkillEntry (was: raw string). The
+ * server-side parser at server/routes.ts produces these. acceptedInsurances
+ * is retained as a string for compatibility but the May 2026 spreadsheet
+ * dropped the column — server always emits "" now and the snapshot at
+ * provider-insurance-data.ts is the only source of truth.
  */
 interface ApiProvider {
   id: number;
@@ -35,13 +40,13 @@ interface ApiProvider {
   credentials: string;
   location: string;
   ageGroups: {
-    "Adults (18+)": Record<string, string>;
-    "Adolescents (12-17)": Record<string, string>;
-    "Children (6-11)": Record<string, string>;
-    "Children (0-5)": Record<string, string>;
+    "Adults (18+)": Record<string, SkillEntry>;
+    "Adolescents (12-17)": Record<string, SkillEntry>;
+    "Children (6-11)": Record<string, SkillEntry>;
+    "Children (0-5)": Record<string, SkillEntry>;
   };
   notes: string;
-  acceptedInsurances?: string; // Column 30 - comma-separated string
+  acceptedInsurances?: string; // always "" since May 2026 — kept for shape stability
 }
 
 interface ApiResponse {
@@ -93,14 +98,15 @@ function mapSpecialtyName(name: string): Specialty | null {
 }
 
 /**
- * Parse raw capability value ("x", "x - Slow", empty) to CapabilityLevel
+ * Map a SkillEntry (server-side parsed shape) to the matching engine's
+ * CapabilityLevel. Supervision annotations are NOT considered here in
+ * Phase 1 — they flow through via the SkillEntry on the page UI but do
+ * not affect matching scores. Lane will revisit in a later PR.
  */
-function parseCapability(value: string | undefined): CapabilityLevel {
-  if (!value || value.trim() === "") return "none";
-  const lower = value.toLowerCase().trim();
-  if (lower.includes("slow")) return "slow";
-  if (lower === "x" || lower === "x ") return "full";
-  return "none";
+function parseCapability(entry: SkillEntry | undefined): CapabilityLevel {
+  if (!entry || !entry.hasSkill) return "none";
+  if (entry.pace === "slow") return "slow";
+  return "full";
 }
 
 /**
@@ -170,11 +176,11 @@ export function transformApiProvider(api: ApiProvider): ProviderWithInsurance {
 
     const specialties: SpecialtyCapability[] = [];
 
-    for (const [specialtyName, rawValue] of Object.entries(specialtiesMap)) {
+    for (const [specialtyName, entry] of Object.entries(specialtiesMap)) {
       const specialty = mapSpecialtyName(specialtyName);
       if (!specialty) continue;
 
-      const level = parseCapability(rawValue);
+      const level = parseCapability(entry);
       if (level !== "none") {
         specialties.push({ specialty, level });
       }
@@ -189,24 +195,15 @@ export function transformApiProvider(api: ApiProvider): ProviderWithInsurance {
   // Parse additional specialties from notes
   const additionalSpecialties = parseAdditionalSpecialties(api.notes);
 
-  // Get accepted insurances from provider insurance snapshot data (primary source)
-  // Falls back to Column 30 from spreadsheet, then to clinic-level as last resort
-  let acceptedInsurances: InsuranceCategory[] = [];
-
-  // Priority 1: Provider Insurance Snapshot (hardcoded data from Jan 2026)
+  // Get accepted insurances from the hardcoded snapshot. Sandra's May 2026
+  // CSV dropped the spreadsheet insurances column, so the snapshot is now
+  // the only source. Providers not in the snapshot get an empty array —
+  // the matching algorithm warns instead of silently assuming all-accepting.
   const snapshotInsurances = getProviderInsurances(api.name);
-  if (snapshotInsurances && snapshotInsurances.length > 0) {
-    acceptedInsurances = snapshotInsurances;
-  }
-  // Priority 2: Column 30 from Provider Skills Spreadsheet
-  else if (api.acceptedInsurances) {
-    acceptedInsurances = parseInsuranceList(api.acceptedInsurances);
-  }
-  // No fallback: providers without insurance data get an empty array.
-  // The matching algorithm will flag these with a warning instead of
-  // silently assuming they accept all insurances.
+  const acceptedInsurances: InsuranceCategory[] =
+    snapshotInsurances && snapshotInsurances.length > 0 ? snapshotInsurances : [];
   if (acceptedInsurances.length === 0 && PROVIDERS_WITHOUT_INSURANCE_DATA.includes(api.name)) {
-    console.debug(`[Provider API] ${api.name}: No insurance data available (not in snapshot, Column 30 empty)`);
+    console.debug(`[Provider API] ${api.name}: No insurance data available (not in snapshot)`);
   }
 
   return {
