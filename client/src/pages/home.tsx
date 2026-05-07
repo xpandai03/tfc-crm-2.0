@@ -390,14 +390,14 @@ export default function Home() {
 
   return (
     <PageLayout>
+      {/* Only banner real fallback/error states. "Viewing demo data" was
+          stale — the underlying data has been live production for a while
+          even when summarySource hadn't been explicitly promoted to "live"
+          (the enable-live-mode flow rarely runs in current setup). */}
       <FallbackBanner
-        show={!isDataFullyLive}
-        message={
-          summarySource === "fallback" || summarySource === "error"
-            ? "Live data temporarily unavailable — please refresh in a moment"
-            : "Viewing demo data"
-        }
-        variant={summarySource === "fallback" || summarySource === "error" ? "warning" : "info"}
+        show={summarySource === "fallback"}
+        message="Live data temporarily unavailable — please refresh in a moment"
+        variant="warning"
       />
       <div className="space-y-8">
         <div className="flex items-start justify-between gap-4 flex-wrap">
