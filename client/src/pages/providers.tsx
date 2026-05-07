@@ -3,7 +3,7 @@ import { PageLayout } from "@/components/layout/page-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/page-loader";
-import { AlertCircle, MapPin, FileText, Shield, Users, Plus, Pencil, Loader2, Check, X, Search } from "lucide-react";
+import { AlertCircle, AlertTriangle, MapPin, FileText, Shield, Users, Plus, Pencil, Loader2, Check, X, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,6 +15,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -183,8 +189,29 @@ function AgeGroupSection({
       <div className="flex flex-wrap gap-1.5">
         {entries.map(([specialty, entry]) => (
           <div key={specialty} className="flex items-center gap-1">
-            <span className="text-xs text-muted-foreground">{specialty}:</span>
+            <span className="text-xs text-muted-foreground">
+              {specialty}
+              {entry.pace === "slow" && (
+                <span className="italic text-muted-foreground/70 ml-1">(slow)</span>
+              )}
+              :
+            </span>
             <CapabilityBadge entry={entry} />
+            {entry.supervision && (
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <AlertTriangle
+                      className="h-3 w-3 text-amber-600 dark:text-amber-400 cursor-help shrink-0"
+                      aria-label={`Under supervision by ${entry.supervision.supervisor}`}
+                    />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Under supervision by {entry.supervision.supervisor}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
           </div>
         ))}
       </div>
