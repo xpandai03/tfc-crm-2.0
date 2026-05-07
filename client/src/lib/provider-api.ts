@@ -47,6 +47,13 @@ interface ApiProvider {
   };
   notes: string;
   acceptedInsurances?: string; // always "" since May 2026 — kept for shape stability
+  // Self-reported via the standalone availability form (or manually
+  // overridden via PATCH /api/provider-availability). All three are
+  // undefined when the provider has never had a row in the table —
+  // distinguishes never-submitted from explicit zero.
+  acceptingClients?: number;
+  specialConsiderations?: string | null;
+  lastFormSubmittedAt?: string | null;
 }
 
 interface ApiResponse {
@@ -210,10 +217,15 @@ export function transformApiProvider(api: ApiProvider): ProviderWithInsurance {
     name: api.name,
     credentials: api.credentials,
     location: mapLocation(api.location),
-    acceptingNewPatients: true, // Assume all in "Current" sheet are accepting
+    acceptingNewPatients: true, // legacy boolean; capacity-aware check uses acceptingClients
     ageGroups,
     additionalSpecialties,
     acceptedInsurances,
+    // Forward availability fields untouched. Matching engine reads
+    // acceptingClients via isAcceptingByCapacity(); card UI reads all three.
+    acceptingClients: api.acceptingClients,
+    specialConsiderations: api.specialConsiderations ?? null,
+    lastFormSubmittedAt: api.lastFormSubmittedAt ?? null,
   };
 }
 

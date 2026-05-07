@@ -58,6 +58,13 @@ export interface Provider {
   acceptingNewPatients: boolean;
   ageGroups: AgeGroupCapabilities[];
   additionalSpecialties: string[]; // From Notes column (ADHD, EMDR, etc.)
+  // Self-reported via the standalone availability form (or manual override).
+  // Undefined when the provider has never had a row — preserves the
+  // never-submitted vs. explicit-zero distinction. Matching uses
+  // isAcceptingByCapacity() which treats undefined as a no-data fall-through.
+  acceptingClients?: number;
+  specialConsiderations?: string | null;
+  lastFormSubmittedAt?: string | null;
 }
 
 // Helper to parse capability from spreadsheet value

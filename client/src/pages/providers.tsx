@@ -55,6 +55,10 @@ interface Provider {
     "Children (0-5)": Record<string, SkillEntry>;
   };
   notes: string;
+  // Self-reported availability — undefined for never-submitted providers
+  acceptingClients?: number;
+  specialConsiderations?: string | null;
+  lastFormSubmittedAt?: string | null;
   // CRM-managed provider fields
   _crmManaged?: boolean;
   crmId?: number;
