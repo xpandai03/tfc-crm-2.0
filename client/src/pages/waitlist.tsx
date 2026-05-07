@@ -97,11 +97,20 @@ export default function Waitlist() {
       modality: params.get("modality"),
       status: params.get("status"),
       umbrella: params.get("umbrella"),
+      reason: params.get("reason"),
+      serviceType: params.get("serviceType"),
     };
   }, [searchString]);
 
   // Check if any filter params are present (for forcing list view)
-  const hasFilterParams = !!(urlParams.insurance || urlParams.modality || urlParams.status || urlParams.umbrella);
+  const hasFilterParams = !!(
+    urlParams.insurance ||
+    urlParams.modality ||
+    urlParams.status ||
+    urlParams.umbrella ||
+    urlParams.reason ||
+    urlParams.serviceType
+  );
 
   // Derive author initials from authenticated user
   const authorInitials = getAuthorInitials(user?.name);
@@ -112,7 +121,14 @@ export default function Waitlist() {
     // If URL has filter params, force list view
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
-      if (params.get("insurance") || params.get("modality") || params.get("status") || params.get("umbrella")) {
+      if (
+        params.get("insurance") ||
+        params.get("modality") ||
+        params.get("status") ||
+        params.get("umbrella") ||
+        params.get("reason") ||
+        params.get("serviceType")
+      ) {
         return "list";
       }
       const saved = localStorage.getItem(VIEW_MODE_KEY);
@@ -632,13 +648,15 @@ export default function Waitlist() {
             </DragOverlay>
           </DndContext>
         ) : (
-          <WaitlistListView 
-            contacts={contacts} 
+          <WaitlistListView
+            contacts={contacts}
             currentUserEmail={user?.email}
             initialInsuranceFilter={urlParams.insurance}
             initialModalityFilter={urlParams.modality}
             initialStatusFilter={urlParams.status}
             initialUmbrellaFilter={urlParams.umbrella}
+            initialReasonFilter={urlParams.reason}
+            initialServiceTypeFilter={urlParams.serviceType}
           />
         )}
       </div>
