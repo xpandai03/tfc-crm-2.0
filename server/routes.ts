@@ -72,6 +72,7 @@ import {
   getStatusDurations,
 } from "./activity/db";
 import { isRestrictedUser, canAccessReferralUpload } from "@shared/access-control";
+import { normalizeReasonForTherapy } from "@shared/reason-canonicals";
 import { getStatusLabel } from "@shared/status-codes";
 import { extractReferralData } from "./referral/extract";
 import * as XLSX from "xlsx";
@@ -4232,16 +4233,36 @@ export async function registerRoutes(
       const now = new Date().toISOString();
       const s = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
 
-      // reasonForTherapy may arrive as string[] from the form — join to comma-separated
-      const reasonForTherapy = Array.isArray(b.reasonForTherapy)
-        ? b.reasonForTherapy.join(", ")
-        : s(b.reasonForTherapy);
-
       // Optional intake source flag — default preserves existing public RFS behavior
       const rawSource = typeof b.source === "string" ? b.source.trim() : "";
       const isUploadedReferral = rawSource === "uploaded_referral";
       const intakeSource = isUploadedReferral ? "uploaded_referral" : "website_form";
       const submissionSource = isUploadedReferral ? "uploaded_referral" : "rfs_v2";
+
+      // Validate + normalize reasonForTherapy against the canonical list.
+      // Per locked decision D-A6: staff (uploaded_referral) path normalizes
+      // and warns on unknowns; website (RFS / Jotform) path hard-validates
+      // and rejects. The website Jotform's MCQ already sends only canonical
+      // values, so an unknown there is a real bug.
+      const { normalized: reasonForTherapyNormalized, unknown: unknownReasons } =
+        normalizeReasonForTherapy(b.reasonForTherapy);
+      if (unknownReasons.length > 0) {
+        if (isUploadedReferral) {
+          console.warn(
+            `[intake] Staff submission for "${b.name?.trim?.() ?? "(no name)"}" contained ` +
+              `${unknownReasons.length} non-canonical reasonForTherapy values that were dropped: ` +
+              JSON.stringify(unknownReasons)
+          );
+        } else {
+          return res.status(400).json({
+            error: "validation_error",
+            field: "reasonForTherapy",
+            message: "non-canonical reasonForTherapy values from website submission",
+            unknownValues: unknownReasons,
+          });
+        }
+      }
+      const reasonForTherapy = reasonForTherapyNormalized || null;
       const referralAuth = s(b.referralAuth) || s(b.referralNumber);
 
       // Build readable last_note for timeline display
