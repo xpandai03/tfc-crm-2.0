@@ -26,6 +26,7 @@ import {
   PIPELINE_COLUMNS,
 } from "@/lib/status-config";
 import type { WaitlistSummary, WaitlistContact } from "@shared/schema";
+import { bucketReason } from "@shared/reason-canonicals";
 
 /**
  * Modality normalization mapping (raw values → canonical categories)
@@ -299,9 +300,12 @@ export default function Insights() {
       modalityTypes[normalizedModality] = (modalityTypes[normalizedModality] || 0) + 1;
     }
 
-    // Reason for seeking services distribution (active only)
-    // Each contact may have multiple reasons - count each individually
-    // Legacy records without reasons go to "Not Collected (Older Intake)"
+    // Reason for therapy distribution (active only)
+    // Each contact may have multiple reasons - count each individually.
+    // Each token is bucketed via bucketReason() so post-migration "Other
+    // (legacy free-text)" plus any future staff-form "Other: <free-text>"
+    // entries roll into a single "Other" bucket on the chart.
+    // Contacts without reasons go to "Not Collected (Older Intake)".
     const reasonTypes: Record<string, number> = {};
     const LEGACY_REASON_LABEL = "Not Collected (Older Intake)";
     for (const c of activeContacts) {
@@ -314,13 +318,15 @@ export default function Insights() {
           : [];
 
       if (reasons.length > 0) {
-        // Count each reason individually (a contact can have multiple)
-        const seen = new Set<string>(); // dedupe within same contact
+        // Count each reason individually (a contact can have multiple).
+        // Bucket through bucketReason() before dedupe so "Other: ..." and
+        // "Other (legacy free-text)" merge into one count per contact.
+        const seen = new Set<string>();
         for (const reason of reasons) {
-          const trimmed = reason.trim();
-          if (trimmed && !seen.has(trimmed)) {
-            seen.add(trimmed);
-            reasonTypes[trimmed] = (reasonTypes[trimmed] || 0) + 1;
+          const bucketed = bucketReason(reason);
+          if (!seen.has(bucketed)) {
+            seen.add(bucketed);
+            reasonTypes[bucketed] = (reasonTypes[bucketed] || 0) + 1;
           }
         }
       } else {
@@ -785,10 +791,10 @@ export default function Insights() {
             </CardContent>
           </Card>
 
-          {/* Reason for Seeking Services */}
+          {/* Reason for Therapy (was "Seeking Services" — renamed per Bucket A; field is reasonForTherapy MCQ) */}
           <Card className="overflow-visible">
             <CardHeader>
-              <CardTitle className="text-base font-medium">By Reason for Seeking Services</CardTitle>
+              <CardTitle className="text-base font-medium">By Reason for Therapy</CardTitle>
               <p className="text-xs text-muted-foreground mt-1">
                 Contacts may have multiple reasons · Older intakes may not have this data
               </p>
