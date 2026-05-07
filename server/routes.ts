@@ -2817,19 +2817,83 @@ export async function registerRoutes(
       const data = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as string[][];
       console.log("[providers] Raw rows:", data.length);
 
-      // Column mapping based on spreadsheet structure:
-      // Col 0: Provider Name (with credentials)
-      // Col 1: Location
-      // Cols 2-9: Adults (18+) specialties
-      // Cols 10-16: Adolescents (12-17) specialties
-      // Cols 17-23: Children (6-11) specialties
-      // Cols 24-28: Children (0-5) specialties
-      // Col 29: Notes
-
+      // Column mapping (Sandra's May 2026 schema):
+      //   Col 0:    Provider Name (with credentials)
+      //   Col 1:    Location
+      //   Col 2:    "Accepting Client" — Sandra-side ops note, IGNORED on import
+      //             (Phase 2's provider_availability form owns capacity).
+      //   Cols 3-10:  Adults (18+) — 8 specialties
+      //   Cols 11-17: Adolescents (12-17) — 7 specialties
+      //   Cols 18-24: Children (6-11) — 7 specialties
+      //   Cols 25-29: Children (0-5) — 5 specialties
+      //   Col 30:   Notes
+      //   Col 31:   "Approved to work remote by Supervisor" — TODO: surface later;
+      //             ignored on import for now.
+      //   (No insurance column — Sandra dropped it. Insurances now sourced
+      //   exclusively from client-side provider-insurance-data.ts snapshot.)
       const adultSpecialties = ["Anger Issues", "Anxiety", "Couples", "Depression", "Family", "Grief", "Trauma", "Stress Management"];
       const adolescentSpecialties = ["Anger Issues", "Anxiety", "Depression", "Family", "Grief", "Trauma", "Stress Management"];
       const children6to11Specialties = ["Anger Issues", "Anxiety", "Depression", "Family", "Grief", "Trauma", "Stress Management"];
       const children0to5Specialties = ["Anxiety", "Depression", "Family", "Grief", "Trauma"];
+
+      type SkillPace = "normal" | "slow";
+      interface SkillEntry {
+        hasSkill: boolean;
+        pace: SkillPace | null;
+        supervision: { supervisor: string } | null;
+        raw: string;
+      }
+      interface SkillWarning {
+        row: number;
+        providerName: string;
+        group: string;
+        skill: string;
+        raw: string;
+        reason: string;
+      }
+      const warnings: SkillWarning[] = [];
+
+      // Cell-value parser. Handles:
+      //   ""                                   → no skill
+      //   "x" (case-insensitive, w/ ws)        → has skill, normal pace
+      //   "x - Slow" / "x-slow"                → has skill, slow pace
+      //   "x under supervision by Lane Smith"  → has skill, normal, supervised
+      //   "x-slow and shadowing Angelica V"    → has skill, slow, supervised
+      //   "x-slow & shadowing renee"           → has skill, slow, supervised
+      //   anything else starting with x        → best-effort {has, normal} + warn
+      //   anything else                        → no skill + warn
+      // Per S1: "shadowing" and "under supervision by" are treated as the same flag.
+      const parseSkillCell = (
+        raw: unknown,
+        ctx: { row: number; providerName: string; group: string; skill: string }
+      ): SkillEntry => {
+        const trimmed = (raw == null ? "" : String(raw)).trim();
+        if (!trimmed) return { hasSkill: false, pace: null, supervision: null, raw: trimmed };
+
+        // Strip a trailing supervision/shadowing annotation, if present.
+        const supMatch = trimmed.match(
+          /\s+(?:(?:and|&)\s+)?(?:under\s+supervision\s+by|shadowing)\s+(.+?)\s*$/i
+        );
+        let supervision: { supervisor: string } | null = null;
+        let prefix = trimmed;
+        if (supMatch) {
+          supervision = { supervisor: supMatch[1].trim() };
+          prefix = trimmed.slice(0, supMatch.index!).trim();
+        }
+
+        if (/^x\s*[-–]\s*slow$/i.test(prefix)) {
+          return { hasSkill: true, pace: "slow", supervision, raw: trimmed };
+        }
+        if (/^x$/i.test(prefix)) {
+          return { hasSkill: true, pace: "normal", supervision, raw: trimmed };
+        }
+        if (prefix.toLowerCase().startsWith("x")) {
+          warnings.push({ ...ctx, raw: trimmed, reason: "malformed skill cell, best-effort to {hasSkill:true, pace:\"normal\"}" });
+          return { hasSkill: true, pace: "normal", supervision, raw: trimmed };
+        }
+        warnings.push({ ...ctx, raw: trimmed, reason: "unrecognized value, treated as empty" });
+        return { hasSkill: false, pace: null, supervision: null, raw: trimmed };
+      };
 
       const providers: unknown[] = [];
 
@@ -2845,7 +2909,7 @@ export async function registerRoutes(
         // Format: "FirstName LastName, CREDENTIALS" or "FirstName LastName, CREDENTIALS (Language)"
         const nameMatch = nameWithCredentials.match(/^(.+?),\s*(.+)$/);
         let name = nameMatch ? nameMatch[1].trim() : nameWithCredentials;
-        const credentials = nameMatch ? nameMatch[2].trim() : "";
+        let credentials = nameMatch ? nameMatch[2].trim() : "";
 
         // Correct names that are in "Last First" format or abbreviated in the spreadsheet
         const nameCorrections: Record<string, string> = {
@@ -2856,6 +2920,14 @@ export async function registerRoutes(
           name = nameCorrections[name];
         }
 
+        // Correct credential typos. Keyed by corrected name → corrected credential.
+        const credentialCorrections: Record<string, string> = {
+          "Cindy Ketchum": "Intern", // CSV has "inten" (typo)
+        };
+        if (credentialCorrections[name]) {
+          credentials = credentialCorrections[name];
+        }
+
         // Skip providers that should be excluded from the list
         const excludedProviders = ["Vera Molina"];
         if (excludedProviders.includes(name)) {
@@ -2864,36 +2936,42 @@ export async function registerRoutes(
 
         const location = row[1]?.toString().trim() || "";
 
-        // Extract specialties for each age group (preserve raw values)
-        const adultsCapabilities: Record<string, string> = {};
+        // Skill columns (shifted right by 1 vs. pre-May-2026 schema; col 2 is now
+        // Sandra's "Accepting Client" ops field, ignored).
+        const ADULTS_BASE = 3;
+        const ADOLESCENTS_BASE = 11;
+        const CHILDREN_6_11_BASE = 18;
+        const CHILDREN_0_5_BASE = 25;
+
+        const adultsCapabilities: Record<string, SkillEntry> = {};
         for (let j = 0; j < adultSpecialties.length; j++) {
-          const val = row[2 + j]?.toString().trim() || "";
-          if (val) adultsCapabilities[adultSpecialties[j]] = val;
+          const skill = adultSpecialties[j];
+          const entry = parseSkillCell(row[ADULTS_BASE + j], { row: i, providerName: name, group: "Adults (18+)", skill });
+          if (entry.hasSkill) adultsCapabilities[skill] = entry;
         }
-
-        const adolescentsCapabilities: Record<string, string> = {};
+        const adolescentsCapabilities: Record<string, SkillEntry> = {};
         for (let j = 0; j < adolescentSpecialties.length; j++) {
-          const val = row[10 + j]?.toString().trim() || "";
-          if (val) adolescentsCapabilities[adolescentSpecialties[j]] = val;
+          const skill = adolescentSpecialties[j];
+          const entry = parseSkillCell(row[ADOLESCENTS_BASE + j], { row: i, providerName: name, group: "Adolescents (12-17)", skill });
+          if (entry.hasSkill) adolescentsCapabilities[skill] = entry;
         }
-
-        const children6to11Capabilities: Record<string, string> = {};
+        const children6to11Capabilities: Record<string, SkillEntry> = {};
         for (let j = 0; j < children6to11Specialties.length; j++) {
-          const val = row[17 + j]?.toString().trim() || "";
-          if (val) children6to11Capabilities[children6to11Specialties[j]] = val;
+          const skill = children6to11Specialties[j];
+          const entry = parseSkillCell(row[CHILDREN_6_11_BASE + j], { row: i, providerName: name, group: "Children (6-11)", skill });
+          if (entry.hasSkill) children6to11Capabilities[skill] = entry;
         }
-
-        const children0to5Capabilities: Record<string, string> = {};
+        const children0to5Capabilities: Record<string, SkillEntry> = {};
         for (let j = 0; j < children0to5Specialties.length; j++) {
-          const val = row[24 + j]?.toString().trim() || "";
-          if (val) children0to5Capabilities[children0to5Specialties[j]] = val;
+          const skill = children0to5Specialties[j];
+          const entry = parseSkillCell(row[CHILDREN_0_5_BASE + j], { row: i, providerName: name, group: "Children (0-5)", skill });
+          if (entry.hasSkill) children0to5Capabilities[skill] = entry;
         }
 
-        const notes = row[29]?.toString().trim() || "";
-
-        // Column 30: Accepted Insurances (comma-separated string)
-        // Example: "BCBS, Presbyterian Commercial, Tricare"
-        const acceptedInsurances = row[30]?.toString().trim() || "";
+        const notes = row[30]?.toString().trim() || "";
+        // Insurances column was removed in May 2026; always emit empty string,
+        // client-side hardcoded snapshot is now the only source of truth.
+        const acceptedInsurances = "";
 
         providers.push({
           id: i - 1, // 1-indexed provider ID
@@ -2913,6 +2991,12 @@ export async function registerRoutes(
       }
 
       console.log("[providers] Parsed", providers.length, "providers from spreadsheet");
+      if (warnings.length > 0) {
+        const lines = warnings
+          .map((w) => `  - ${w.providerName} / ${w.group} / ${w.skill}: ${JSON.stringify(w.raw)} — ${w.reason}`)
+          .join("\n");
+        console.warn(`[providers] Skill-cell parser warnings (${warnings.length}):\n${lines}`);
+      }
 
       // Apply CRM overrides to spreadsheet providers
       try {
@@ -2927,14 +3011,25 @@ export async function registerRoutes(
             if (override.insurances) prov._overrideInsurances = override.insurances;
             if (override.populations) prov._overridePopulations = override.populations;
             if (override.notes !== null && override.notes !== undefined) prov._overrideNotes = override.notes;
-            // Merge ageGroup capability overrides onto the provider's ageGroups
+            // Merge ageGroup capability overrides onto the provider's ageGroups.
+            // Override values are still strings ("x", "x - Slow") in
+            // provider_overrides.age_groups (no DB migration in Phase 1, per
+            // S6 in plan summary). Coerce each override string through the
+            // same parseSkillCell used for the spreadsheet so the merged
+            // ageGroups stays uniformly { hasSkill, pace, supervision, raw }.
             if (override.ageGroups) {
               for (const [group, caps] of Object.entries(override.ageGroups)) {
-                if (prov.ageGroups[group]) {
-                  prov.ageGroups[group] = { ...prov.ageGroups[group], ...caps };
-                  // Remove entries with empty values (deselected)
-                  for (const [key, val] of Object.entries(prov.ageGroups[group])) {
-                    if (!val) delete prov.ageGroups[group][key];
+                if (!prov.ageGroups[group]) continue;
+                for (const [skill, val] of Object.entries(caps as Record<string, string>)) {
+                  if (typeof val === "string" && val.trim() !== "") {
+                    prov.ageGroups[group][skill] = parseSkillCell(val, {
+                      row: -1,
+                      providerName: prov.name,
+                      group,
+                      skill,
+                    });
+                  } else {
+                    delete prov.ageGroups[group][skill];
                   }
                 }
               }
