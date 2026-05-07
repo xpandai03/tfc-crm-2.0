@@ -50,27 +50,43 @@ interface WaitlistListViewProps {
 /**
  * Modality normalization mapping (copied from insights.tsx for consistency)
  * Maps form options and historical values to display categories
+ *
+ * TODO: consolidate this map with insights.tsx — the two copies have
+ * drifted independently in the past. See follow-up PR (D-C2 from
+ * insights cleanup audit).
  */
 const MODALITY_NORMALIZATION_MAP: Record<string, string> = {
   // Hybrid
   "hybrid": "Hybrid",
+  "hybrid - ll": "Hybrid",
   // In Person - Albuquerque (ABQ)
   "in person - albuquerque": "In Person ABQ",
   "in person-abq": "In Person ABQ",
   "in person abq": "In Person ABQ",
+  "in person- albuquerque": "In Person ABQ",
+  "in person - abq": "In Person ABQ",
   "abq": "In Person ABQ",
   "albuquerque": "In Person ABQ",
   // In Person - Rio Rancho (RR)
   "in person - rio rancho": "In Person RR",
   "in person-rio rancho": "In Person RR",
+  "in person- rio rancho": "In Person RR",
+  "in person - rr": "In Person RR",
   "in person rr": "In Person RR",
   "rio rancho": "In Person RR",
+  // In Person - Los Lunas (LL) — split out from generic per Bucket C
+  "in person - los lunas": "In Person LL",
+  "in person- los lunas": "In Person LL",
+  "in person los lunas": "In Person LL",
+  "in-person los lunas": "In Person LL",
+  "in person ll": "In Person LL",
+  "los lunas": "In Person LL",
+  "ll": "In Person LL",
   // In Person (generic)
   "in person": "In Person",
-  "in person - los lunas": "In Person",
   "in person - albuquerque or rio rancho": "In Person",
+  "in person- albuquerque or rio rancho": "In Person",
   "in-person": "In Person",
-  "in person los lunas": "In Person",
   // Telehealth
   "telehealth": "Telehealth",
   "th": "Telehealth",
@@ -78,6 +94,7 @@ const MODALITY_NORMALIZATION_MAP: Record<string, string> = {
   "tele health": "Telehealth",
   // Flexible/Flex
   "flexible (open to any option)": "Flex",
+  "flexible (open to any option).": "Flex",
   "flexible": "Flex",
   "flex": "Flex",
   "open to any option": "Flex",
