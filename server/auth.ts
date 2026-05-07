@@ -353,6 +353,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     "/api/intake",
     "/api/submissions",
     "/api/test-email",
+    "/api/provider-availability",
   ];
 
   if (req.method === "POST" && publicPostPaths.includes(req.path)) {

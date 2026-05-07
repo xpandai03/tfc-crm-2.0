@@ -63,12 +63,35 @@ for (const p of PROVIDER_LIST) {
   emailMapLower[p.name.toLowerCase()] = p.email;
 }
 
+// Reverse map: lowercased email → ProviderEntry, for O(1) email lookup
+// (used by /api/provider-availability to validate inbound form emails).
+// PROVIDER_LIST emails are lowercase by convention; normalize defensively.
+const entryByEmailLower: Record<string, ProviderEntry> = {};
+for (const p of PROVIDER_LIST) {
+  entryByEmailLower[p.email.trim().toLowerCase()] = p;
+}
+
 /**
  * Resolve a provider name to their email address.
  * Case-insensitive. Returns undefined if no match.
  */
 export function getProviderEmail(name: string): string | undefined {
   return emailMapLower[name.toLowerCase()];
+}
+
+/**
+ * Resolve a provider email to their full ProviderEntry (name, credential, email).
+ *
+ * v1: Sources only from PROVIDER_LIST. CRM-managed providers (crm_providers
+ * table) are NOT yet covered — those have no email column. Unifying lookup
+ * across both sources is a follow-up ticket.
+ *
+ * Case-insensitive; trims whitespace. Returns undefined for unknown emails
+ * (does NOT throw — callers handle the missing case).
+ */
+export function getProviderByEmail(email: string): ProviderEntry | undefined {
+  if (!email) return undefined;
+  return entryByEmailLower[email.trim().toLowerCase()];
 }
 
 export const OFFICE_LOCATIONS: OfficeLocation[] = [
