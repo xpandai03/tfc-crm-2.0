@@ -117,13 +117,16 @@ export default function Insights() {
 
   const { updateSummarySource, updateContactsSource, updateSyncTime, summarySource, isFullyLive } = useDataSource();
   // Drill-down navigation handler - navigates to Waitlist List View with filter applied
-  const handleDrillDown = useCallback((filterType: "insurance" | "modality" | "umbrella", value: string) => {
-    const encoded = encodeURIComponent(value);
-    const targetUrl = `/waitlist?${filterType}=${encoded}`;
-    console.log("[Insights] Drill-down clicked:", { filterType, value, targetUrl });
-    // Use window.location for reliable navigation with query params
-    window.location.href = targetUrl;
-  }, []);
+  const handleDrillDown = useCallback(
+    (filterType: "insurance" | "modality" | "umbrella" | "reason" | "serviceType", value: string) => {
+      const encoded = encodeURIComponent(value);
+      const targetUrl = `/waitlist?${filterType}=${encoded}`;
+      console.log("[Insights] Drill-down clicked:", { filterType, value, targetUrl });
+      // Use window.location for reliable navigation with query params
+      window.location.href = targetUrl;
+    },
+    []
+  );
   
   const isDataFullyLive = isFullyLive;
 
@@ -718,12 +721,16 @@ export default function Insights() {
                   sortedServiceTypes.map(([service, count]) => (
                     <div
                       key={service}
-                      className="flex items-center justify-between p-3 rounded-lg bg-white dark:bg-gray-800/90 border border-gray-200/60 dark:border-gray-700/40 shadow-sm transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-gray-50 dark:hover:bg-gray-800"
+                      onClick={() => handleDrillDown("serviceType", service)}
+                      className="group flex items-center justify-between p-3 rounded-lg bg-white dark:bg-gray-800/90 border border-gray-200/60 dark:border-gray-700/40 shadow-sm transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer hover:border-primary/30"
                     >
-                      <span className="text-sm font-medium text-foreground">
+                      <span className="text-sm font-medium text-foreground group-hover:text-primary transition-colors">
                         {service}
                       </span>
-                      <Badge variant="secondary" className="shadow-sm">{count}</Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary" className="shadow-sm">{count}</Badge>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
                     </div>
                   ))
                 )}
@@ -804,30 +811,38 @@ export default function Insights() {
                 {sortedReasonTypes.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">No reason data available</p>
                 ) : (
-                  sortedReasonTypes.map(([reason, count]) => (
-                    <div
-                      key={reason}
-                      className={`flex items-center justify-between p-3 rounded-lg backdrop-blur-sm border shadow-md transition-all duration-300 ${
-                        reason === "Not Collected (Older Intake)"
-                          ? "bg-gray-100/80 dark:bg-gray-900/80 border-gray-300/40 dark:border-gray-600/40"
-                          : "bg-white/80 dark:bg-gray-800/80 border-white/40 dark:border-gray-700/40 hover:scale-[1.02] hover:shadow-lg hover:bg-gray-50 dark:hover:bg-gray-800"
-                      }`}
-                    >
-                      <span className={`text-sm font-medium ${
-                        reason === "Not Collected (Older Intake)"
-                          ? "text-muted-foreground italic"
-                          : "text-foreground"
-                      }`}>
-                        {reason}
-                      </span>
-                      <Badge 
-                        variant={reason === "Not Collected (Older Intake)" ? "outline" : "secondary"} 
-                        className="shadow-sm"
+                  sortedReasonTypes.map(([reason, count]) => {
+                    const isLegacy = reason === "Not Collected (Older Intake)";
+                    return (
+                      <div
+                        key={reason}
+                        onClick={isLegacy ? undefined : () => handleDrillDown("reason", reason)}
+                        className={`flex items-center justify-between p-3 rounded-lg backdrop-blur-sm border shadow-md transition-all duration-300 ${
+                          isLegacy
+                            ? "bg-gray-100/80 dark:bg-gray-900/80 border-gray-300/40 dark:border-gray-600/40"
+                            : "group bg-white/80 dark:bg-gray-800/80 border-white/40 dark:border-gray-700/40 hover:scale-[1.02] hover:shadow-lg hover:bg-gray-50 dark:hover:bg-gray-800 hover:border-primary/30 cursor-pointer"
+                        }`}
                       >
-                        {count}
-                      </Badge>
-                    </div>
-                  ))
+                        <span
+                          className={`text-sm font-medium ${
+                            isLegacy
+                              ? "text-muted-foreground italic"
+                              : "text-foreground group-hover:text-primary transition-colors"
+                          }`}
+                        >
+                          {reason}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={isLegacy ? "outline" : "secondary"} className="shadow-sm">
+                            {count}
+                          </Badge>
+                          {!isLegacy && (
+                            <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </CardContent>
