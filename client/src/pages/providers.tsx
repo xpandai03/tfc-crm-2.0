@@ -3,7 +3,7 @@ import { PageLayout } from "@/components/layout/page-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/page-loader";
-import { AlertCircle, AlertTriangle, MapPin, FileText, Shield, Users, Plus, Pencil, Loader2, Check, X, Search } from "lucide-react";
+import { AlertCircle, AlertTriangle, MapPin, FileText, MessageSquare, Shield, Users, Plus, Pencil, Loader2, Check, X, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -21,6 +21,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -223,6 +228,233 @@ function AgeGroupSection({
   );
 }
 
+/** Format a relative timestamp for the availability popover footer. */
+function formatTimeAgo(date: Date): string {
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) {
+    const m = Math.floor(seconds / 60);
+    return `${m} minute${m === 1 ? "" : "s"} ago`;
+  }
+  const hours = Math.floor(seconds / 3600);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} day${days === 1 ? "" : "s"} ago`;
+  return date.toLocaleDateString();
+}
+
+/**
+ * Capacity / special-considerations section on the provider card.
+ *
+ * Three render states for acceptingClients:
+ *   undefined → "No availability submitted yet" (italic). Pencil enabled
+ *               so practice managers can pre-populate (D2).
+ *   0         → "Not accepting new patients."
+ *   N > 0     → "Accepting <N> new patients."
+ *
+ * Special considerations icon (📝) shows when text is non-empty; click
+ * opens a popover with the full text plus an "Updated X ago" timestamp.
+ *
+ * Pencil edits POST to PATCH /api/provider-availability. Form-vs-manual
+ * precedence (D1) means the next form submission overwrites manual values.
+ */
+function AvailabilitySection({ provider }: { provider: Provider }) {
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [draftClients, setDraftClients] = useState<string>(
+    provider.acceptingClients !== undefined ? String(provider.acceptingClients) : ""
+  );
+  const [draftConsiderations, setDraftConsiderations] = useState<string>(
+    provider.specialConsiderations ?? ""
+  );
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const resetDraft = () => {
+    setDraftClients(provider.acceptingClients !== undefined ? String(provider.acceptingClients) : "");
+    setDraftConsiderations(provider.specialConsiderations ?? "");
+  };
+
+  const handleSave = async () => {
+    const trimmedCount = draftClients.trim();
+    let parsedCount: number | undefined;
+    if (trimmedCount !== "") {
+      const n = Number(trimmedCount);
+      if (!Number.isInteger(n) || n < 0) {
+        toast({
+          title: "Invalid count",
+          description: "Accepting clients must be a non-negative integer.",
+          variant: "destructive",
+        });
+        return;
+      }
+      parsedCount = n;
+    }
+    const trimmedConsiderations = draftConsiderations.trim();
+
+    setSaving(true);
+    try {
+      const payload: {
+        providerName: string;
+        acceptingClients?: number;
+        specialConsiderations?: string | null;
+      } = { providerName: provider.name };
+      if (parsedCount !== undefined) payload.acceptingClients = parsedCount;
+      // Always send specialConsiderations (null clears, string sets) so the
+      // textarea round-trips. If the user wanted to leave it untouched they
+      // could close the popover without saving — but if they hit Save, we
+      // honor what's currently in the textarea.
+      payload.specialConsiderations = trimmedConsiderations === "" ? null : trimmedConsiderations;
+
+      await apiRequest("PATCH", "/api/provider-availability", payload);
+      await queryClient.invalidateQueries({ queryKey: ["/api/providers"] });
+      toast({ title: "Availability updated" });
+      setEditing(false);
+    } catch (err) {
+      toast({
+        title: "Failed to update availability",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  let countDisplay: React.ReactNode;
+  if (provider.acceptingClients === undefined) {
+    countDisplay = (
+      <span className="text-sm text-muted-foreground italic">
+        No availability submitted yet
+      </span>
+    );
+  } else if (provider.acceptingClients === 0) {
+    countDisplay = (
+      <span className="text-sm text-muted-foreground">Not accepting new patients</span>
+    );
+  } else {
+    countDisplay = (
+      <span className="text-sm">
+        Accepting <strong>{provider.acceptingClients}</strong> new patient
+        {provider.acceptingClients === 1 ? "" : "s"}
+      </span>
+    );
+  }
+
+  const hasConsiderations =
+    typeof provider.specialConsiderations === "string" &&
+    provider.specialConsiderations.trim() !== "";
+
+  return (
+    <div className="pt-3 border-t">
+      <div className="flex items-center gap-2">
+        <Users className="h-4 w-4 text-muted-foreground shrink-0" />
+        <div className="flex-1 flex items-center gap-1.5 flex-wrap">
+          {countDisplay}
+          {hasConsiderations && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                  aria-label="View special considerations"
+                >
+                  <MessageSquare className="h-3.5 w-3.5" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80" align="start">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                  Special considerations
+                </p>
+                <p className="text-sm whitespace-pre-wrap break-words">
+                  {provider.specialConsiderations}
+                </p>
+                {provider.lastFormSubmittedAt && (
+                  <p className="text-xs text-muted-foreground mt-2 pt-2 border-t">
+                    Updated {formatTimeAgo(new Date(provider.lastFormSubmittedAt))}
+                  </p>
+                )}
+              </PopoverContent>
+            </Popover>
+          )}
+        </div>
+        <Popover
+          open={editing}
+          onOpenChange={(open) => {
+            setEditing(open);
+            if (open) resetDraft();
+          }}
+        >
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+              aria-label="Edit availability"
+            >
+              <Pencil className="h-3 w-3" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-80" align="end">
+            <div className="space-y-3">
+              <div>
+                <Label htmlFor={`accepting-clients-${provider.id}`} className="text-xs">
+                  Accepting new patients
+                </Label>
+                <Input
+                  id={`accepting-clients-${provider.id}`}
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={draftClients}
+                  onChange={(e) => setDraftClients(e.target.value)}
+                  placeholder="0"
+                  className="mt-1 h-8"
+                  data-testid="input-accepting-clients"
+                />
+              </div>
+              <div>
+                <Label htmlFor={`special-considerations-${provider.id}`} className="text-xs">
+                  Special considerations{" "}
+                  <span className="text-muted-foreground font-normal">(optional)</span>
+                </Label>
+                <Textarea
+                  id={`special-considerations-${provider.id}`}
+                  value={draftConsiderations}
+                  onChange={(e) => setDraftConsiderations(e.target.value.slice(0, 2000))}
+                  maxLength={2000}
+                  rows={4}
+                  className="mt-1 text-sm"
+                  placeholder="Practice manager note (no PHI)"
+                  data-testid="input-special-considerations"
+                />
+                <p className="text-[10px] text-muted-foreground mt-0.5 text-right">
+                  {draftConsiderations.length}/2000
+                </p>
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEditing(false)}
+                  disabled={saving}
+                >
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={handleSave} disabled={saving}>
+                  {saving && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+                  Save
+                </Button>
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Provider card component
  */
@@ -357,6 +589,9 @@ function ProviderCard({ provider, onFindPatients, onEdit }: { provider: Provider
         ) : (
           <InsuranceSection providerName={provider.name} />
         )}
+
+        {/* Self-reported availability (capacity + special considerations) */}
+        <AvailabilitySection provider={provider} />
 
         {/* Find Matching Patients */}
         <div className="pt-3 border-t">
