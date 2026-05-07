@@ -123,6 +123,36 @@ export async function initRemindersTable(): Promise<void> {
     // Column already exists — ignore
   }
 
+  // Provider availability — populated by the standalone Fly.io provider
+  // availability form (separate app). Single integer accepting_clients +
+  // optional special_considerations free-text. Keyed by lowercased email.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS provider_availability (
+      id                       SERIAL PRIMARY KEY,
+      provider_email           TEXT NOT NULL UNIQUE,
+      provider_name            TEXT,
+      accepting_clients        INTEGER NOT NULL DEFAULT 0,
+      special_considerations   TEXT,
+      last_form_submitted_at   TIMESTAMPTZ,
+      created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  // Idempotent guards. Cheap insurance against any dev DB that may have
+  // received the older 3-counts shape from earlier WIP. No prod data
+  // exists yet.
+  try {
+    await pool.query(`ALTER TABLE provider_availability ADD COLUMN IF NOT EXISTS accepting_clients INTEGER NOT NULL DEFAULT 0`);
+    await pool.query(`ALTER TABLE provider_availability ADD COLUMN IF NOT EXISTS special_considerations TEXT`);
+    await pool.query(`ALTER TABLE provider_availability DROP COLUMN IF EXISTS accepting_individual`);
+    await pool.query(`ALTER TABLE provider_availability DROP COLUMN IF EXISTS accepting_couples`);
+    await pool.query(`ALTER TABLE provider_availability DROP COLUMN IF EXISTS accepting_family`);
+    await pool.query(`ALTER TABLE provider_availability DROP COLUMN IF EXISTS availability`);
+  } catch {
+    // Migration already applied or column doesn't exist — ignore
+  }
+
   console.log("[reminders-db] Tables initialized successfully");
 }
 
@@ -676,4 +706,175 @@ export async function upsertProviderOverride(params: UpsertOverrideParams): Prom
   } finally {
     client.release();
   }
+}
+
+// ============================================================================
+// Provider Availability (self-reported via standalone availability form)
+// ============================================================================
+
+export interface ProviderAvailability {
+  id: number;
+  providerEmail: string;
+  providerName: string | null;
+  acceptingClients: number;
+  specialConsiderations: string | null;
+  lastFormSubmittedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpsertProviderAvailabilityParams {
+  providerEmail: string;
+  providerName?: string | null;
+  acceptingClients?: number;
+  specialConsiderations?: string | null;
+  lastFormSubmittedAt?: string | null;
+}
+
+function rowToProviderAvailability(row: any): ProviderAvailability {
+  return {
+    id: row.id,
+    providerEmail: row.providerEmail,
+    providerName: row.providerName ?? null,
+    acceptingClients: row.acceptingClients ?? 0,
+    specialConsiderations: row.specialConsiderations ?? null,
+    lastFormSubmittedAt: row.lastFormSubmittedAt ?? null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+export async function getProviderAvailability(email: string): Promise<ProviderAvailability | undefined> {
+  const pool = getPool();
+  const result = await pool.query(
+    `
+    SELECT
+      id,
+      provider_email AS "providerEmail",
+      provider_name AS "providerName",
+      accepting_clients AS "acceptingClients",
+      special_considerations AS "specialConsiderations",
+      last_form_submitted_at AS "lastFormSubmittedAt",
+      created_at AS "createdAt",
+      updated_at AS "updatedAt"
+    FROM provider_availability
+    WHERE provider_email = $1
+  `,
+    [email.trim().toLowerCase()]
+  );
+  const row = result.rows[0];
+  if (!row) return undefined;
+  return rowToProviderAvailability(row);
+}
+
+export async function getAllProviderAvailability(): Promise<ProviderAvailability[]> {
+  const pool = getPool();
+  const result = await pool.query(`
+    SELECT
+      id,
+      provider_email AS "providerEmail",
+      provider_name AS "providerName",
+      accepting_clients AS "acceptingClients",
+      special_considerations AS "specialConsiderations",
+      last_form_submitted_at AS "lastFormSubmittedAt",
+      created_at AS "createdAt",
+      updated_at AS "updatedAt"
+    FROM provider_availability
+    ORDER BY provider_email ASC
+  `);
+  return result.rows.map(rowToProviderAvailability);
+}
+
+/**
+ * Upsert availability row keyed by lowercased provider_email.
+ *
+ * Leave-untouched semantics: only fields explicitly present in `params`
+ * (i.e. !== undefined) are written. Passing `null` for an optional field
+ * (e.g. specialConsiderations: null) DOES clear the column. Omitting the
+ * field leaves the existing value alone. This matches the
+ * provider_overrides upsert pattern above.
+ *
+ * Form submissions always include acceptingClients and lastFormSubmittedAt;
+ * manual PATCH edits never include lastFormSubmittedAt.
+ */
+export async function upsertProviderAvailability(
+  params: UpsertProviderAvailabilityParams
+): Promise<ProviderAvailability> {
+  const pool = getPool();
+  const client = await pool.connect();
+
+  const normalizedEmail = params.providerEmail.trim().toLowerCase();
+
+  try {
+    await client.query("BEGIN");
+
+    const existing = await client.query(
+      `SELECT id FROM provider_availability WHERE provider_email = $1`,
+      [normalizedEmail]
+    );
+
+    if (existing.rows.length > 0) {
+      const setClauses: string[] = [];
+      const values: any[] = [];
+      let paramIndex = 1;
+
+      if (params.providerName !== undefined) {
+        setClauses.push(`provider_name = $${paramIndex++}`);
+        values.push(params.providerName);
+      }
+      if (params.acceptingClients !== undefined) {
+        setClauses.push(`accepting_clients = $${paramIndex++}`);
+        values.push(params.acceptingClients);
+      }
+      if (params.specialConsiderations !== undefined) {
+        setClauses.push(`special_considerations = $${paramIndex++}`);
+        values.push(params.specialConsiderations);
+      }
+      if (params.lastFormSubmittedAt !== undefined) {
+        setClauses.push(`last_form_submitted_at = $${paramIndex++}`);
+        values.push(params.lastFormSubmittedAt);
+      }
+
+      if (setClauses.length > 0) {
+        setClauses.push("updated_at = NOW()");
+        values.push(normalizedEmail);
+        await client.query(
+          `UPDATE provider_availability SET ${setClauses.join(", ")} WHERE provider_email = $${paramIndex}`,
+          values
+        );
+      }
+    } else {
+      await client.query(
+        `
+        INSERT INTO provider_availability (
+          provider_email, provider_name,
+          accepting_clients, special_considerations,
+          last_form_submitted_at
+        ) VALUES ($1, $2, $3, $4, $5)
+      `,
+        [
+          normalizedEmail,
+          params.providerName ?? null,
+          params.acceptingClients ?? 0,
+          params.specialConsiderations ?? null,
+          params.lastFormSubmittedAt ?? null,
+        ]
+      );
+    }
+
+    await client.query("COMMIT");
+    console.log(`[provider-availability] Upserted availability for: ${normalizedEmail}`);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  // Re-read so callers receive the canonical row (with timestamps).
+  const fresh = await getProviderAvailability(normalizedEmail);
+  if (!fresh) {
+    throw new Error(`[provider-availability] Upsert succeeded but row not found for ${normalizedEmail}`);
+  }
+  return fresh;
 }
