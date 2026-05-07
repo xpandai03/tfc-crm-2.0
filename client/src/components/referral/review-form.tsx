@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import {
@@ -9,6 +9,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { ChevronDown } from "lucide-react";
+import { REASON_CANONICALS } from "@shared/reason-canonicals";
 
 export interface ReferralFormState {
   firstName: string;
@@ -89,6 +97,138 @@ function labelFor(key: FieldKey): string {
     formCompletedBy: "Form Completed By",
   };
   return map[key];
+}
+
+/**
+ * Parse a comma-separated reasonForTherapy string into selected canonicals
+ * + an Other free-text string.
+ *
+ *   - Canonical values (in REASON_CANONICALS) → added to `selected`.
+ *   - "Other: <text>" → "Other" added to `selected`, text → `otherText`.
+ *   - "Other (legacy free-text)" → "Other" added, no `otherText`.
+ *   - Any other unknown token → silently dropped (manual edits via this
+ *     form are expected to clean as they go).
+ */
+function parseReasonForTherapy(raw: string): { selected: Set<string>; otherText: string } {
+  const selected = new Set<string>();
+  let otherText = "";
+  if (!raw || !raw.trim()) return { selected, otherText };
+  const canonicalSet = new Set<string>(REASON_CANONICALS);
+  for (const part of raw.split(",")) {
+    const t = part.trim();
+    if (!t) continue;
+    if (canonicalSet.has(t)) {
+      selected.add(t);
+    } else if (t.startsWith("Other:")) {
+      selected.add("Other");
+      otherText = t.slice("Other:".length).trim();
+    } else if (t === "Other (legacy free-text)" || t === "Other") {
+      selected.add("Other");
+    }
+    // else: drop unknown
+  }
+  return { selected, otherText };
+}
+
+function serializeReasonForTherapy(selected: Set<string>, otherText: string): string {
+  const parts: string[] = [];
+  for (const canon of REASON_CANONICALS) {
+    if (selected.has(canon)) parts.push(canon);
+  }
+  if (selected.has("Other")) {
+    const t = otherText.trim();
+    parts.push(t ? `Other: ${t}` : "Other (legacy free-text)");
+  }
+  return parts.join(", ");
+}
+
+/**
+ * Multi-select dropdown for reasonForTherapy. Replaces the previous
+ * free-text Input (Bucket A — prevents new pollution going forward).
+ *
+ * Shape contract: receives + emits a single comma-separated string so
+ * callers don't need to change their state shape.
+ */
+function ReasonForTherapyMultiSelect({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const { selected, otherText } = useMemo(() => parseReasonForTherapy(value), [value]);
+
+  const toggle = (option: string) => {
+    const next = new Set(selected);
+    if (next.has(option)) next.delete(option);
+    else next.add(option);
+    onChange(serializeReasonForTherapy(next, otherText));
+  };
+
+  const updateOtherText = (text: string) => {
+    const next = new Set(selected);
+    next.add("Other");
+    onChange(serializeReasonForTherapy(next, text));
+  };
+
+  const display =
+    selected.size === 0
+      ? "Select reasons…"
+      : selected.size === 1
+        ? Array.from(selected)[0]
+        : `${selected.size} selected`;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          className="w-full justify-between font-normal"
+          data-testid="trigger-reasonForTherapy"
+        >
+          <span className="truncate">{display}</span>
+          <ChevronDown className="h-4 w-4 ml-2 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80 max-h-96 overflow-y-auto p-3">
+        <div className="space-y-2">
+          {REASON_CANONICALS.map((opt) => (
+            <label
+              key={opt}
+              className="flex items-center gap-2 cursor-pointer hover:bg-accent rounded px-1 py-0.5"
+            >
+              <Checkbox
+                checked={selected.has(opt)}
+                onCheckedChange={() => toggle(opt)}
+                data-testid={`checkbox-reason-${opt}`}
+              />
+              <span className="text-sm">{opt}</span>
+            </label>
+          ))}
+          <div className="pt-2 border-t">
+            <label className="flex items-center gap-2 cursor-pointer hover:bg-accent rounded px-1 py-0.5">
+              <Checkbox
+                checked={selected.has("Other")}
+                onCheckedChange={() => toggle("Other")}
+                data-testid="checkbox-reason-Other"
+              />
+              <span className="text-sm">Other</span>
+            </label>
+            {selected.has("Other") && (
+              <Input
+                value={otherText}
+                onChange={(e) => updateOtherText(e.target.value)}
+                placeholder="Describe (free text)"
+                className="mt-2 h-8 text-sm"
+                data-testid="input-reasonForTherapy-other"
+              />
+            )}
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 export function ReviewForm({ value, onChange, onSubmit, onStartOver, isSubmitting }: ReviewFormProps) {
@@ -218,10 +358,9 @@ export function ReviewForm({ value, onChange, onSubmit, onStartOver, isSubmittin
           />
         </Field>
         <Field label={labelFor("reasonForTherapy")}>
-          <Input
+          <ReasonForTherapyMultiSelect
             value={value.reasonForTherapy}
-            onChange={(e) => set("reasonForTherapy", e.target.value)}
-            data-testid="input-reasonForTherapy"
+            onChange={(next) => set("reasonForTherapy", next)}
           />
         </Field>
         <Field label={labelFor("diagnosis")}>
