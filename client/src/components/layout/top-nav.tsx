@@ -1,11 +1,11 @@
 import { Link, useLocation } from "wouter";
-import { Home, Users, BarChart3, UserCheck, FileText, Activity, MessageCircleQuestion } from "lucide-react";
+import { Home, Users, BarChart3, UserCheck, FileText, FileUp, Activity, MessageCircleQuestion } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { UserMenu } from "./user-menu";
 import { useAuth } from "@/lib/auth-context";
 import { FeedbackModal } from "@/components/ui/feedback-modal";
-import { isRestrictedUser } from "@shared/access-control";
+import { isRestrictedUser, canAccessReferralUpload } from "@shared/access-control";
 
 const allNavItems = [
   { href: "/", label: "Today", icon: Home },
@@ -13,19 +13,29 @@ const allNavItems = [
   { href: "/insights", label: "Insights", icon: BarChart3 },
   { href: "/providers", label: "Providers", icon: UserCheck, beta: true },
   { href: "/submissions", label: "Submissions", icon: FileText },
+  { href: "/referral", label: "Referrals", icon: FileUp },
   { href: "/activity", label: "Activity", icon: Activity },
 ];
 
 const GATED_HREFS = ["/", "/insights", "/providers"];
+// Items only shown when the user passes a positive feature gate (not just
+// hidden for restricted users). Keep the gate predicates in sync with the
+// allowlists in shared/access-control.ts.
+const FEATURE_GATED_HREFS: Record<string, (email: string | null | undefined) => boolean> = {
+  "/referral": canAccessReferralUpload,
+};
 
 export function TopNav() {
   const [location] = useLocation();
   const { user } = useAuth();
   const [showFeedback, setShowFeedback] = useState(false);
   const restricted = isRestrictedUser(user?.email);
-  const navItems = restricted
-    ? allNavItems.filter((item) => !GATED_HREFS.includes(item.href))
-    : allNavItems;
+  const navItems = allNavItems.filter((item) => {
+    if (restricted && GATED_HREFS.includes(item.href)) return false;
+    const gate = FEATURE_GATED_HREFS[item.href];
+    if (gate && !gate(user?.email)) return false;
+    return true;
+  });
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-gray-200/60 dark:border-gray-800 bg-white/95 dark:bg-gray-950/95 backdrop-blur-sm shadow-sm">
