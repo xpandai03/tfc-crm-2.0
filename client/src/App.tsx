@@ -14,6 +14,7 @@ import Providers from "@/pages/providers";
 import Submissions from "@/pages/submissions";
 import ActivityPage from "@/pages/activity";
 import AdminMigrate from "@/pages/admin-migrate";
+import Referral from "@/pages/referral";
 import Login from "@/pages/login";
 import NotFound from "@/pages/not-found";
 
@@ -36,6 +37,7 @@ function Router() {
       <Route path="/submissions" component={Submissions} />
       <Route path="/activity" component={ActivityPage} />
       <Route path="/admin/migrate" component={AdminMigrate} />
+      <Route path="/referral" component={Referral} />
       <Route component={NotFound} />
     </Switch>
   );
