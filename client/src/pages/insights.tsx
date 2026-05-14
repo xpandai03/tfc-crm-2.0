@@ -15,7 +15,7 @@ import { useDataSource, type DataSource } from "@/lib/data-source-context";
 import { normalizeInsurance } from "@/lib/insurance-utils";
 import { useAuth } from "@/lib/auth-context";
 import { isRestrictedUser } from "@shared/access-control";
-import { Redirect } from "wouter";
+import { Link, Redirect } from "wouter";
 import {
   isActiveStatus,
   getColumnForStatus,
@@ -27,6 +27,27 @@ import {
 } from "@/lib/status-config";
 import type { WaitlistSummary, WaitlistContact } from "@shared/schema";
 import { bucketReason } from "@shared/reason-canonicals";
+
+/** Per-row counts for Insights breakdown cards (operations ⊆ pipeline). */
+type BreakdownDualCounts = { operations: number; pipeline: number };
+
+/** URL `status` query for waitlist drill-down from Insights. */
+const INSIGHTS_OPS_STATUS_QUERY = "100,101,102,200,201";
+const INSIGHTS_PIPELINE_STATUS_QUERY = "100,101,102,200,201,202";
+
+const INSIGHTS_OPS_STATUS_SET = new Set([100, 101, 102, 200, 201]);
+const INSIGHTS_PIPELINE_STATUS_SET = new Set([100, 101, 102, 200, 201, 202]);
+
+function buildInsightWaitlistHref(
+  filterType: "insurance" | "modality" | "reason" | "serviceType",
+  value: string,
+  statusList: string,
+): string {
+  const params = new URLSearchParams();
+  params.set(filterType, value);
+  params.set("status", statusList);
+  return `/waitlist?${params.toString()}`;
+}
 
 /**
  * Modality normalization mapping (raw values → canonical categories)
@@ -226,10 +247,10 @@ export default function Insights() {
         readyToSchedule: 0,
         needsFollowUp: 0,
         statusDistribution: {} as Record<string, number>,
-        serviceTypes: {} as Record<string, number>,
-        insuranceTypes: {} as Record<string, number>,
-        modalityTypes: {} as Record<string, number>,
-        reasonTypes: {} as Record<string, number>,
+        serviceTypes: {} as Record<string, BreakdownDualCounts>,
+        insuranceTypes: {} as Record<string, BreakdownDualCounts>,
+        modalityTypes: {} as Record<string, BreakdownDualCounts>,
+        reasonTypes: {} as Record<string, BreakdownDualCounts>,
       };
     }
 
@@ -280,63 +301,92 @@ export default function Insights() {
       }).length;
     }
 
-    // Service type distribution (active only) — grouped by requestingFor (WHO), not reason (WHAT)
-    const serviceTypes: Record<string, number> = {};
-    for (const c of activeContacts) {
-      const service = (c as any).requestingFor?.trim() || "Unknown";
-      serviceTypes[service] = (serviceTypes[service] || 0) + 1;
+    const operationsContacts = contacts.filter((c) =>
+      INSIGHTS_OPS_STATUS_SET.has(getContactStatusCode(c)),
+    );
+    const pipelineContacts = contacts.filter((c) =>
+      INSIGHTS_PIPELINE_STATUS_SET.has(getContactStatusCode(c)),
+    );
+
+    // Service type distribution — grouped by requestingFor (WHO), not reason (WHAT)
+    const serviceTypes: Record<string, BreakdownDualCounts> = {};
+    for (const c of operationsContacts) {
+      const service = (c as { requestingFor?: string | null }).requestingFor?.trim() || "Unknown";
+      if (!serviceTypes[service]) serviceTypes[service] = { operations: 0, pipeline: 0 };
+      serviceTypes[service].operations++;
+    }
+    for (const c of pipelineContacts) {
+      const service = (c as { requestingFor?: string | null }).requestingFor?.trim() || "Unknown";
+      if (!serviceTypes[service]) serviceTypes[service] = { operations: 0, pipeline: 0 };
+      serviceTypes[service].pipeline++;
     }
 
-    // Insurance type distribution (active only)
+    // Insurance type distribution
     // Normalize raw insurance values to canonical categories before aggregation
-    const insuranceTypes: Record<string, number> = {};
-    for (const c of activeContacts) {
+    const insuranceTypes: Record<string, BreakdownDualCounts> = {};
+    for (const c of operationsContacts) {
       const normalizedInsurance = normalizeInsurance(c.insurancePayer);
-      insuranceTypes[normalizedInsurance] = (insuranceTypes[normalizedInsurance] || 0) + 1;
-    }
-
-    // Modality type distribution (active only)
-    // Normalize raw modality values to canonical categories before aggregation
-    const modalityTypes: Record<string, number> = {};
-    for (const c of activeContacts) {
-      const normalizedModality = normalizeModality(c.modality);
-      modalityTypes[normalizedModality] = (modalityTypes[normalizedModality] || 0) + 1;
-    }
-
-    // Reason for therapy distribution (active only)
-    // Each contact may have multiple reasons - count each individually.
-    // Each token is bucketed via bucketReason() so post-migration "Other
-    // (legacy free-text)" plus any future staff-form "Other: <free-text>"
-    // entries roll into a single "Other" bucket on the chart.
-    // Contacts without reasons go to "Not Collected (Older Intake)".
-    const reasonTypes: Record<string, number> = {};
-    const LEGACY_REASON_LABEL = "Not Collected (Older Intake)";
-    for (const c of activeContacts) {
-      const raw = c.reasonForTherapy;
-      // reasonForTherapy may be a comma-separated string (from DB) or an array
-      const reasons: string[] = Array.isArray(raw)
-        ? raw
-        : typeof raw === "string" && raw.trim()
-          ? raw.split(",").map(r => r.trim()).filter(Boolean)
-          : [];
-
-      if (reasons.length > 0) {
-        // Count each reason individually (a contact can have multiple).
-        // Bucket through bucketReason() before dedupe so "Other: ..." and
-        // "Other (legacy free-text)" merge into one count per contact.
-        const seen = new Set<string>();
-        for (const reason of reasons) {
-          const bucketed = bucketReason(reason);
-          if (!seen.has(bucketed)) {
-            seen.add(bucketed);
-            reasonTypes[bucketed] = (reasonTypes[bucketed] || 0) + 1;
-          }
-        }
-      } else {
-        // No reasons = legacy/older intake
-        reasonTypes[LEGACY_REASON_LABEL] = (reasonTypes[LEGACY_REASON_LABEL] || 0) + 1;
+      if (!insuranceTypes[normalizedInsurance]) {
+        insuranceTypes[normalizedInsurance] = { operations: 0, pipeline: 0 };
       }
+      insuranceTypes[normalizedInsurance].operations++;
     }
+    for (const c of pipelineContacts) {
+      const normalizedInsurance = normalizeInsurance(c.insurancePayer);
+      if (!insuranceTypes[normalizedInsurance]) {
+        insuranceTypes[normalizedInsurance] = { operations: 0, pipeline: 0 };
+      }
+      insuranceTypes[normalizedInsurance].pipeline++;
+    }
+
+    // Modality type distribution
+    const modalityTypes: Record<string, BreakdownDualCounts> = {};
+    for (const c of operationsContacts) {
+      const normalizedModality = normalizeModality(c.modality);
+      if (!modalityTypes[normalizedModality]) modalityTypes[normalizedModality] = { operations: 0, pipeline: 0 };
+      modalityTypes[normalizedModality].operations++;
+    }
+    for (const c of pipelineContacts) {
+      const normalizedModality = normalizeModality(c.modality);
+      if (!modalityTypes[normalizedModality]) modalityTypes[normalizedModality] = { operations: 0, pipeline: 0 };
+      modalityTypes[normalizedModality].pipeline++;
+    }
+
+    // Reason for therapy distribution — same bucketing as before, counted twice by status slice
+    const reasonTypes: Record<string, BreakdownDualCounts> = {};
+    const LEGACY_REASON_LABEL = "Not Collected (Older Intake)";
+    const accumulateReasons = (
+      source: WaitlistContact[],
+      part: "operations" | "pipeline",
+    ) => {
+      for (const c of source) {
+        const raw = (c as { reasonForTherapy?: string | string[] | null | undefined }).reasonForTherapy;
+        const reasons: string[] = Array.isArray(raw)
+          ? raw.map((s) => String(s).trim()).filter(Boolean)
+          : typeof raw === "string" && raw.trim()
+            ? raw.split(",").map((r: string) => r.trim()).filter(Boolean)
+            : [];
+
+        if (reasons.length > 0) {
+          const seen = new Set<string>();
+          for (const reason of reasons) {
+            const bucketed = bucketReason(reason);
+            if (!seen.has(bucketed)) {
+              seen.add(bucketed);
+              if (!reasonTypes[bucketed]) reasonTypes[bucketed] = { operations: 0, pipeline: 0 };
+              reasonTypes[bucketed][part]++;
+            }
+          }
+        } else {
+          if (!reasonTypes[LEGACY_REASON_LABEL]) {
+            reasonTypes[LEGACY_REASON_LABEL] = { operations: 0, pipeline: 0 };
+          }
+          reasonTypes[LEGACY_REASON_LABEL][part]++;
+        }
+      }
+    };
+    accumulateReasons(operationsContacts, "operations");
+    accumulateReasons(pipelineContacts, "pipeline");
 
     return {
       totalActive,
@@ -427,23 +477,26 @@ export default function Insights() {
   const statusValues = Object.values(computedMetrics.statusDistribution);
   const maxStatusCount = statusValues.length > 0 ? Math.max(...statusValues) : 1;
 
-  // Sort service types by count
-  const sortedServiceTypes = Object.entries(computedMetrics.serviceTypes).sort((a, b) => b[1] - a[1]);
+  // Sort service types by pipeline count (then operations)
+  const sortedServiceTypes = Object.entries(computedMetrics.serviceTypes).sort(
+    (a, b) => b[1].pipeline - a[1].pipeline || b[1].operations - a[1].operations,
+  );
 
-  // Sort insurance types by count
-  // Note: normalizeInsurance now returns "Unknown" for unrecognized/rejected values
-  const sortedInsuranceTypes = Object.entries(computedMetrics.insuranceTypes)
-    .sort((a, b) => b[1] - a[1]);
+  // Sort insurance types by pipeline count
+  const sortedInsuranceTypes = Object.entries(computedMetrics.insuranceTypes).sort(
+    (a, b) => b[1].pipeline - a[1].pipeline || b[1].operations - a[1].operations,
+  );
 
-  // Sort modality types by count
-  const sortedModalityTypes = Object.entries(computedMetrics.modalityTypes).sort((a, b) => b[1] - a[1]);
+  // Sort modality types by pipeline count
+  const sortedModalityTypes = Object.entries(computedMetrics.modalityTypes).sort(
+    (a, b) => b[1].pipeline - a[1].pipeline || b[1].operations - a[1].operations,
+  );
 
-  // Sort reason types by count, but keep "Not Collected" at the end
+  // Sort reason types by pipeline count, but keep "Not Collected" at the end
   const sortedReasonTypes = Object.entries(computedMetrics.reasonTypes).sort((a, b) => {
-    // Always put legacy bucket last
     if (a[0] === "Not Collected (Older Intake)") return 1;
     if (b[0] === "Not Collected (Older Intake)") return -1;
-    return b[1] - a[1];
+    return b[1].pipeline - a[1].pipeline || b[1].operations - a[1].operations;
   });
 
   // Treat null OR zero seconds as "no measurable tenure". The endpoint contract
@@ -714,22 +767,37 @@ export default function Insights() {
               <CardTitle className="text-base font-medium">By Service Type</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
+              <div className="flex justify-end pr-3 pb-2 border-b border-border/50">
+                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Ops / Pipeline
+                </span>
+              </div>
+              <div className="space-y-3 pt-3">
                 {sortedServiceTypes.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">No service data available</p>
                 ) : (
-                  sortedServiceTypes.map(([service, count]) => (
+                  sortedServiceTypes.map(([service, counts]) => (
                     <div
                       key={service}
-                      onClick={() => handleDrillDown("serviceType", service)}
-                      className="group flex items-center justify-between p-3 rounded-lg bg-white dark:bg-gray-800/90 border border-gray-200/60 dark:border-gray-700/40 shadow-sm transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer hover:border-primary/30"
+                      className="flex items-center justify-between gap-3 p-3 rounded-lg bg-white dark:bg-gray-800/90 border border-gray-200/60 dark:border-gray-700/40 shadow-sm"
                     >
-                      <span className="text-sm font-medium text-foreground group-hover:text-primary transition-colors">
-                        {service}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="secondary" className="shadow-sm">{count}</Badge>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <span className="text-sm font-medium text-foreground min-w-0 truncate">{service}</span>
+                      <div className="flex items-center gap-1.5 shrink-0 tabular-nums">
+                        <Link
+                          href={buildInsightWaitlistHref("serviceType", service, INSIGHTS_OPS_STATUS_QUERY)}
+                          className="inline-flex min-w-[1.5rem] justify-center rounded px-1 py-0.5 text-sm font-semibold text-foreground underline-offset-2 hover:underline hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          {counts.operations}
+                        </Link>
+                        <span className="text-muted-foreground text-xs select-none" aria-hidden>
+                          /
+                        </span>
+                        <Link
+                          href={buildInsightWaitlistHref("serviceType", service, INSIGHTS_PIPELINE_STATUS_QUERY)}
+                          className="inline-flex min-w-[1.5rem] justify-center rounded px-1 py-0.5 text-sm font-medium text-muted-foreground underline-offset-2 hover:underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          {counts.pipeline}
+                        </Link>
                       </div>
                     </div>
                   ))
@@ -744,22 +812,37 @@ export default function Insights() {
               <CardTitle className="text-base font-medium">By Insurance Type</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
+              <div className="flex justify-end pr-3 pb-2 border-b border-border/50">
+                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Ops / Pipeline
+                </span>
+              </div>
+              <div className="space-y-3 pt-3">
                 {sortedInsuranceTypes.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">No insurance data available</p>
                 ) : (
-                  sortedInsuranceTypes.map(([insurance, count]) => (
+                  sortedInsuranceTypes.map(([insurance, counts]) => (
                     <div
                       key={insurance}
-                      onClick={() => handleDrillDown("insurance", insurance)}
-                      className="group flex items-center justify-between p-3 rounded-lg bg-white dark:bg-gray-800/90 border border-gray-200/60 dark:border-gray-700/40 shadow-sm transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer hover:border-primary/30"
+                      className="flex items-center justify-between gap-3 p-3 rounded-lg bg-white dark:bg-gray-800/90 border border-gray-200/60 dark:border-gray-700/40 shadow-sm"
                     >
-                      <span className="text-sm font-medium text-foreground group-hover:text-primary transition-colors">
-                        {insurance}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="secondary" className="shadow-sm">{count}</Badge>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <span className="text-sm font-medium text-foreground min-w-0 truncate">{insurance}</span>
+                      <div className="flex items-center gap-1.5 shrink-0 tabular-nums">
+                        <Link
+                          href={buildInsightWaitlistHref("insurance", insurance, INSIGHTS_OPS_STATUS_QUERY)}
+                          className="inline-flex min-w-[1.5rem] justify-center rounded px-1 py-0.5 text-sm font-semibold text-foreground underline-offset-2 hover:underline hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          {counts.operations}
+                        </Link>
+                        <span className="text-muted-foreground text-xs select-none" aria-hidden>
+                          /
+                        </span>
+                        <Link
+                          href={buildInsightWaitlistHref("insurance", insurance, INSIGHTS_PIPELINE_STATUS_QUERY)}
+                          className="inline-flex min-w-[1.5rem] justify-center rounded px-1 py-0.5 text-sm font-medium text-muted-foreground underline-offset-2 hover:underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          {counts.pipeline}
+                        </Link>
                       </div>
                     </div>
                   ))
@@ -774,22 +857,37 @@ export default function Insights() {
               <CardTitle className="text-base font-medium">By Modality / Location</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
+              <div className="flex justify-end pr-3 pb-2 border-b border-border/50">
+                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Ops / Pipeline
+                </span>
+              </div>
+              <div className="space-y-3 pt-3">
                 {sortedModalityTypes.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">No modality data available</p>
                 ) : (
-                  sortedModalityTypes.map(([modality, count]) => (
+                  sortedModalityTypes.map(([modality, counts]) => (
                     <div
                       key={modality}
-                      onClick={() => handleDrillDown("modality", modality)}
-                      className="group flex items-center justify-between p-3 rounded-lg bg-white dark:bg-gray-800/90 border border-gray-200/60 dark:border-gray-700/40 shadow-sm transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer hover:border-primary/30"
+                      className="flex items-center justify-between gap-3 p-3 rounded-lg bg-white dark:bg-gray-800/90 border border-gray-200/60 dark:border-gray-700/40 shadow-sm"
                     >
-                      <span className="text-sm font-medium text-foreground group-hover:text-primary transition-colors">
-                        {modality}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="secondary" className="shadow-sm">{count}</Badge>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <span className="text-sm font-medium text-foreground min-w-0 truncate">{modality}</span>
+                      <div className="flex items-center gap-1.5 shrink-0 tabular-nums">
+                        <Link
+                          href={buildInsightWaitlistHref("modality", modality, INSIGHTS_OPS_STATUS_QUERY)}
+                          className="inline-flex min-w-[1.5rem] justify-center rounded px-1 py-0.5 text-sm font-semibold text-foreground underline-offset-2 hover:underline hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          {counts.operations}
+                        </Link>
+                        <span className="text-muted-foreground text-xs select-none" aria-hidden>
+                          /
+                        </span>
+                        <Link
+                          href={buildInsightWaitlistHref("modality", modality, INSIGHTS_PIPELINE_STATUS_QUERY)}
+                          className="inline-flex min-w-[1.5rem] justify-center rounded px-1 py-0.5 text-sm font-medium text-muted-foreground underline-offset-2 hover:underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          {counts.pipeline}
+                        </Link>
                       </div>
                     </div>
                   ))
@@ -807,37 +905,62 @@ export default function Insights() {
               </p>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
+              <div className="flex justify-end pr-3 pb-2 border-b border-border/50">
+                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Ops / Pipeline
+                </span>
+              </div>
+              <div className="space-y-3 pt-3">
                 {sortedReasonTypes.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">No reason data available</p>
                 ) : (
-                  sortedReasonTypes.map(([reason, count]) => {
+                  sortedReasonTypes.map(([reason, counts]) => {
                     const isLegacy = reason === "Not Collected (Older Intake)";
                     return (
                       <div
                         key={reason}
-                        onClick={isLegacy ? undefined : () => handleDrillDown("reason", reason)}
-                        className={`flex items-center justify-between p-3 rounded-lg backdrop-blur-sm border shadow-md transition-all duration-300 ${
+                        className={`flex items-center justify-between gap-3 p-3 rounded-lg backdrop-blur-sm border shadow-md ${
                           isLegacy
                             ? "bg-gray-100/80 dark:bg-gray-900/80 border-gray-300/40 dark:border-gray-600/40"
-                            : "group bg-white/80 dark:bg-gray-800/80 border-white/40 dark:border-gray-700/40 hover:scale-[1.02] hover:shadow-lg hover:bg-gray-50 dark:hover:bg-gray-800 hover:border-primary/30 cursor-pointer"
+                            : "bg-white/80 dark:bg-gray-800/80 border-white/40 dark:border-gray-700/40"
                         }`}
                       >
                         <span
-                          className={`text-sm font-medium ${
-                            isLegacy
-                              ? "text-muted-foreground italic"
-                              : "text-foreground group-hover:text-primary transition-colors"
+                          className={`text-sm font-medium min-w-0 truncate ${
+                            isLegacy ? "text-muted-foreground italic" : "text-foreground"
                           }`}
                         >
                           {reason}
                         </span>
-                        <div className="flex items-center gap-2">
-                          <Badge variant={isLegacy ? "outline" : "secondary"} className="shadow-sm">
-                            {count}
-                          </Badge>
-                          {!isLegacy && (
-                            <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                        <div className="flex items-center gap-1.5 shrink-0 tabular-nums">
+                          {isLegacy ? (
+                            <>
+                              <Badge variant="outline" className="shadow-sm tabular-nums">
+                                {counts.operations}
+                              </Badge>
+                              <span className="text-muted-foreground text-xs">/</span>
+                              <Badge variant="outline" className="shadow-sm tabular-nums">
+                                {counts.pipeline}
+                              </Badge>
+                            </>
+                          ) : (
+                            <>
+                              <Link
+                                href={buildInsightWaitlistHref("reason", reason, INSIGHTS_OPS_STATUS_QUERY)}
+                                className="inline-flex min-w-[1.5rem] justify-center rounded px-1 py-0.5 text-sm font-semibold text-foreground underline-offset-2 hover:underline hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              >
+                                {counts.operations}
+                              </Link>
+                              <span className="text-muted-foreground text-xs select-none" aria-hidden>
+                                /
+                              </span>
+                              <Link
+                                href={buildInsightWaitlistHref("reason", reason, INSIGHTS_PIPELINE_STATUS_QUERY)}
+                                className="inline-flex min-w-[1.5rem] justify-center rounded px-1 py-0.5 text-sm font-medium text-muted-foreground underline-offset-2 hover:underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              >
+                                {counts.pipeline}
+                              </Link>
+                            </>
                           )}
                         </div>
                       </div>
