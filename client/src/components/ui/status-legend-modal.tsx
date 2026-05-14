@@ -27,6 +27,11 @@ const umbrellaStyles: Record<UmbrellaId, { bg: string; text: string; badge: stri
     text: "text-amber-700 dark:text-amber-300",
     badge: "bg-amber-200 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300",
   },
+  SCH: {
+    bg: "bg-green-50 dark:bg-green-900/30",
+    text: "text-green-800 dark:text-green-200",
+    badge: "bg-green-200 text-green-900 dark:bg-green-900/50 dark:text-green-200",
+  },
   PMR: {
     bg: "bg-purple-50 dark:bg-purple-900/30",
     text: "text-purple-700 dark:text-purple-300",
@@ -44,7 +49,7 @@ interface StatusLegendModalProps {
 }
 
 export function StatusLegendModal({ trigger }: StatusLegendModalProps) {
-  const umbrellaOrder: UmbrellaId[] = ["WL", "PS", "PMR", "INS"];
+  const umbrellaOrder: UmbrellaId[] = ["WL", "PS", "SCH", "PMR", "INS"];
 
   return (
     <Dialog>
@@ -62,7 +67,7 @@ export function StatusLegendModal({ trigger }: StatusLegendModalProps) {
         </DialogHeader>
         <div className="space-y-6 mt-4">
           <p className="text-sm text-muted-foreground">
-            Contacts move through 4 workflow stages. Each stage has multiple status codes
+            Contacts move through workflow stages. Each stage has multiple status codes
             for tracking progress within that stage.
           </p>
 
