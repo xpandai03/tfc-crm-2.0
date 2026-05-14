@@ -95,6 +95,7 @@ export default function Waitlist() {
     return {
       insurance: params.get("insurance"),
       modality: params.get("modality"),
+      // Comma-separated status codes supported, e.g. ?status=100,101,102,200,201
       status: params.get("status"),
       umbrella: params.get("umbrella"),
       reason: params.get("reason"),

@@ -165,9 +165,18 @@ type SortDirection = "asc" | "desc";
 const umbrellaColors: Record<UmbrellaId, string> = {
   WL: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
   PS: "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300",
+  SCH: "bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200",
   PMR: "bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300",
   INS: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
 };
+
+/** Parse ?status=100 or ?status=100,101,102 — returns null when no status filter (all). */
+function parseStatusCodesFromFilter(raw: string | null | undefined): number[] | null {
+  if (!raw || raw === "all") return null;
+  const parts = raw.split(",").map((p) => parseInt(p.trim(), 10));
+  const valid = parts.filter((n) => !Number.isNaN(n));
+  return valid.length > 0 ? valid : null;
+}
 
 export function WaitlistListView({
   contacts,
@@ -234,6 +243,14 @@ export function WaitlistListView({
     return [...STATUS_UMBRELLAS[umbrellaFilter].codes];
   }, [umbrellaFilter]);
 
+  const allowedStatusCodes = useMemo(
+    () => parseStatusCodesFromFilter(statusFilter),
+    [statusFilter],
+  );
+
+  const isMultiStatusFromUrl =
+    statusFilter !== "all" && allowedStatusCodes !== null && allowedStatusCodes.length > 1;
+
   // Compute unique insurance options from contacts (normalized)
   const availableInsurances = useMemo(() => {
     const insuranceSet = new Set<string>();
@@ -270,8 +287,8 @@ export function WaitlistListView({
         return false;
       }
 
-      // Status code filter
-      if (statusFilter !== "all" && statusCode !== parseInt(statusFilter)) {
+      // Status code filter — single code or comma-separated list (Insights drill-down)
+      if (allowedStatusCodes !== null && !allowedStatusCodes.includes(statusCode)) {
         return false;
       }
 
@@ -326,7 +343,7 @@ export function WaitlistListView({
 
       return true;
     });
-  }, [contacts, umbrellaFilter, statusFilter, searchQuery, hideInactive, insuranceFilter, modalityFilter, reasonFilter, serviceTypeFilter]);
+  }, [contacts, umbrellaFilter, allowedStatusCodes, searchQuery, hideInactive, insuranceFilter, modalityFilter, reasonFilter, serviceTypeFilter]);
 
   // Sort contacts
   const sortedContacts = useMemo(() => {
@@ -408,6 +425,11 @@ export function WaitlistListView({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Statuses</SelectItem>
+              {isMultiStatusFromUrl && (
+                <SelectItem value={statusFilter}>
+                  From link ({allowedStatusCodes?.length ?? 0} codes)
+                </SelectItem>
+              )}
               {availableStatusCodes.map((code) => (
                 <SelectItem key={code} value={code.toString()}>
                   {code} - {STATUS_LABELS[code] || `Status ${code}`}
