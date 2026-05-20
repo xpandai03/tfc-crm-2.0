@@ -57,6 +57,9 @@ export function AssignProviderModal({
   const [manualCredential, setManualCredential] = useState("");
   const [comment, setComment] = useState("");
   const [providers, setProviders] = useState<EmailConfigProvider[]>([]);
+  // name → effective accepting count, sourced from /api/providers (same as
+  // the Providers page). Display-only; a name with no entry shows no count.
+  const [acceptingCounts, setAcceptingCounts] = useState<Record<string, number>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -67,8 +70,34 @@ export function AssignProviderModal({
         .then((res) => res.json())
         .then((data) => setProviders(data.providers || []))
         .catch((err) => console.error("Failed to fetch providers:", err));
+
+      // Accepting counts come from /api/providers (the Providers page
+      // source). Best-effort: if this fails, the dropdown simply shows no
+      // counts — the assign flow is unaffected.
+      fetch("/api/providers", { credentials: "include" })
+        .then((res) => res.json())
+        .then((data) => {
+          const counts: Record<string, number> = {};
+          for (const p of data.providers || []) {
+            const count = p.effectiveAcceptingClients ?? p.acceptingClients;
+            if (typeof p.name === "string" && typeof count === "number") {
+              counts[p.name.trim()] = count;
+            }
+          }
+          setAcceptingCounts(counts);
+        })
+        .catch((err) => console.error("Failed to fetch accepting counts:", err));
     }
   }, [isOpen]);
+
+  // Parenthetical accepting-count suffix for a dropdown row. Empty string
+  // when the provider has no availability data.
+  const acceptingLabel = (name: string): string => {
+    const count = acceptingCounts[name.trim()];
+    if (count === undefined) return "";
+    if (count === 0) return " (not accepting new patients)";
+    return ` (${count} new patient${count === 1 ? "" : "s"})`;
+  };
 
   const resetForm = () => {
     setMode("dropdown");
@@ -176,7 +205,7 @@ export function AssignProviderModal({
                 <SelectContent className="max-h-[240px]">
                   {providers.map((p) => (
                     <SelectItem key={p.name} value={p.name}>
-                      {p.name} — {p.credentials}
+                      {p.name} — {p.credentials}{acceptingLabel(p.name)}
                     </SelectItem>
                   ))}
                 </SelectContent>
