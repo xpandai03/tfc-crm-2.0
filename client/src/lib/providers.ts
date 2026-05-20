@@ -63,6 +63,10 @@ export interface Provider {
   // never-submitted vs. explicit-zero distinction. Matching uses
   // isAcceptingByCapacity() which treats undefined as a no-data fall-through.
   acceptingClients?: number;
+  // Effective count = baseline minus assignments since the last form
+  // submission. Preferred by isAcceptingByCapacity() over the baseline.
+  effectiveAcceptingClients?: number;
+  assignedSinceForm?: number;
   specialConsiderations?: string | null;
   lastFormSubmittedAt?: string | null;
 }
