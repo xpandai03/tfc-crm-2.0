@@ -371,17 +371,23 @@ function hasAdditionalSpecialty(provider: Provider, keywords: string[]): boolean
  * Capacity-aware "accepting new patients" check, derived from
  * provider_availability via the GET /api/providers merge.
  *
- *   - acceptingClients undefined → no submission yet, fall through (everyone
+ * Prefers effectiveAcceptingClients (baseline minus assignments since the
+ * provider's last availability-form submission); falls back to the
+ * form-submitted acceptingClients baseline when the effective field is absent.
+ *
+ *   - capacity undefined → no submission yet, fall through (everyone
  *     passes the filter). Preserves pre-form matching behavior so providers
  *     without a row aren't silently filtered out.
- *   - acceptingClients === 0     → provider has explicitly closed capacity, fail.
- *   - acceptingClients > 0       → provider has open capacity, pass.
+ *   - capacity === 0     → provider has no open capacity, fail.
+ *   - capacity > 0       → provider has open capacity, pass.
  *
  * Phase 2 v1: single integer; supervision/pace from SkillEntry annotations
  * (Phase 1) do NOT affect scoring yet. Lane will revisit.
  */
 export function isAcceptingByCapacity(provider: Provider | ProviderWithInsurance): boolean {
-  const n = provider.acceptingClients;
+  // Prefer the assignment-decremented effective count; fall back to the
+  // form-submitted baseline if the effective field isn't present.
+  const n = provider.effectiveAcceptingClients ?? provider.acceptingClients;
   if (typeof n !== "number") return true; // no data → fall through
   return n > 0;
 }
@@ -517,7 +523,12 @@ export function computeProviderScore(
   }
 
   // Modality match (v1: assume all support telehealth, in-person depends on location)
-  if (context.modality?.toLowerCase().includes("in-person")) {
+  // Normalize hyphen→space so both "In Person - Las Lunas" and "in-person" match.
+  const isInPersonModality = (context.modality || "")
+    .toLowerCase()
+    .replace(/-/g, " ")
+    .includes("in person");
+  if (isInPersonModality) {
     // In-person preference - location matters more
     if (context.location) {
       const providerLocation = mapCityToLocation(context.location);

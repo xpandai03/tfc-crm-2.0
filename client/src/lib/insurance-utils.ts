@@ -42,6 +42,7 @@ export const TFC_ACCEPTED_INSURANCES_RAW = [
   "United Health Shared Services (UHC GEHA)",
   "UHC Centennial",
   "ComPsych",
+  "Self-Pay (Cash / Out-of-Pocket)",
 ] as const;
 
 /**

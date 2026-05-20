@@ -52,6 +52,10 @@ interface ApiProvider {
   // undefined when the provider has never had a row in the table —
   // distinguishes never-submitted from explicit zero.
   acceptingClients?: number;
+  // Effective count = baseline minus assignments since the last form
+  // submission (computed server-side in GET /api/providers).
+  effectiveAcceptingClients?: number;
+  assignedSinceForm?: number;
   specialConsiderations?: string | null;
   lastFormSubmittedAt?: string | null;
 }
@@ -224,6 +228,8 @@ export function transformApiProvider(api: ApiProvider): ProviderWithInsurance {
     // Forward availability fields untouched. Matching engine reads
     // acceptingClients via isAcceptingByCapacity(); card UI reads all three.
     acceptingClients: api.acceptingClients,
+    effectiveAcceptingClients: api.effectiveAcceptingClients,
+    assignedSinceForm: api.assignedSinceForm,
     specialConsiderations: api.specialConsiderations ?? null,
     lastFormSubmittedAt: api.lastFormSubmittedAt ?? null,
   };
