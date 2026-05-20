@@ -181,3 +181,31 @@ export async function getLatestAssignmentsByAllContacts(): Promise<Map<number, s
   }
   return map;
 }
+
+/**
+ * Get the latest (current) provider assignment for every contact that has
+ * one, with the assignment timestamp. One entry per contact — the newest
+ * row, via the same DISTINCT ON pattern as getLatestAssignmentsByAllContacts.
+ *
+ * Used to compute each provider's effective accepting-count: the number of
+ * contacts currently assigned to them since their last availability-form
+ * submission.
+ */
+export async function getLatestAssignmentsWithDates(): Promise<
+  { providerName: string; assignedAt: Date }[]
+> {
+  const pool = getPool();
+
+  const result = await pool.query(`
+    SELECT DISTINCT ON (contact_id)
+      provider_name AS "providerName",
+      assigned_at AS "assignedAt"
+    FROM contact_provider_assignments
+    ORDER BY contact_id, assigned_at DESC
+  `);
+
+  return result.rows.map((row) => ({
+    providerName: row.providerName as string,
+    assignedAt: new Date(row.assignedAt as string),
+  }));
+}

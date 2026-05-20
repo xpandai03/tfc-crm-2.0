@@ -28,7 +28,7 @@ import {
 } from "./therapy-notes";
 import type { TnAgentPayload, TnAgentResponse } from "./therapy-notes";
 import { saveEmailSnapshot, getEmailSnapshot, getSnapshotsForContact } from "./email-snapshots";
-import { createAssignment, getAssignmentsByContact, deleteAssignment, getLatestAssignmentsByAllContacts } from "./assignments/db";
+import { createAssignment, getAssignmentsByContact, deleteAssignment, getLatestAssignmentsByAllContacts, getLatestAssignmentsWithDates } from "./assignments/db";
 import {
   syncContacts as syncContactsToDb,
   recordSyncError,
@@ -3105,6 +3105,17 @@ export async function registerRoutes(
         for (const row of availabilityRows) {
           availabilityByEmail.set(row.providerEmail.trim().toLowerCase(), row);
         }
+
+        // Effective accepting-count: baseline (form-submitted acceptingClients)
+        // minus the contacts currently assigned to this provider since their
+        // last form submission. Strategy N — match assignment.provider_name to
+        // the roster name via formatting-tolerant normalization (strip a
+        // trailing ", Credential", trim, lowercase, collapse whitespace),
+        // since contact_provider_assignments has no provider_email column.
+        const latestAssignments = await getLatestAssignmentsWithDates();
+        const normalizeProviderName = (n: string): string =>
+          (n || "").split(",")[0].trim().toLowerCase().replace(/\s+/g, " ");
+
         let mergedCount = 0;
         for (const p of providers) {
           const prov = p as Record<string, unknown>;
@@ -3117,6 +3128,25 @@ export async function registerRoutes(
           prov.acceptingClients = row.acceptingClients;
           prov.specialConsiderations = row.specialConsiderations;
           prov.lastFormSubmittedAt = row.lastFormSubmittedAt;
+
+          // Count contacts whose current assignment is this provider. Bound
+          // by lastFormSubmittedAt when present; when null (availability set
+          // only via manual edit, never a form), count all-time (Q1).
+          const normalizedName = normalizeProviderName(name);
+          const formMs = row.lastFormSubmittedAt
+            ? new Date(row.lastFormSubmittedAt).getTime()
+            : null;
+          const assignedSinceForm = latestAssignments.filter((a) => {
+            if (normalizeProviderName(a.providerName) !== normalizedName) return false;
+            if (formMs !== null) return a.assignedAt.getTime() >= formMs;
+            return true;
+          }).length;
+          prov.assignedSinceForm = assignedSinceForm;
+          prov.effectiveAcceptingClients = Math.max(
+            0,
+            row.acceptingClients - assignedSinceForm
+          );
+
           mergedCount++;
         }
         if (availabilityRows.length > 0) {
