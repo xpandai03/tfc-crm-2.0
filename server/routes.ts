@@ -4640,6 +4640,10 @@ export async function registerRoutes(
         assignedByInitials: assignedByInitials.trim(),
       });
 
+      // Assignment changed the effective accepting-count — drop the
+      // providers cache so the next /api/providers read rebuilds fresh.
+      providerDataCache = null;
+
       await logActivity({
         type: "contact_assigned",
         actorEmail: assignedByEmail.trim(),
@@ -4684,6 +4688,10 @@ export async function registerRoutes(
       if (!deleted) {
         return res.status(404).json({ error: "Assignment not found" });
       }
+
+      // Assignment removed — drop the providers cache so the next
+      // /api/providers read reflects the restored accepting-count.
+      providerDataCache = null;
 
       // Log the deletion
       if (assignmentContext) {
