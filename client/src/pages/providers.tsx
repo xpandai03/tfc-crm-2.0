@@ -646,6 +646,7 @@ const ALL_INSURANCES = [
   "Partners Direct Health",
   "Presbyterian Commercial",
   "Presbyterian Turquoise Care",
+  "Self-Pay (Cash / Out-of-Pocket)",
   "Tricare",
   "UHC Centennial",
   "UHC Commercial",
