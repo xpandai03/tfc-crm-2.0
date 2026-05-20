@@ -60,8 +60,12 @@ interface Provider {
     "Children (0-5)": Record<string, SkillEntry>;
   };
   notes: string;
-  // Self-reported availability — undefined for never-submitted providers
+  // Self-reported availability — undefined for never-submitted providers.
+  // acceptingClients is the form-submitted baseline; effectiveAcceptingClients
+  // is the baseline minus patient assignments made since that submission.
   acceptingClients?: number;
+  effectiveAcceptingClients?: number;
+  assignedSinceForm?: number;
   specialConsiderations?: string | null;
   lastFormSubmittedAt?: string | null;
   // CRM-managed provider fields
@@ -321,22 +325,26 @@ function AvailabilitySection({ provider }: { provider: Provider }) {
     }
   };
 
+  // Display the effective count (baseline minus assignments since the form).
+  // Fall back to the raw baseline if the server didn't supply an effective
+  // value. The pencil-edit modal still operates on the baseline.
+  const displayCount = provider.effectiveAcceptingClients ?? provider.acceptingClients;
   let countDisplay: React.ReactNode;
-  if (provider.acceptingClients === undefined) {
+  if (displayCount === undefined) {
     countDisplay = (
       <span className="text-sm text-muted-foreground italic">
         No availability submitted yet
       </span>
     );
-  } else if (provider.acceptingClients === 0) {
+  } else if (displayCount === 0) {
     countDisplay = (
       <span className="text-sm text-muted-foreground">Not accepting new patients</span>
     );
   } else {
     countDisplay = (
       <span className="text-sm">
-        Accepting <strong>{provider.acceptingClients}</strong> new patient
-        {provider.acceptingClients === 1 ? "" : "s"}
+        Accepting <strong>{displayCount}</strong> new patient
+        {displayCount === 1 ? "" : "s"}
       </span>
     );
   }
