@@ -1,9 +1,12 @@
 import { Link, useLocation } from "wouter";
 import { Home, Users, BarChart3, UserCheck, FileText, FileUp, Activity, MessageCircleQuestion } from "lucide-react";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { UserMenu } from "./user-menu";
+import { UniversalSearch } from "./universal-search";
 import { useAuth } from "@/lib/auth-context";
+import { getWaitlistBoard } from "@/lib/api";
 import { FeedbackModal } from "@/components/ui/feedback-modal";
 import { isRestrictedUser, canAccessReferralUpload } from "@shared/access-control";
 
@@ -30,6 +33,26 @@ export function TopNav() {
   const { user } = useAuth();
   const [showFeedback, setShowFeedback] = useState(false);
   const restricted = isRestrictedUser(user?.email);
+
+  // Data for universal search. Same query keys as the Waitlist / Providers
+  // pages so React Query dedupes — no extra fetch on pages that already
+  // load this data. Restricted users can't reach /providers, so they get
+  // an empty providers list (contacts-only search).
+  const { data: boardData } = useQuery({
+    queryKey: ["/api/get-waitlist-board"],
+    queryFn: getWaitlistBoard,
+  });
+  const { data: providersData } = useQuery({
+    queryKey: ["/api/providers"],
+    queryFn: async () => {
+      const res = await fetch("/api/providers");
+      if (!res.ok) throw new Error("Failed to load providers");
+      return res.json();
+    },
+  });
+  const searchContacts = boardData?.contacts ?? [];
+  const searchProviders = restricted ? [] : (providersData?.providers ?? []);
+
   const navItems = allNavItems.filter((item) => {
     if (restricted && GATED_HREFS.includes(item.href)) return false;
     const gate = FEATURE_GATED_HREFS[item.href];
@@ -47,6 +70,8 @@ export function TopNav() {
             className="h-9 w-auto"
           />
         </Link>
+
+        <UniversalSearch contacts={searchContacts} providers={searchProviders} />
 
         <nav className="flex items-center gap-1 ml-auto">
           {navItems.map((item) => {
