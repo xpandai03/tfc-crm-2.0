@@ -26,6 +26,7 @@ import {
   resetTnRecordForRetry,
   isStaleInProgress,
 } from "./therapy-notes";
+import { randomUUID } from "crypto";
 import type { TnAgentPayload, TnV2AgentPayload, TnAgentResponse } from "./therapy-notes";
 import { saveEmailSnapshot, getEmailSnapshot, getSnapshotsForContact, hasSnapshotForTemplate, getLatestSnapshotForTemplate } from "./email-snapshots";
 import { createAssignment, getAssignmentsByContact, deleteAssignment, getLatestAssignmentsByAllContacts, getLatestAssignmentsWithDates, getLatestAssignment } from "./assignments/db";
@@ -5337,12 +5338,16 @@ export async function registerRoutes(
       const dob = dobToMMDDYYYY(contact.patientDob);
       const { text: alertText, warnings } = computeAppointmentAlertText(contact, dob);
 
-      // Full HTTPS URL the TN agent fetches (with its X-API-Key). On-demand intake
-      // PDF, generated server-side. snapshot_pdf_url reuses the SAME URL tonight
-      // (P5 placeholder) — real snapshot-PDF generation is separate, later work.
+      // Full HTTPS URLs the TN agent fetches (with its X-API-Key), generated
+      // on-demand server-side: the intake referral PDF and the real
+      // appointment-confirmation snapshot PDF.
       const baseUrl = (process.env.APP_URL || "https://tfc-crm-2-0.fly.dev").replace(/\/$/, "");
       const intakePdfUrl = `${baseUrl}/api/internal/contact-intake-pdf/${contactId}`;
       const snapshotPdfUrl = `${baseUrl}/api/internal/contact-snapshot-pdf/${contactId}`;
+
+      // Async progress: V2 posts phase events to callbackUrl, tagged with runId.
+      const runId = randomUUID();
+      const callbackUrl = `${baseUrl}/api/internal/tn-progress/${contactId}`;
 
       const payload: TnV2AgentPayload = {
         first_name: firstName,
@@ -5355,11 +5360,13 @@ export async function registerRoutes(
         phone: contact.phone || "",
         rfs_url: contact.rfsLink || "",
         intake_pdf_url: intakePdfUrl,
-        snapshot_pdf_url: snapshotPdfUrl, // real appointment-confirmation snapshot PDF (no longer the intake placeholder)
+        snapshot_pdf_url: snapshotPdfUrl,
         appointment_date: isoDateToMDY(contact.scheduledAppointmentDate),
         appointment_time: (contact.scheduledAppointmentTime || "").trim(),
         appointment_alert_text: alertText,
         clinician_name: assignment!.providerName || "",
+        runId,
+        callback_url: callbackUrl,
       };
 
       // Pre-validate critical fields (mirrors V1)
@@ -5380,104 +5387,46 @@ export async function registerRoutes(
         console.warn(`[tn-v2] Alert-text warnings for contact ${contactId}:`, warnings);
       }
 
-      // Activity: button clicked / agent started
+      // Activity: workflow started (runId ties together the phase callbacks below)
       await logActivity({
         type: "tn_schedule_started", actorEmail: userEmail, entityType: "contact",
         entityId: String(contactId), entityName: contactName,
-        metadata: { contactId, alertText, warnings, appointmentDatetime: `${payload.appointment_date} ${payload.appointment_time}`.trim() },
+        metadata: { contactId, runId, alertText, warnings, appointmentDatetime: `${payload.appointment_date} ${payload.appointment_time}`.trim() },
       });
-      console.log(`[tn-v2] Started for contact ${contactId}: ${firstName} ${lastName}, alert="${alertText}", clinician="${payload.clinician_name}"`);
+      console.log(`[tn-v2] Started run ${runId} for contact ${contactId}: ${firstName} ${lastName}, alert="${alertText}", clinician="${payload.clinician_name}"`);
 
-      // ---- Synchronous call to the V2 agent (C14: up to 240s) ----
+      // ---- Fire-and-forget: V2 takes ~100s and reports progress via callbacks ----
+      // We do NOT await. The terminal outcome (tn_schedule_completed/failed) is
+      // written by the /api/internal/tn-progress callback when V2 reports
+      // phase "workflow_complete". The fetch's own result is ignored — a dropped
+      // connection (the ~30s edge reset) is EXPECTED and not a failure, since V2
+      // keeps running and reports via callback. We only log fetch errors here.
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), TN_V2_TIMEOUT_MS);
-      let tnResponse: Awaited<ReturnType<typeof fetch>>;
-      try {
-        tnResponse = await fetch(TN_V2_AGENT_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-API-Key": process.env.TN_API_KEY! },
-          body: JSON.stringify(payload),
-          signal: controller.signal,
-        });
-      } catch (err) {
-        clearTimeout(timeoutId);
-        const aborted = (err as Error)?.name === "AbortError";
-        // Surface the real undici cause (UND_ERR_HEADERS_TIMEOUT = our side;
-        // ECONNRESET / "other side closed" / "terminated" = an upstream/edge
-        // reset while V2 was still working). Logged so we can confirm the cause.
-        const cause = (err as { cause?: { code?: string; message?: string } })?.cause;
-        console.error(
-          `[tn-v2] fetch to V2 failed after ${TN_V2_TIMEOUT_MS}ms budget:`,
-          { name: (err as Error)?.name, message: (err as Error)?.message, causeCode: cause?.code, cause: cause ? String(cause.message ?? cause) : undefined }
-        );
+      fetch(TN_V2_AGENT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-API-Key": process.env.TN_API_KEY! },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      })
+        .then(async (r) => {
+          // Optional: if V2 replies synchronously (fast failure before the edge
+          // cut), log it for diagnostics — but the callback is the source of truth.
+          const text = await r.text().catch(() => "");
+          console.log(`[tn-v2] run ${runId}: V2 sync reply HTTP ${r.status} (callbacks are authoritative): ${text.slice(0, 200)}`);
+        })
+        .catch((err) => {
+          const cause = (err as { cause?: { code?: string } })?.cause;
+          console.error(`[tn-v2] run ${runId}: fire-and-forget fetch ended (${cause?.code || (err as Error)?.message}) — expected if the edge cut the idle connection; V2 continues and reports via callback.`);
+        })
+        .finally(() => clearTimeout(timeoutId));
 
-        // The connection to the V2 agent dropped (or our 240s cap fired) BEFORE a
-        // response came back. Critically, V2 keeps running and often completes the
-        // workflow in TherapyNotes anyway — so this is an UNKNOWN outcome, not a
-        // confirmed failure. Tell the user to verify in TN rather than retry blindly
-        // (a retry can create a duplicate patient).
-        const failureReason = aborted
-          ? `Connection to TN agent exceeded the ${Math.round(TN_V2_TIMEOUT_MS / 1000)}s cap before a response`
-          : `Lost connection to TN agent before it responded (${cause?.code || (err as Error)?.message || "fetch failed"})`;
-        await logActivity({
-          type: "tn_schedule_failed", actorEmail: userEmail, entityType: "contact",
-          entityId: String(contactId), entityName: contactName,
-          metadata: { contactId, failureReason, causeCode: cause?.code, outcome: "unknown-verify-in-tn" },
-        });
-        return res.status(504).json({
-          status: "unknown",
-          error:
-            "Lost connection to the TN agent before it finished (it can take ~100s). " +
-            "The patient may have been created and scheduled in TherapyNotes anyway — " +
-            "please check TherapyNotes before retrying, as retrying can create a duplicate.",
-        });
-      }
-      clearTimeout(timeoutId);
-
-      const rawText = await tnResponse.text();
-      let parsed: TnAgentResponse | null = null;
-      try { parsed = JSON.parse(rawText) as TnAgentResponse; } catch { /* non-JSON */ }
-
-      // ---- Map response → user-facing result + activity log ----
-      if (tnResponse.ok && parsed?.status === "success") {
-        const apptLabel = `${payload.appointment_date} ${payload.appointment_time}`.trim();
-        await logActivity({
-          type: "tn_schedule_completed", actorEmail: userEmail, entityType: "contact",
-          entityId: String(contactId), entityName: contactName,
-          metadata: { contactId, tnPatientUrl: parsed.tn_patient_url, tnPatientId: parsed.tn_patient_id, appointmentDatetime: apptLabel },
-        });
-        return res.json({
-          status: "success",
-          tn_patient_url: parsed.tn_patient_url || null,
-          tn_patient_id: parsed.tn_patient_id || null,
-          appointmentDatetime: apptLabel,
-        });
-      }
-
-      // Failure paths
-      let userError: string;
-      let httpStatus = 502;
-      if (tnResponse.status === 429) {
-        userError = "Another TherapyNotes run is in progress. Please wait a moment and try again.";
-        httpStatus = 429;
-      } else if (tnResponse.status === 401) {
-        userError = "TherapyNotes agent rejected the API key (configuration error). Contact support.";
-        httpStatus = 502;
-      } else if (tnResponse.status === 422) {
-        userError = "TherapyNotes rejected the submission (validation error). Check the contact data.";
-        httpStatus = 422;
-      } else {
-        userError = parsed?.failure_reason || `TherapyNotes agent returned HTTP ${tnResponse.status}.`;
-      }
-
-      const failureReason = parsed?.failure_reason || `HTTP ${tnResponse.status}: ${rawText.slice(0, 300)}`;
-      console.error(`[tn-v2] Failed for contact ${contactId}: ${failureReason}`);
-      await logActivity({
-        type: "tn_schedule_failed", actorEmail: userEmail, entityType: "contact",
-        entityId: String(contactId), entityName: contactName,
-        metadata: { contactId, failureReason, httpStatus: tnResponse.status },
+      // Return 202 immediately — the UI tracks progress via the activity log.
+      return res.status(202).json({
+        runId,
+        status: "started",
+        message: "TN workflow initiated. Progress will appear in the activity log.",
       });
-      return res.status(httpStatus).json({ status: "error", error: userError });
     } catch (error) {
       console.error("[tn-v2] Error in create-with-schedule endpoint:", error);
       try {
@@ -5488,6 +5437,99 @@ export async function registerRoutes(
         });
       } catch { /* best-effort */ }
       return res.status(500).json({ error: "Failed to run TN scheduling" });
+    }
+  });
+
+  // --- TN V2 progress callback: the agent POSTs a phase event after each step ---
+  // API-key gated (TN_API_KEY), allow-listed in auth.ts. High-frequency → keep fast.
+  const TN_PHASES = [
+    "entry", "login", "navigate", "fill_form", "save",
+    "upload_intake_pdf", "upload_snapshot_pdf", "schedule_appointment", "workflow_complete",
+  ];
+  const TN_PHASE_STATUSES = ["started", "ok", "failed"];
+
+  app.post("/api/internal/tn-progress/:contactId", async (req, res) => {
+    try {
+      const apiKey = req.headers["x-api-key"] as string | undefined;
+      if (!process.env.TN_API_KEY || apiKey !== process.env.TN_API_KEY) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const pathContactId = parseInt(req.params.contactId, 10);
+      if (isNaN(pathContactId)) {
+        return res.status(400).json({ error: "contactId must be a number" });
+      }
+
+      const body = (req.body || {}) as {
+        contactId?: number; runId?: string; phase?: string; status?: string;
+        message?: string; metadata?: Record<string, unknown>;
+      };
+
+      if (typeof body.contactId !== "number" || body.contactId !== pathContactId) {
+        return res.status(400).json({ error: "body.contactId missing or does not match path" });
+      }
+      if (!body.runId || typeof body.runId !== "string") {
+        return res.status(400).json({ error: "runId (non-empty string) is required" });
+      }
+      if (!body.phase || !TN_PHASES.includes(body.phase)) {
+        return res.status(400).json({ error: `phase must be one of: ${TN_PHASES.join(", ")}` });
+      }
+      if (!body.status || !TN_PHASE_STATUSES.includes(body.status)) {
+        return res.status(400).json({ error: `status must be one of: ${TN_PHASE_STATUSES.join(", ")}` });
+      }
+
+      const contact = await getSyncContactById(pathContactId);
+      if (!contact) {
+        return res.status(404).json({ error: "Contact not found" });
+      }
+      const contactName = contact.name || `Contact ${pathContactId}`;
+      const meta = body.metadata || {};
+      const message = body.message || `${body.phase} ${body.status}`;
+
+      // Per-phase breadcrumb entry
+      await logActivity({
+        type: "tn_schedule_phase",
+        actorEmail: "tn-agent",
+        entityType: "contact",
+        entityId: String(pathContactId),
+        entityName: contactName,
+        metadata: { contactId: pathContactId, runId: body.runId, phase: body.phase, status: body.status, message, ...meta },
+      });
+
+      // On the terminal phase, also write the matching terminal entry the UI keys off.
+      if (body.phase === "workflow_complete") {
+        if (body.status === "ok") {
+          await logActivity({
+            type: "tn_schedule_completed",
+            actorEmail: "tn-agent",
+            entityType: "contact",
+            entityId: String(pathContactId),
+            entityName: contactName,
+            metadata: {
+              contactId: pathContactId, runId: body.runId,
+              tnPatientUrl: meta.tnPatientUrl, tnPatientId: meta.tnPatientId,
+              appointmentDatetime: meta.appointmentDatetime,
+            },
+          });
+        } else if (body.status === "failed") {
+          await logActivity({
+            type: "tn_schedule_failed",
+            actorEmail: "tn-agent",
+            entityType: "contact",
+            entityId: String(pathContactId),
+            entityName: contactName,
+            metadata: {
+              contactId: pathContactId, runId: body.runId,
+              failureReason: meta.failureReason || message,
+            },
+          });
+        }
+      }
+
+      return res.status(200).json({ ok: true });
+    } catch (error) {
+      console.error("[tn-progress] Error handling callback:", error);
+      return res.status(500).json({ error: "Failed to record progress" });
     }
   });
 

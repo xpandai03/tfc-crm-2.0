@@ -415,7 +415,9 @@ export interface TnV2State {
 }
 
 export interface TnV2RunResult {
-  status: "success" | "error" | "unknown"; // "unknown" = connection dropped; verify in TN
+  status: "success" | "error" | "unknown" | "started"; // async: 202 returns "started"
+  runId?: string;
+  message?: string;
   tn_patient_url?: string | null;
   tn_patient_id?: string | null;
   appointmentDatetime?: string;

@@ -249,6 +249,33 @@ function IntakeHistoryEntry({ sub, label, isLatest, defaultExpanded }: {
   );
 }
 
+// Derive the current TN V2 run state from a contact's activity log (newest-first).
+// A run is "in flight" if its tn_schedule_started entry (which carries a runId)
+// has no matching terminal entry (tn_schedule_completed/failed) for the same runId.
+type TnActivity = { type: string; metadata: Record<string, unknown>; summary: string; createdAt: string };
+function computeTnRun(activities: TnActivity[] | undefined): {
+  inFlight: boolean;
+  runId?: string;
+  latestPhaseMessage?: string;
+  latestPhaseStatus?: string;
+} {
+  if (!activities || activities.length === 0) return { inFlight: false };
+  const started = activities.find((a) => a.type === "tn_schedule_started");
+  const runId = started?.metadata?.runId as string | undefined;
+  if (!started || !runId) return { inFlight: false }; // only async (runId-tagged) runs count
+  const terminal = activities.find(
+    (a) => (a.type === "tn_schedule_completed" || a.type === "tn_schedule_failed") && a.metadata?.runId === runId
+  );
+  if (terminal) return { inFlight: false, runId };
+  const latestPhase = activities.find((a) => a.type === "tn_schedule_phase" && a.metadata?.runId === runId);
+  return {
+    inFlight: true,
+    runId,
+    latestPhaseMessage: (latestPhase?.metadata?.message as string) || latestPhase?.summary,
+    latestPhaseStatus: latestPhase?.metadata?.status as string | undefined,
+  };
+}
+
 export default function ContactDetail() {
   const params = useParams();
   const [, navigate] = useLocation();
@@ -620,26 +647,14 @@ export default function ContactDetail() {
     mutationFn: () => createTherapyNotesWithSchedule(Number(contactId)),
     onSuccess: (result) => {
       setShowScheduleTnModal(false);
-      if (result.status === "unknown") {
-        // Connection dropped before V2 responded — the run may have completed in TN.
-        toast({
-          title: "TN run status unknown — verify in TherapyNotes",
-          description:
-            "The TN agent can take ~100s and the connection dropped before it replied. " +
-            "Check TherapyNotes for this patient/appointment before retrying — retrying may create a duplicate.",
-        });
-      } else {
-        toast({
-          title: "Added to TN & scheduled",
-          description: result.appointmentDatetime
-            ? `Patient created and appointment scheduled for ${result.appointmentDatetime}.`
-            : "Patient created and appointment scheduled in TherapyNotes.",
-        });
-        if (result.tn_patient_url) {
-          // Surface the new patient link via the existing TN status card on next refetch.
-          refetchTn();
-        }
-      }
+      // Async pattern: the trigger now returns 202 "started" immediately. Live
+      // progress appears in the activity log (polled below); the terminal toast
+      // is driven by the workflow_complete callback, not this response.
+      toast({
+        title: "TN workflow started",
+        description: "Creating the patient, uploading PDFs, and scheduling — progress will appear in the activity log (~100s).",
+      });
+      // Refetch activity now so the in-flight state + polling kick in immediately.
       queryClient.invalidateQueries({ queryKey: ["/api/activity/contact", contactId] });
       queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
     },
@@ -892,7 +907,15 @@ export default function ContactDetail() {
     },
     enabled: isValidId,
     staleTime: 30_000,
+    // While a TN V2 workflow is in flight, poll every 2s so phase events appear live.
+    refetchInterval: (query) => (computeTnRun(query.state.data?.activities as TnActivity[] | undefined).inFlight ? 2000 : false),
   });
+
+  // Current TN V2 run state (drives the live progress card + button gating).
+  const tnRun = useMemo(
+    () => computeTnRun(contactActivityData?.activities as TnActivity[] | undefined),
+    [contactActivityData]
+  );
   const contactActivities = contactActivityData?.activities || [];
 
   // Intake submission history (multiple intakes per contact)
@@ -2162,6 +2185,24 @@ export default function ContactDetail() {
                 </CardContent>
               </Card>
 
+              {/* Live TN V2 workflow progress (shown while a run is in flight) */}
+              {canUseTnV2 && tnRun.inFlight && (
+                <Card className="border-amber-300 bg-amber-50/60 dark:bg-amber-950/20" data-testid="card-tn-progress">
+                  <CardContent className="py-3">
+                    <div className="flex items-center gap-2 text-sm font-medium text-amber-800 dark:text-amber-300">
+                      <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                      Adding to Schedule in TN…
+                    </div>
+                    <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+                      {tnRun.latestPhaseMessage || "Starting workflow…"}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Takes ~100s. You can leave this page — progress is recorded in the activity log.
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Schedule Appointment widget (TN V2 Beta — gated to TFC beta team) */}
               {canUseTnV2 && contact && (
                 <ScheduleAppointmentWidget
@@ -2362,19 +2403,19 @@ export default function ContactDetail() {
                               variant="outline"
                               className="w-full justify-start border-amber-400 text-amber-700 hover:bg-amber-50 hover:text-amber-800 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950/30"
                               size="sm"
-                              disabled={createWithScheduleMutation.isPending || !tnV2Preconditions.ready}
+                              disabled={createWithScheduleMutation.isPending || tnRun.inFlight || !tnV2Preconditions.ready}
                               onClick={() => setShowScheduleTnModal(true)}
                               data-testid="button-add-to-schedule-tn-beta"
                             >
-                              {createWithScheduleMutation.isPending ? (
+                              {(createWithScheduleMutation.isPending || tnRun.inFlight) ? (
                                 <Loader2 className="h-4 w-4 mr-2 animate-spin shrink-0" />
                               ) : (
                                 <FlaskConical className="h-4 w-4 mr-2 shrink-0" />
                               )}
                               <span className="truncate">
-                                {createWithScheduleMutation.isPending ? "Working on it…" : "Add to Schedule in TN (Beta)"}
+                                {tnRun.inFlight ? "TN workflow in progress…" : createWithScheduleMutation.isPending ? "Working on it…" : "Add to Schedule in TN (Beta)"}
                               </span>
-                              {!createWithScheduleMutation.isPending && (
+                              {!createWithScheduleMutation.isPending && !tnRun.inFlight && (
                                 <Badge variant="outline" className="ml-auto border-amber-300 bg-amber-100 text-amber-700 text-[10px] px-1 py-0">
                                   Beta
                                 </Badge>
@@ -2383,7 +2424,9 @@ export default function ContactDetail() {
                           </span>
                         </TooltipTrigger>
                         <TooltipContent side="left" className="max-w-xs">
-                          {tnV2Preconditions.ready ? (
+                          {tnRun.inFlight ? (
+                            <p>TN workflow already in progress{tnRun.latestPhaseMessage ? ` — ${tnRun.latestPhaseMessage}` : ""}</p>
+                          ) : tnV2Preconditions.ready ? (
                             <p>Beta: extended TN workflow including PDF uploads and appointment scheduling</p>
                           ) : (
                             <div className="space-y-1">
