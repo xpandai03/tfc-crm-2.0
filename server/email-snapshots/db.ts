@@ -130,3 +130,24 @@ export async function getSnapshotsForContact(contactId: number): Promise<Omit<Em
 
   return result.rows as Omit<EmailSnapshot, "bodyHtml">[];
 }
+
+/**
+ * Whether at least one email snapshot exists for a contact + template.
+ * Used by the TN V2 button to detect that the initial appointment
+ * confirmation email (template_id 'appointment-confirmation') was sent.
+ */
+export async function hasSnapshotForTemplate(
+  contactId: number,
+  templateId: string
+): Promise<boolean> {
+  const pool = getPool();
+
+  const result = await pool.query(
+    `SELECT 1 FROM email_snapshots
+     WHERE contact_id = $1 AND template_id = $2
+     LIMIT 1`,
+    [contactId, templateId]
+  );
+
+  return result.rows.length > 0;
+}

@@ -399,3 +399,81 @@ export async function resetTherapyNotesLink(
   });
   return response.json();
 }
+
+// ============================================================================
+// TN V2 — "Add to Schedule in TN (Beta)" API
+// ============================================================================
+
+export interface TnV2State {
+  scheduledAppointmentDate: string | null; // ISO YYYY-MM-DD
+  scheduledAppointmentTime: string | null; // h:mm am/pm
+  providerAssigned: boolean;
+  providerName: string | null;
+  emailSent: boolean;
+}
+
+export interface TnV2RunResult {
+  status: "success" | "error";
+  tn_patient_url?: string | null;
+  tn_patient_id?: string | null;
+  appointmentDatetime?: string;
+  error?: string;
+}
+
+/** Button state + the three precondition flags for the Beta button. */
+export async function getTnV2State(contactId: number): Promise<TnV2State> {
+  const response = await fetch(`/api/therapy-notes/v2/state/${contactId}`, {
+    cache: "no-store",
+    credentials: "include",
+  });
+  if (!response.ok) throw new Error("Failed to fetch TN scheduling state");
+  return response.json();
+}
+
+/** Persist the staff-entered scheduled appointment (widget save). */
+export async function saveScheduledAppointment(
+  contactId: number,
+  date: string | null,
+  time: string | null
+): Promise<{ success: boolean; scheduledAppointmentDate: string | null; scheduledAppointmentTime: string | null }> {
+  const response = await apiRequest("POST", "/api/therapy-notes/v2/schedule-appointment", {
+    contactId,
+    date,
+    time,
+  });
+  return response.json();
+}
+
+/**
+ * Run the synchronous V2 workflow (create patient + upload PDFs + schedule).
+ * Can take 90–180s; uses a 240s client-side timeout to match the server (C14).
+ * Throws Error("<status>: <message>") on non-2xx so callers can show the reason.
+ */
+export async function createTherapyNotesWithSchedule(contactId: number): Promise<TnV2RunResult> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 240_000);
+  try {
+    const res = await fetch("/api/therapy-notes/create-with-schedule", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contactId }),
+      credentials: "include",
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    let body: TnV2RunResult | null = null;
+    try { body = text ? JSON.parse(text) as TnV2RunResult : null; } catch { /* non-JSON */ }
+    if (!res.ok) {
+      throw new Error(body?.error || `${res.status}: ${text || res.statusText}`);
+    }
+    return body || { status: "success" };
+  } catch (err) {
+    if ((err as Error)?.name === "AbortError") {
+      throw new Error("TN agent did not respond within 240s. Please try again or contact support.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}

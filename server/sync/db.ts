@@ -154,6 +154,10 @@ export interface SyncContact {
   // Origin
   intakeSource: string | null;
 
+  // TN V2 scheduled appointment (CRM-owned)
+  scheduledAppointmentDate: string | null;
+  scheduledAppointmentTime: string | null;
+
   // Sync metadata
   syncedAt: string;
   syncHash: string | null;
@@ -231,6 +235,11 @@ export async function initSyncTables(): Promise<void> {
 
       intake_source      TEXT DEFAULT 'website_form',
 
+      -- TN V2 (Add to Schedule in TN Beta): staff-entered initial appointment.
+      -- CRM-owned; never written by the n8n sync upsert (see DO UPDATE SET below).
+      scheduled_appointment_date TEXT,
+      scheduled_appointment_time TEXT,
+
       synced_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       sync_hash          TEXT
     )
@@ -297,6 +306,15 @@ export async function initSyncTables(): Promise<void> {
     } catch (_) { /* column already exists */ }
     try {
       await pool.query(`ALTER TABLE sync_contacts ADD COLUMN IF NOT EXISTS intake_source TEXT DEFAULT 'website_form'`);
+    } catch (_) { /* column already exists */ }
+    // TN V2 scheduled appointment columns. Prod adds these manually via
+    // migrations/add-scheduled-appointment-tn-v2.sql (schema-before-code, C16);
+    // this block keeps fresh/non-prod DBs in sync without a manual step.
+    try {
+      await pool.query(`ALTER TABLE sync_contacts ADD COLUMN IF NOT EXISTS scheduled_appointment_date TEXT`);
+    } catch (_) { /* column already exists */ }
+    try {
+      await pool.query(`ALTER TABLE sync_contacts ADD COLUMN IF NOT EXISTS scheduled_appointment_time TEXT`);
     } catch (_) { /* column already exists */ }
   }
 
@@ -836,6 +854,8 @@ export async function getSyncContactById(contactId: number): Promise<SyncContact
       last_contact AS "lastContact",
       last_note AS "lastNote",
       intake_source AS "intakeSource",
+      scheduled_appointment_date AS "scheduledAppointmentDate",
+      scheduled_appointment_time AS "scheduledAppointmentTime",
       synced_at AS "syncedAt",
       sync_hash AS "syncHash"
     FROM sync_contacts
@@ -2118,6 +2138,40 @@ export async function updateContactIntakeFields(
   );
 
   return { updated: updatedFields, notFound: false };
+}
+
+// ============================================================================
+// TN V2 Scheduled Appointment (CRM-owned date/time on sync_contacts)
+// ============================================================================
+
+/**
+ * Persist the staff-entered initial appointment date/time used by the V2
+ * TherapyNotes workflow. Pass null to clear a field. Does NOT touch synced_at
+ * (these columns are CRM-owned and excluded from the n8n sync upsert).
+ * Returns notFound:true if the contact row doesn't exist.
+ */
+export async function updateScheduledAppointment(
+  contactId: number,
+  date: string | null,
+  time: string | null
+): Promise<{ notFound: boolean }> {
+  const pool = getPool();
+
+  const existing = await pool.query(
+    `SELECT contact_id FROM sync_contacts WHERE contact_id = $1`,
+    [contactId]
+  );
+  if (existing.rows.length === 0) return { notFound: true };
+
+  await pool.query(
+    `UPDATE sync_contacts
+       SET scheduled_appointment_date = $1,
+           scheduled_appointment_time = $2
+     WHERE contact_id = $3`,
+    [date, time, contactId]
+  );
+
+  return { notFound: false };
 }
 
 // ============================================================================

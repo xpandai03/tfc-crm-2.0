@@ -18,5 +18,6 @@ export type {
   TherapyNotesRecord,
   CreateTnRecordParams,
   TnAgentPayload,
+  TnV2AgentPayload,
   TnAgentResponse,
 } from "./types";

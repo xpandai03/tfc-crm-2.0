@@ -26,7 +26,11 @@ export type ActivityType =
   | "therapy_notes_started"
   | "therapy_notes_created"
   | "therapy_notes_failed"
-  | "referral_uploaded";
+  | "referral_uploaded"
+  | "scheduled_appointment_set"
+  | "tn_schedule_started"
+  | "tn_schedule_completed"
+  | "tn_schedule_failed";
 
 export interface LogActivityParams {
   type: ActivityType;
@@ -506,6 +510,26 @@ function formatActivitySummary(
       const staff = String(metadata.staffName || "staff");
       const source = String(metadata.referralSource || "referral");
       return `Referral uploaded by ${staff} — ${source} for ${name}`;
+    }
+
+    case "scheduled_appointment_set": {
+      const when = String(metadata.appointmentDatetime || "appointment");
+      return `Scheduled appointment set for ${name}: ${when}`;
+    }
+
+    case "tn_schedule_started": {
+      return `Add to Schedule in TN (Beta) initiated for ${name}`;
+    }
+
+    case "tn_schedule_completed": {
+      const when = String(metadata.appointmentDatetime || "scheduled appointment");
+      return `Patient added to TN with appointment for ${name}: ${when}`;
+    }
+
+    case "tn_schedule_failed": {
+      const reason = String(metadata.failureReason || "unknown error");
+      const short = reason.length > 80 ? reason.slice(0, 80) + "…" : reason;
+      return `Add to Schedule in TN failed for ${name}: ${short}`;
     }
 
     default:

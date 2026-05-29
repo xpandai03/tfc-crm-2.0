@@ -3,6 +3,7 @@ export {
   saveEmailSnapshot,
   getEmailSnapshot,
   getSnapshotsForContact,
+  hasSnapshotForTemplate,
 } from "./db";
 
 export type {
