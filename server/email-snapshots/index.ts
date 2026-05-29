@@ -4,6 +4,7 @@ export {
   getEmailSnapshot,
   getSnapshotsForContact,
   hasSnapshotForTemplate,
+  getLatestSnapshotForTemplate,
 } from "./db";
 
 export type {

@@ -132,6 +132,39 @@ export async function getSnapshotsForContact(contactId: number): Promise<Omit<Em
 }
 
 /**
+ * Latest snapshot (including bodyHtml) for a contact + template, or null.
+ * Used by the TN V2 snapshot-PDF endpoint to render the most recent
+ * appointment-confirmation email as a PDF.
+ */
+export async function getLatestSnapshotForTemplate(
+  contactId: number,
+  templateId: string
+): Promise<EmailSnapshot | null> {
+  const pool = getPool();
+
+  const result = await pool.query(
+    `SELECT
+      id,
+      contact_id    as "contactId",
+      template_id   as "templateId",
+      subject,
+      body_html     as "bodyHtml",
+      sent_by_email as "sentByEmail",
+      sender_email  as "senderEmail",
+      recipient_email as "recipientEmail",
+      cc_emails     as "ccEmails",
+      sent_at       as "sentAt"
+    FROM email_snapshots
+    WHERE contact_id = $1 AND template_id = $2
+    ORDER BY sent_at DESC
+    LIMIT 1`,
+    [contactId, templateId]
+  );
+
+  return (result.rows[0] as EmailSnapshot) ?? null;
+}
+
+/**
  * Whether at least one email snapshot exists for a contact + template.
  * Used by the TN V2 button to detect that the initial appointment
  * confirmation email (template_id 'appointment-confirmation') was sent.

@@ -605,7 +605,13 @@ export default function ContactDetail() {
       missing.push("Set the scheduled appointment date and time first");
     }
     if (tnV2State && !tnV2State.canGenerateIntakePdf) {
-      missing.push("Contact has no intake form data — cannot generate PDF");
+      missing.push("Contact has no intake form data — cannot generate intake PDF");
+    }
+    // Snapshot PDF requires an appointment-confirmation snapshot. This is the same
+    // condition as emailSent above, so only surface a distinct message in the
+    // defensive case where the email is marked sent but no snapshot was saved.
+    if (tnV2State && tnV2State.emailSent && !tnV2State.canGenerateSnapshotPdf) {
+      missing.push("Appointment confirmation email has no saved snapshot — re-send it");
     }
     return { missing, ready: missing.length === 0 };
   }, [tnV2State]);
