@@ -5365,9 +5365,14 @@ export async function registerRoutes(
         appointment_time: (contact.scheduledAppointmentTime || "").trim(),
         appointment_alert_text: alertText,
         clinician_name: assignment!.providerName || "",
-        runId,
+        contact_id: contactId,
+        run_id: runId,
         callback_url: callbackUrl,
       };
+
+      // Definitive payload log for the next test (X-API-Key is sent as a header,
+      // not in the body, so nothing to mask here).
+      console.log(`[tn-v2 trigger] Sending payload to V2: ${JSON.stringify(payload, null, 2)}`);
 
       // Pre-validate critical fields (mirrors V1)
       const missing: string[] = [];
