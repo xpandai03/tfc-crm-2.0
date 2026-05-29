@@ -11,6 +11,12 @@ import { useToast } from "@/hooks/use-toast";
 // h:mm am/pm (case-insensitive), e.g. "2:00 pm", "11:30 AM"
 const TIME_RE = /^\d{1,2}:\d{2}\s*(am|pm)$/i;
 
+// TODO Issue: dedupe scheduled appointment date/time entry between widget and
+// email modal. The Send Email modal (Initial Appointment Confirmation template)
+// also collects appointment date/time (+ provider + location), so staff enter
+// the same data twice. Consider sourcing the email modal's date/time from this
+// widget's saved value (or vice versa). Not blocking — filed for a later pass.
+
 interface ScheduleAppointmentWidgetProps {
   contactId: number;
   /** Stored ISO date 'YYYY-MM-DD' (or null). */

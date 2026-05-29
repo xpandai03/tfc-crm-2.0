@@ -604,6 +604,9 @@ export default function ContactDetail() {
     if (!tnV2State?.scheduledAppointmentDate || !tnV2State?.scheduledAppointmentTime) {
       missing.push("Set the scheduled appointment date and time first");
     }
+    if (tnV2State && !tnV2State.canGenerateIntakePdf) {
+      missing.push("Contact has no intake form data — cannot generate PDF");
+    }
     return { missing, ready: missing.length === 0 };
   }, [tnV2State]);
 
