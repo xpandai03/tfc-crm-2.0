@@ -353,6 +353,7 @@ const TN_V2_BETA_EMAILS = [
   "sandra@tfc.health",
   "chantel@tfc.health",
   "ebenavidez@tfc.health", // Erica Benavidez
+  "raunek@tfc.health",     // dev/testing access
 ];
 function isTnV2BetaUser(email: string | null | undefined): boolean {
   return !!email && TN_V2_BETA_EMAILS.includes(email.toLowerCase().trim());
