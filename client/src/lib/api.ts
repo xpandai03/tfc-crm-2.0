@@ -411,6 +411,7 @@ export interface TnV2State {
   providerName: string | null;
   emailSent: boolean;
   canGenerateIntakePdf: boolean; // contact has intake data → intake PDF is generatable
+  canGenerateSnapshotPdf: boolean; // appointment-confirmation snapshot exists → snapshot PDF is generatable
 }
 
 export interface TnV2RunResult {

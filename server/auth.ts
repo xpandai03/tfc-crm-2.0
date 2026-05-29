@@ -334,6 +334,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     "/api/export/",        // all export endpoints (use X-Sync-Key auth)
     "/api/migrate",        // Migration endpoint (uses X-Migrate-Key auth)
     "/api/internal/contact-intake-pdf/", // TN V2 agent intake PDF (uses X-API-Key/TN_API_KEY auth; trailing slash → prefix match)
+    "/api/internal/contact-snapshot-pdf/", // TN V2 agent appointment-confirmation snapshot PDF (X-API-Key/TN_API_KEY auth)
   ];
 
   // Public assets that must be accessible without auth (e.g., for email templates)

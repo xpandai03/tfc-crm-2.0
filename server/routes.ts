@@ -27,7 +27,7 @@ import {
   isStaleInProgress,
 } from "./therapy-notes";
 import type { TnAgentPayload, TnV2AgentPayload, TnAgentResponse } from "./therapy-notes";
-import { saveEmailSnapshot, getEmailSnapshot, getSnapshotsForContact, hasSnapshotForTemplate } from "./email-snapshots";
+import { saveEmailSnapshot, getEmailSnapshot, getSnapshotsForContact, hasSnapshotForTemplate, getLatestSnapshotForTemplate } from "./email-snapshots";
 import { createAssignment, getAssignmentsByContact, deleteAssignment, getLatestAssignmentsByAllContacts, getLatestAssignmentsWithDates, getLatestAssignment } from "./assignments/db";
 import {
   syncContacts as syncContactsToDb,
@@ -5286,6 +5286,9 @@ export async function registerRoutes(
         providerName: assignment?.providerName || null,
         emailSent,
         canGenerateIntakePdf: contactHasIntakeData(contact),
+        // The snapshot PDF is generatable iff an appointment-confirmation snapshot
+        // exists — which is exactly what `emailSent` checks (hasSnapshotForTemplate).
+        canGenerateSnapshotPdf: emailSent,
       });
     } catch (error) {
       console.error("[tn-v2] Error getting state:", error);
@@ -5339,6 +5342,7 @@ export async function registerRoutes(
       // (P5 placeholder) — real snapshot-PDF generation is separate, later work.
       const baseUrl = (process.env.APP_URL || "https://tfc-crm-2-0.fly.dev").replace(/\/$/, "");
       const intakePdfUrl = `${baseUrl}/api/internal/contact-intake-pdf/${contactId}`;
+      const snapshotPdfUrl = `${baseUrl}/api/internal/contact-snapshot-pdf/${contactId}`;
 
       const payload: TnV2AgentPayload = {
         first_name: firstName,
@@ -5351,7 +5355,7 @@ export async function registerRoutes(
         phone: contact.phone || "",
         rfs_url: contact.rfsLink || "",
         intake_pdf_url: intakePdfUrl,
-        snapshot_pdf_url: intakePdfUrl, // P5 placeholder: same intake PDF for both until snapshot gen exists
+        snapshot_pdf_url: snapshotPdfUrl, // real appointment-confirmation snapshot PDF (no longer the intake placeholder)
         appointment_date: isoDateToMDY(contact.scheduledAppointmentDate),
         appointment_time: (contact.scheduledAppointmentTime || "").trim(),
         appointment_alert_text: alertText,
@@ -5943,6 +5947,50 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[internal-intake-pdf] Error generating PDF:", error);
       return res.status(500).json({ error: "Failed to generate intake PDF" });
+    }
+  });
+
+  // Internal: API-key-gated appointment-confirmation snapshot PDF for the TN V2
+  // agent. Renders the stored email_snapshots HTML (the actual confirmation email)
+  // to PDF on demand — so V2 uploads the REAL confirmation, not a duplicate intake.
+  // Same auth/allow-list/streaming pattern as the intake endpoint above.
+  app.get("/api/internal/contact-snapshot-pdf/:contactId", async (req, res) => {
+    try {
+      const apiKey = req.headers["x-api-key"] as string | undefined;
+      if (!process.env.TN_API_KEY || apiKey !== process.env.TN_API_KEY) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const contactId = parseInt(req.params.contactId, 10);
+      if (isNaN(contactId)) {
+        return res.status(400).json({ error: "contactId must be a number" });
+      }
+
+      const snapshot = await getLatestSnapshotForTemplate(contactId, APPOINTMENT_CONFIRMATION_TEMPLATE_ID);
+      if (!snapshot) {
+        return res.status(404).json({ error: "Contact has no appointment confirmation snapshot" });
+      }
+
+      const pdfmake = require("pdfmake");
+      pdfmake.addFonts(require("pdfmake/standard-fonts/Helvetica"));
+
+      const { buildEmailSnapshotDocument } = await import("./pdf/email-snapshot-template");
+      const docDefinition = buildEmailSnapshotDocument(snapshot);
+      const pdfDoc = pdfmake.createPdf(docDefinition);
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="appointment-confirmation-${contactId}.pdf"`
+      );
+      res.setHeader("Cache-Control", "no-cache");
+
+      const stream = await pdfDoc.getStream();
+      stream.pipe(res);
+      stream.end();
+    } catch (error) {
+      console.error("[internal-snapshot-pdf] Error generating PDF:", error);
+      return res.status(500).json({ error: "Failed to generate snapshot PDF" });
     }
   });
 
