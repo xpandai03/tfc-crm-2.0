@@ -587,7 +587,7 @@ export default function ContactDetail() {
   });
 
   // ---- TN V2: "Add to Schedule in TN (Beta)" (gated to TFC beta team) ----
-  const TN_V2_BETA_EMAILS = ["lsego@tfc.health", "amanda@tfc.health", "sandra@tfc.health", "chantel@tfc.health", "ebenavidez@tfc.health"];
+  const TN_V2_BETA_EMAILS = ["lsego@tfc.health", "amanda@tfc.health", "sandra@tfc.health", "chantel@tfc.health", "ebenavidez@tfc.health", "raunek@tfc.health"];
   const canUseTnV2 = !!user?.email && TN_V2_BETA_EMAILS.includes(user.email.toLowerCase());
 
   const { data: tnV2State, refetch: refetchTnV2State } = useQuery({
