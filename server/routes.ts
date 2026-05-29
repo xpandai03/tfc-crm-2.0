@@ -5398,14 +5398,35 @@ export async function registerRoutes(
       } catch (err) {
         clearTimeout(timeoutId);
         const aborted = (err as Error)?.name === "AbortError";
-        const reason = aborted
-          ? "TN agent did not respond within 240s (timeout)"
-          : `Network error contacting TN agent: ${(err as Error)?.message || "unknown"}`;
+        // Surface the real undici cause (UND_ERR_HEADERS_TIMEOUT = our side;
+        // ECONNRESET / "other side closed" / "terminated" = an upstream/edge
+        // reset while V2 was still working). Logged so we can confirm the cause.
+        const cause = (err as { cause?: { code?: string; message?: string } })?.cause;
+        console.error(
+          `[tn-v2] fetch to V2 failed after ${TN_V2_TIMEOUT_MS}ms budget:`,
+          { name: (err as Error)?.name, message: (err as Error)?.message, causeCode: cause?.code, cause: cause ? String(cause.message ?? cause) : undefined }
+        );
+
+        // The connection to the V2 agent dropped (or our 240s cap fired) BEFORE a
+        // response came back. Critically, V2 keeps running and often completes the
+        // workflow in TherapyNotes anyway — so this is an UNKNOWN outcome, not a
+        // confirmed failure. Tell the user to verify in TN rather than retry blindly
+        // (a retry can create a duplicate patient).
+        const failureReason = aborted
+          ? `Connection to TN agent exceeded the ${Math.round(TN_V2_TIMEOUT_MS / 1000)}s cap before a response`
+          : `Lost connection to TN agent before it responded (${cause?.code || (err as Error)?.message || "fetch failed"})`;
         await logActivity({
           type: "tn_schedule_failed", actorEmail: userEmail, entityType: "contact",
-          entityId: String(contactId), entityName: contactName, metadata: { contactId, failureReason: reason },
+          entityId: String(contactId), entityName: contactName,
+          metadata: { contactId, failureReason, causeCode: cause?.code, outcome: "unknown-verify-in-tn" },
         });
-        return res.status(504).json({ error: aborted ? "TN agent did not respond, please try again or contact support." : reason });
+        return res.status(504).json({
+          status: "unknown",
+          error:
+            "Lost connection to the TN agent before it finished (it can take ~100s). " +
+            "The patient may have been created and scheduled in TherapyNotes anyway — " +
+            "please check TherapyNotes before retrying, as retrying can create a duplicate.",
+        });
       }
       clearTimeout(timeoutId);
 
