@@ -614,15 +614,25 @@ export default function ContactDetail() {
     mutationFn: () => createTherapyNotesWithSchedule(Number(contactId)),
     onSuccess: (result) => {
       setShowScheduleTnModal(false);
-      toast({
-        title: "Added to TN & scheduled",
-        description: result.appointmentDatetime
-          ? `Patient created and appointment scheduled for ${result.appointmentDatetime}.`
-          : "Patient created and appointment scheduled in TherapyNotes.",
-      });
-      if (result.tn_patient_url) {
-        // Surface the new patient link via the existing TN status card on next refetch.
-        refetchTn();
+      if (result.status === "unknown") {
+        // Connection dropped before V2 responded — the run may have completed in TN.
+        toast({
+          title: "TN run status unknown — verify in TherapyNotes",
+          description:
+            "The TN agent can take ~100s and the connection dropped before it replied. " +
+            "Check TherapyNotes for this patient/appointment before retrying — retrying may create a duplicate.",
+        });
+      } else {
+        toast({
+          title: "Added to TN & scheduled",
+          description: result.appointmentDatetime
+            ? `Patient created and appointment scheduled for ${result.appointmentDatetime}.`
+            : "Patient created and appointment scheduled in TherapyNotes.",
+        });
+        if (result.tn_patient_url) {
+          // Surface the new patient link via the existing TN status card on next refetch.
+          refetchTn();
+        }
       }
       queryClient.invalidateQueries({ queryKey: ["/api/activity/contact", contactId] });
       queryClient.invalidateQueries({ queryKey: ["/api/activity"] });

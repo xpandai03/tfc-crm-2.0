@@ -414,7 +414,7 @@ export interface TnV2State {
 }
 
 export interface TnV2RunResult {
-  status: "success" | "error";
+  status: "success" | "error" | "unknown"; // "unknown" = connection dropped; verify in TN
   tn_patient_url?: string | null;
   tn_patient_id?: string | null;
   appointmentDatetime?: string;
@@ -465,6 +465,12 @@ export async function createTherapyNotesWithSchedule(contactId: number): Promise
     const text = await res.text();
     let body: TnV2RunResult | null = null;
     try { body = text ? JSON.parse(text) as TnV2RunResult : null; } catch { /* non-JSON */ }
+    // "unknown" (504): connection dropped before V2 responded, but V2 may have
+    // completed in TN. Return it as a result (not an error) so the UI can show a
+    // neutral "verify in TN" message instead of a red failure toast.
+    if (body?.status === "unknown") {
+      return body;
+    }
     if (!res.ok) {
       throw new Error(body?.error || `${res.status}: ${text || res.statusText}`);
     }
