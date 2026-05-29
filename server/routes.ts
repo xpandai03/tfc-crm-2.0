@@ -26,9 +26,9 @@ import {
   resetTnRecordForRetry,
   isStaleInProgress,
 } from "./therapy-notes";
-import type { TnAgentPayload, TnAgentResponse } from "./therapy-notes";
-import { saveEmailSnapshot, getEmailSnapshot, getSnapshotsForContact } from "./email-snapshots";
-import { createAssignment, getAssignmentsByContact, deleteAssignment, getLatestAssignmentsByAllContacts, getLatestAssignmentsWithDates } from "./assignments/db";
+import type { TnAgentPayload, TnV2AgentPayload, TnAgentResponse } from "./therapy-notes";
+import { saveEmailSnapshot, getEmailSnapshot, getSnapshotsForContact, hasSnapshotForTemplate } from "./email-snapshots";
+import { createAssignment, getAssignmentsByContact, deleteAssignment, getLatestAssignmentsByAllContacts, getLatestAssignmentsWithDates, getLatestAssignment } from "./assignments/db";
 import {
   syncContacts as syncContactsToDb,
   recordSyncError,
@@ -57,6 +57,7 @@ import {
   fullSyncMigrationContacts,
   updateContactIntakeFields,
   updateContactIdentity,
+  updateScheduledAppointment,
   deleteSyncContact,
   getWaitlistExportData,
   WAITLIST_EXPORT_COLUMNS,
@@ -342,6 +343,125 @@ const TN_ALLOWED_EMAILS = [
 ];
 const TN_AGENT_URL =
   process.env.TN_AGENT_URL || "https://axiom-browser-agent-clone-production.up.railway.app/api/tn/create-patient";
+
+// ---- TN V2 "Add to Schedule in TN (Beta)" ----------------------------------
+// Gated to TFC's beta team only (locked C6). Separate, smaller allow-list than
+// TN_ALLOWED_EMAILS so the untested V2 endpoint stays contained to 5 people.
+const TN_V2_BETA_EMAILS = [
+  "lsego@tfc.health",
+  "amanda@tfc.health",
+  "sandra@tfc.health",
+  "chantel@tfc.health",
+  "ebenavidez@tfc.health", // Erica Benavidez
+];
+function isTnV2BetaUser(email: string | null | undefined): boolean {
+  return !!email && TN_V2_BETA_EMAILS.includes(email.toLowerCase().trim());
+}
+
+// V2 base URL is configurable (C12). Reuse the V1 env if a dedicated one isn't
+// set: derive the Railway base from TN_AGENT_URL by stripping its V1 path.
+const TN_AGENT_BASE_URL =
+  process.env.TN_AGENT_BASE_URL ||
+  TN_AGENT_URL.replace(/\/api\/tn\/.*$/, "") ||
+  "https://axiom-browser-agent-clone-production.up.railway.app";
+const TN_V2_AGENT_URL = `${TN_AGENT_BASE_URL}/api/tn/create-patient-with-schedule`;
+const TN_V2_TIMEOUT_MS = 240_000; // 90–180s typical; 240s ceiling (C14)
+const APPOINTMENT_CONFIRMATION_TEMPLATE_ID = "appointment-confirmation";
+
+// Type computation for the appointment alert text (C10).
+function computeAgeFromMMDDYYYY(dob: string): number | null {
+  const m = dob.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return null;
+  const month = Number(m[1]), day = Number(m[2]), year = Number(m[3]);
+  const now = new Date();
+  let age = now.getFullYear() - year;
+  const beforeBirthday =
+    now.getMonth() + 1 < month ||
+    (now.getMonth() + 1 === month && now.getDate() < day);
+  if (beforeBirthday) age -= 1;
+  return age >= 0 && age < 130 ? age : null;
+}
+
+/**
+ * Compute the locked "New {Type} {Modality} Therapy CRM" alert string (C9).
+ * Type (C10): serviceRequested/requestingFor override (Family / Couples), else
+ * by age (Minor <14, Adolescent 14–17, Individual 18+). Modality (C11): map
+ * In-Person / Telehealth, default In-Person (warning surfaced via `warnings`).
+ */
+function computeAppointmentAlertText(
+  contact: { serviceRequested?: string | null; requestingFor?: string | null; modality?: string | null },
+  dobMMDDYYYY: string
+): { text: string; warnings: string[] } {
+  const warnings: string[] = [];
+
+  // ---- Type ----
+  const svc = (contact.serviceRequested || "").trim().toLowerCase();
+  const req = (contact.requestingFor || "").trim().toLowerCase();
+  let type: string;
+  if (svc === "family" || req === "my family" || req === "family") {
+    type = "Family";
+  } else if (
+    svc === "my partner & myself" || svc === "couples" ||
+    req === "my partner & myself" || req === "couples"
+  ) {
+    type = "Couples";
+  } else {
+    const age = computeAgeFromMMDDYYYY(dobMMDDYYYY);
+    if (age === null) {
+      type = "Individual";
+      warnings.push("Age could not be computed from DOB; defaulted Type to Individual");
+    } else if (age < 14) {
+      type = "Minor";
+    } else if (age <= 17) {
+      type = "Adolescent";
+    } else {
+      type = "Individual";
+    }
+  }
+
+  // ---- Modality ----
+  const m = (contact.modality || "").toLowerCase();
+  let modality: string;
+  if (m.includes("in person") || m.includes("in-person")) {
+    modality = "In-Person";
+  } else if (m.includes("telehealth")) {
+    modality = "Telehealth";
+  } else {
+    modality = "In-Person";
+    warnings.push(`Modality ambiguous or missing ("${contact.modality || ""}"), defaulted to In-Person`);
+  }
+
+  return { text: `New ${type} ${modality} Therapy CRM`, warnings };
+}
+
+// 'YYYY-MM-DD' -> 'm/d/yyyy' (single-digit OK) for the V2 appointment_date.
+function isoDateToMDY(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return iso; // already in some other format; pass through
+  return `${Number(m[2])}/${Number(m[3])}/${m[1]}`;
+}
+
+// Reduce a zip to its first 5 digits (V2 also has a normalize_zip validator).
+function normalizeZip5(zip: string | null | undefined): string {
+  if (!zip) return "";
+  const digits = zip.replace(/\D/g, "");
+  return digits.slice(0, 5);
+}
+
+// Convert a stored DOB (Excel serial number, ISO YYYY-MM-DD..., or already
+// MM/DD/YYYY) to MM/DD/YYYY. Mirrors the V1 TN handler's DOB normalization.
+function dobToMMDDYYYY(rawDob: unknown): string {
+  if (typeof rawDob === "number" && rawDob > 15000 && rawDob < 80000) {
+    return excelSerialToMMDDYYYY(rawDob);
+  }
+  if (typeof rawDob === "string" && rawDob.length > 0) {
+    const isoMatch = rawDob.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) return `${isoMatch[2]}/${isoMatch[3]}/${isoMatch[1]}`;
+    return rawDob;
+  }
+  return "";
+}
 
 function parseName(fullName: string): { firstName: string; lastName: string } {
   const parts = fullName.trim().split(/\s+/);
@@ -5065,6 +5185,259 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[therapy-notes] Error in create endpoint:", error);
       return res.status(500).json({ error: "Failed to start TherapyNotes creation" });
+    }
+  });
+
+  // ============================================================================
+  // TN V2 — "Add to Schedule in TN (Beta)" (gated to TN_V2_BETA_EMAILS)
+  // ============================================================================
+
+  const TIME_RE = /^\d{1,2}:\d{2}\s*(am|pm)$/i;
+
+  // --- Save the staff-entered scheduled appointment (widget persistence) ---
+  app.post("/api/therapy-notes/v2/schedule-appointment", async (req, res) => {
+    try {
+      const userEmail = (req as unknown as { user?: { email?: string } }).user?.email || "";
+      if (!isTnV2BetaUser(userEmail)) {
+        return res.status(403).json({ error: "Not authorized for TN scheduling (Beta)" });
+      }
+
+      const { contactId, date, time } = req.body as { contactId?: number; date?: string | null; time?: string | null };
+      if (!contactId || typeof contactId !== "number") {
+        return res.status(400).json({ error: "contactId (number) is required" });
+      }
+
+      const cleanDate = typeof date === "string" && date.trim() ? date.trim() : null;
+      const cleanTime = typeof time === "string" && time.trim() ? time.trim() : null;
+
+      if (cleanDate && !/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
+        return res.status(422).json({ error: "date must be ISO format YYYY-MM-DD" });
+      }
+      if (cleanTime && !TIME_RE.test(cleanTime)) {
+        return res.status(422).json({ error: "time must look like 'h:mm am/pm' (e.g. 2:00 pm)" });
+      }
+
+      const { notFound } = await updateScheduledAppointment(contactId, cleanDate, cleanTime);
+      if (notFound) return res.status(404).json({ error: "Contact not found" });
+
+      // Activity log (C7 widget): "Scheduled appointment set for [datetime] by [user]"
+      const contactName = (await getSyncContactById(contactId))?.name || `Contact ${contactId}`;
+      const datetimeLabel = [cleanDate ? isoDateToMDY(cleanDate) : null, cleanTime].filter(Boolean).join(" ") || "(cleared)";
+      await logActivity({
+        type: "scheduled_appointment_set",
+        actorEmail: userEmail,
+        entityType: "contact",
+        entityId: String(contactId),
+        entityName: contactName,
+        metadata: { contactId, scheduledAppointmentDate: cleanDate, scheduledAppointmentTime: cleanTime, appointmentDatetime: datetimeLabel },
+      });
+
+      return res.json({
+        success: true,
+        scheduledAppointmentDate: cleanDate,
+        scheduledAppointmentTime: cleanTime,
+      });
+    } catch (error) {
+      console.error("[tn-v2] Error saving scheduled appointment:", error);
+      return res.status(500).json({ error: "Failed to save scheduled appointment" });
+    }
+  });
+
+  // --- Button state + preconditions for the Beta button ---
+  app.get("/api/therapy-notes/v2/state/:contactId", async (req, res) => {
+    try {
+      const userEmail = (req as unknown as { user?: { email?: string } }).user?.email || "";
+      if (!isTnV2BetaUser(userEmail)) {
+        return res.status(403).json({ error: "Not authorized for TN scheduling (Beta)" });
+      }
+
+      const contactId = Number(req.params.contactId);
+      if (!contactId || isNaN(contactId)) {
+        return res.status(400).json({ error: "valid contactId is required" });
+      }
+
+      const contact = await getSyncContactById(contactId);
+      if (!contact) return res.status(404).json({ error: "Contact not found" });
+
+      const assignment = await getLatestAssignment(contactId);
+      const emailSent = await hasSnapshotForTemplate(contactId, APPOINTMENT_CONFIRMATION_TEMPLATE_ID);
+
+      return res.json({
+        scheduledAppointmentDate: contact.scheduledAppointmentDate || null,
+        scheduledAppointmentTime: contact.scheduledAppointmentTime || null,
+        providerAssigned: !!assignment,
+        providerName: assignment?.providerName || null,
+        emailSent,
+      });
+    } catch (error) {
+      console.error("[tn-v2] Error getting state:", error);
+      return res.status(500).json({ error: "Failed to get TN V2 state" });
+    }
+  });
+
+  // --- Synchronous V2 run: create patient + upload PDFs + schedule appt ---
+  app.post("/api/therapy-notes/create-with-schedule", async (req, res) => {
+    const userEmail = (req as unknown as { user?: { email?: string } }).user?.email || "";
+    try {
+      if (!isTnV2BetaUser(userEmail)) {
+        return res.status(403).json({ error: "Not authorized for TN scheduling (Beta)" });
+      }
+
+      const { contactId } = req.body as { contactId?: number };
+      if (!contactId || typeof contactId !== "number") {
+        return res.status(400).json({ error: "contactId (number) is required" });
+      }
+
+      const contact = await getSyncContactById(contactId);
+      if (!contact) return res.status(404).json({ error: "Contact not found" });
+      const contactName = contact.name || `Contact ${contactId}`;
+
+      // ---- Re-check the three preconditions server-side (defense in depth) ----
+      const assignment = await getLatestAssignment(contactId);
+      const emailSent = await hasSnapshotForTemplate(contactId, APPOINTMENT_CONFIRMATION_TEMPLATE_ID);
+      const hasDate = !!(contact.scheduledAppointmentDate && contact.scheduledAppointmentDate.trim());
+      const hasTime = !!(contact.scheduledAppointmentTime && contact.scheduledAppointmentTime.trim());
+
+      const unmet: string[] = [];
+      if (!assignment) unmet.push("provider not assigned");
+      if (!emailSent) unmet.push("initial appointment confirmation email not sent");
+      if (!hasDate || !hasTime) unmet.push("scheduled appointment date/time not set");
+      if (unmet.length > 0) {
+        return res.status(412).json({ error: `Preconditions not met: ${unmet.join("; ")}` });
+      }
+
+      if (!process.env.TN_API_KEY) {
+        return res.status(500).json({ error: "TherapyNotes API key not configured" });
+      }
+
+      // ---- Build the V2 payload ----
+      const { firstName, lastName } = parseName(contactName);
+      const dob = dobToMMDDYYYY(contact.patientDob);
+      const { text: alertText, warnings } = computeAppointmentAlertText(contact, dob);
+
+      const payload: TnV2AgentPayload = {
+        first_name: firstName,
+        last_name: lastName,
+        dob,
+        address: contact.streetAddress || "",
+        zip: normalizeZip5(contact.zipCode),
+        sex: contact.gender || "",
+        email: contact.email || "",
+        phone: contact.phone || "",
+        rfs_url: contact.rfsLink || "",
+        intake_pdf_url: contact.rfsLink || "",   // OPEN ITEM: no dedicated intake PDF URL yet
+        snapshot_pdf_url: contact.rfsLink || "", // OPEN ITEM: snapshot PDF not yet a fetchable URL (placeholder)
+        appointment_date: isoDateToMDY(contact.scheduledAppointmentDate),
+        appointment_time: (contact.scheduledAppointmentTime || "").trim(),
+        appointment_alert_text: alertText,
+        clinician_name: assignment!.providerName || "",
+      };
+
+      // Pre-validate critical fields (mirrors V1)
+      const missing: string[] = [];
+      if (!payload.first_name) missing.push("first_name");
+      if (!payload.last_name) missing.push("last_name");
+      if (!payload.dob) missing.push("dob");
+      if (missing.length > 0) {
+        const reason = `Missing critical fields: ${missing.join(", ")}`;
+        await logActivity({
+          type: "tn_schedule_failed", actorEmail: userEmail, entityType: "contact",
+          entityId: String(contactId), entityName: contactName, metadata: { contactId, failureReason: reason },
+        });
+        return res.status(422).json({ error: reason });
+      }
+
+      if (warnings.length > 0) {
+        console.warn(`[tn-v2] Alert-text warnings for contact ${contactId}:`, warnings);
+      }
+
+      // Activity: button clicked / agent started
+      await logActivity({
+        type: "tn_schedule_started", actorEmail: userEmail, entityType: "contact",
+        entityId: String(contactId), entityName: contactName,
+        metadata: { contactId, alertText, warnings, appointmentDatetime: `${payload.appointment_date} ${payload.appointment_time}`.trim() },
+      });
+      console.log(`[tn-v2] Started for contact ${contactId}: ${firstName} ${lastName}, alert="${alertText}", clinician="${payload.clinician_name}"`);
+
+      // ---- Synchronous call to the V2 agent (C14: up to 240s) ----
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), TN_V2_TIMEOUT_MS);
+      let tnResponse: Awaited<ReturnType<typeof fetch>>;
+      try {
+        tnResponse = await fetch(TN_V2_AGENT_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-API-Key": process.env.TN_API_KEY! },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+      } catch (err) {
+        clearTimeout(timeoutId);
+        const aborted = (err as Error)?.name === "AbortError";
+        const reason = aborted
+          ? "TN agent did not respond within 240s (timeout)"
+          : `Network error contacting TN agent: ${(err as Error)?.message || "unknown"}`;
+        await logActivity({
+          type: "tn_schedule_failed", actorEmail: userEmail, entityType: "contact",
+          entityId: String(contactId), entityName: contactName, metadata: { contactId, failureReason: reason },
+        });
+        return res.status(504).json({ error: aborted ? "TN agent did not respond, please try again or contact support." : reason });
+      }
+      clearTimeout(timeoutId);
+
+      const rawText = await tnResponse.text();
+      let parsed: TnAgentResponse | null = null;
+      try { parsed = JSON.parse(rawText) as TnAgentResponse; } catch { /* non-JSON */ }
+
+      // ---- Map response → user-facing result + activity log ----
+      if (tnResponse.ok && parsed?.status === "success") {
+        const apptLabel = `${payload.appointment_date} ${payload.appointment_time}`.trim();
+        await logActivity({
+          type: "tn_schedule_completed", actorEmail: userEmail, entityType: "contact",
+          entityId: String(contactId), entityName: contactName,
+          metadata: { contactId, tnPatientUrl: parsed.tn_patient_url, tnPatientId: parsed.tn_patient_id, appointmentDatetime: apptLabel },
+        });
+        return res.json({
+          status: "success",
+          tn_patient_url: parsed.tn_patient_url || null,
+          tn_patient_id: parsed.tn_patient_id || null,
+          appointmentDatetime: apptLabel,
+        });
+      }
+
+      // Failure paths
+      let userError: string;
+      let httpStatus = 502;
+      if (tnResponse.status === 429) {
+        userError = "Another TherapyNotes run is in progress. Please wait a moment and try again.";
+        httpStatus = 429;
+      } else if (tnResponse.status === 401) {
+        userError = "TherapyNotes agent rejected the API key (configuration error). Contact support.";
+        httpStatus = 502;
+      } else if (tnResponse.status === 422) {
+        userError = "TherapyNotes rejected the submission (validation error). Check the contact data.";
+        httpStatus = 422;
+      } else {
+        userError = parsed?.failure_reason || `TherapyNotes agent returned HTTP ${tnResponse.status}.`;
+      }
+
+      const failureReason = parsed?.failure_reason || `HTTP ${tnResponse.status}: ${rawText.slice(0, 300)}`;
+      console.error(`[tn-v2] Failed for contact ${contactId}: ${failureReason}`);
+      await logActivity({
+        type: "tn_schedule_failed", actorEmail: userEmail, entityType: "contact",
+        entityId: String(contactId), entityName: contactName,
+        metadata: { contactId, failureReason, httpStatus: tnResponse.status },
+      });
+      return res.status(httpStatus).json({ status: "error", error: userError });
+    } catch (error) {
+      console.error("[tn-v2] Error in create-with-schedule endpoint:", error);
+      try {
+        await logActivity({
+          type: "tn_schedule_failed", actorEmail: userEmail || "system", entityType: "contact",
+          entityId: String((req.body as { contactId?: number })?.contactId || ""), entityName: "",
+          metadata: { failureReason: (error as Error)?.message || "unexpected server error" },
+        });
+      } catch { /* best-effort */ }
+      return res.status(500).json({ error: "Failed to run TN scheduling" });
     }
   });
 

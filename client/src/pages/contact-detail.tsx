@@ -66,8 +66,11 @@ import {
   X,
   Trash2,
   Hourglass,
+  FlaskConical,
 } from "lucide-react";
-import { getContactSnapshot, updateContactStatus, addNoteToContact, deleteNote, deleteAssignment as deleteAssignmentApi, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, syncContactFromExcel, updateContactIntake, updateContactIdentity, deleteContact, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
+import { getContactSnapshot, updateContactStatus, addNoteToContact, deleteNote, deleteAssignment as deleteAssignmentApi, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, syncContactFromExcel, updateContactIntake, updateContactIdentity, deleteContact, getTnV2State, createTherapyNotesWithSchedule, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
+import { ScheduleAppointmentWidget } from "@/components/ui/schedule-appointment-widget";
+import { ScheduleTnBetaModal } from "@/components/ui/schedule-tn-beta-modal";
 import { ReminderModal } from "@/components/ui/reminder-modal";
 import { AssignProviderModal } from "@/components/ui/assign-provider-modal";
 import { SendEmailModal } from "@/components/ui/send-email-modal";
@@ -332,6 +335,7 @@ export default function ContactDetail() {
   const [showReminderModal, setShowReminderModal] = useState(false);
   const [showSendEmailModal, setShowSendEmailModal] = useState(false);
   const [showCreateTnModal, setShowCreateTnModal] = useState(false);
+  const [showScheduleTnModal, setShowScheduleTnModal] = useState(false);
   const [showAssignProviderModal, setShowAssignProviderModal] = useState(false);
   const [isCreatingReminder, setIsCreatingReminder] = useState(false);
   const noteTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -579,6 +583,51 @@ export default function ContactDetail() {
     },
     onError: (err: Error) => {
       toast({ title: "Failed to reset TherapyNotes link", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // ---- TN V2: "Add to Schedule in TN (Beta)" (gated to TFC beta team) ----
+  const TN_V2_BETA_EMAILS = ["lsego@tfc.health", "amanda@tfc.health", "sandra@tfc.health", "chantel@tfc.health", "ebenavidez@tfc.health"];
+  const canUseTnV2 = !!user?.email && TN_V2_BETA_EMAILS.includes(user.email.toLowerCase());
+
+  const { data: tnV2State, refetch: refetchTnV2State } = useQuery({
+    queryKey: ["/api/therapy-notes/v2/state", contactId],
+    queryFn: () => getTnV2State(Number(contactId)),
+    enabled: !!contactId && canUseTnV2,
+  });
+
+  // Precondition checks (C7): all three must pass for the button to be clickable.
+  const tnV2Preconditions = useMemo(() => {
+    const missing: string[] = [];
+    if (!tnV2State?.providerAssigned) missing.push("Assign a provider first");
+    if (!tnV2State?.emailSent) missing.push("Send the initial appointment confirmation email first");
+    if (!tnV2State?.scheduledAppointmentDate || !tnV2State?.scheduledAppointmentTime) {
+      missing.push("Set the scheduled appointment date and time first");
+    }
+    return { missing, ready: missing.length === 0 };
+  }, [tnV2State]);
+
+  const createWithScheduleMutation = useMutation({
+    mutationFn: () => createTherapyNotesWithSchedule(Number(contactId)),
+    onSuccess: (result) => {
+      setShowScheduleTnModal(false);
+      toast({
+        title: "Added to TN & scheduled",
+        description: result.appointmentDatetime
+          ? `Patient created and appointment scheduled for ${result.appointmentDatetime}.`
+          : "Patient created and appointment scheduled in TherapyNotes.",
+      });
+      if (result.tn_patient_url) {
+        // Surface the new patient link via the existing TN status card on next refetch.
+        refetchTn();
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/activity/contact", contactId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Add to Schedule in TN failed", description: err.message, variant: "destructive" });
+      queryClient.invalidateQueries({ queryKey: ["/api/activity/contact", contactId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
     },
   });
 
@@ -2094,6 +2143,20 @@ export default function ContactDetail() {
                 </CardContent>
               </Card>
 
+              {/* Schedule Appointment widget (TN V2 Beta — gated to TFC beta team) */}
+              {canUseTnV2 && contact && (
+                <ScheduleAppointmentWidget
+                  contactId={Number(contactId)}
+                  initialDate={tnV2State?.scheduledAppointmentDate ?? contact.scheduledAppointmentDate ?? null}
+                  initialTime={tnV2State?.scheduledAppointmentTime ?? contact.scheduledAppointmentTime ?? null}
+                  onSaved={() => {
+                    refetchTnV2State();
+                    queryClient.invalidateQueries({ queryKey: ["/api/contact", contactId] });
+                    queryClient.invalidateQueries({ queryKey: ["/api/activity/contact", contactId] });
+                  }}
+                />
+              )}
+
               {/* Quick Actions - Data-aware with tooltips */}
               <Card className="overflow-visible">
                 <CardHeader className="pb-3">
@@ -2270,6 +2333,54 @@ export default function ContactDetail() {
                     )
                   )}
 
+                  {/* TN V2 Beta button — sibling of the existing TN button, gated to TFC beta team */}
+                  {canUseTnV2 && (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-block w-full" tabIndex={0}>
+                            <Button
+                              variant="outline"
+                              className="w-full justify-start border-amber-400 text-amber-700 hover:bg-amber-50 hover:text-amber-800 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950/30"
+                              size="sm"
+                              disabled={createWithScheduleMutation.isPending || !tnV2Preconditions.ready}
+                              onClick={() => setShowScheduleTnModal(true)}
+                              data-testid="button-add-to-schedule-tn-beta"
+                            >
+                              {createWithScheduleMutation.isPending ? (
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin shrink-0" />
+                              ) : (
+                                <FlaskConical className="h-4 w-4 mr-2 shrink-0" />
+                              )}
+                              <span className="truncate">
+                                {createWithScheduleMutation.isPending ? "Working on it…" : "Add to Schedule in TN (Beta)"}
+                              </span>
+                              {!createWithScheduleMutation.isPending && (
+                                <Badge variant="outline" className="ml-auto border-amber-300 bg-amber-100 text-amber-700 text-[10px] px-1 py-0">
+                                  Beta
+                                </Badge>
+                              )}
+                            </Button>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="left" className="max-w-xs">
+                          {tnV2Preconditions.ready ? (
+                            <p>Beta: extended TN workflow including PDF uploads and appointment scheduling</p>
+                          ) : (
+                            <div className="space-y-1">
+                              <p className="font-medium">Complete these first:</p>
+                              <ul className="list-disc pl-4">
+                                {tnV2Preconditions.missing.map((m) => (
+                                  <li key={m}>{m}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
+
                   <Separator className="my-2" />
 
                   <Button
@@ -2315,6 +2426,18 @@ export default function ContactDetail() {
           contact={contact || null}
           onConfirm={() => createTnMutation.mutate()}
           isSubmitting={createTnMutation.isPending}
+        />
+      )}
+
+      {/* TN V2 "Add to Schedule in TN (Beta)" confirmation modal */}
+      {canUseTnV2 && (
+        <ScheduleTnBetaModal
+          isOpen={showScheduleTnModal}
+          onClose={() => setShowScheduleTnModal(false)}
+          contact={contact || null}
+          providerName={tnV2State?.providerName ?? null}
+          onConfirm={() => createWithScheduleMutation.mutate()}
+          isSubmitting={createWithScheduleMutation.isPending}
         />
       )}
 

@@ -77,6 +77,10 @@ export const contactSnapshotSchema = z.object({
   rfsLink: z.string().nullable().optional(),         // RFS / SharePoint link
   documentLink: z.string().nullable().optional(),    // Document link
 
+  // TN V2 scheduled appointment (CRM-owned; Add to Schedule in TN Beta)
+  scheduledAppointmentDate: z.string().nullable().optional(), // ISO 'YYYY-MM-DD'
+  scheduledAppointmentTime: z.string().nullable().optional(), // 'h:mm am/pm'
+
   // Status fields
   statusCode: z.number(),
   umbrella: z.enum(umbrellaIds),

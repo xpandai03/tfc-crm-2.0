@@ -32,6 +32,26 @@ export interface TnAgentPayload {
   rfs_url: string;
 }
 
+// Matches the TN agent's V2 endpoint (/api/tn/create-patient-with-schedule):
+// create patient + upload intake & snapshot PDFs + schedule the appointment.
+export interface TnV2AgentPayload {
+  first_name: string;
+  last_name: string;
+  dob: string;              // MM/DD/YYYY
+  address: string;
+  zip: string;              // 5-digit
+  sex: string;              // "Male" | "Female"
+  email: string;
+  phone: string;
+  rfs_url: string;          // kept for V1 backward compat
+  intake_pdf_url: string;   // intake referral PDF
+  snapshot_pdf_url: string; // appointment-confirmation snapshot PDF
+  appointment_date: string; // m/d/yyyy
+  appointment_time: string; // h:mm am/pm
+  appointment_alert_text: string;
+  clinician_name: string;
+}
+
 // Matches the TN agent's response schema
 export interface TnAgentResponse {
   status: "success" | "error";
