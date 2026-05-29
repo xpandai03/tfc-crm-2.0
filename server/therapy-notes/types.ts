@@ -50,8 +50,10 @@ export interface TnV2AgentPayload {
   appointment_time: string; // h:mm am/pm
   appointment_alert_text: string;
   clinician_name: string;
-  // Async progress (TN agent posts phase events to callback_url, tagged with runId)
-  runId: string;
+  // Async progress — V2's Pydantic schema requires these EXACT snake_case names;
+  // V2 silently skips callbacks if contact_id/run_id/callback_url are missing.
+  contact_id: number;
+  run_id: string;
   callback_url: string;
 }
 
