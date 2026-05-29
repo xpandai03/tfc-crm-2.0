@@ -464,6 +464,22 @@ function dobToMMDDYYYY(rawDob: unknown): string {
   return "";
 }
 
+// Whether a contact has enough intake data to generate an intake PDF.
+// Mirrors the gate in the existing /api/contact/:id/intake-pdf handler so the
+// TN V2 button precondition and the internal PDF endpoint agree on generability.
+function contactHasIntakeData(c: {
+  requestingFor?: string | null; reasonForSeeking?: string | null; reasonForTherapy?: string | null;
+  formCompletedBy?: string | null; modality?: string | null; insurancePayer?: string | null;
+  referralSource?: string | null; priorServices?: string | null; patientDob?: string | null;
+  gender?: string | null; streetAddress?: string | null; city?: string | null;
+}): boolean {
+  return !!(
+    c.requestingFor || c.reasonForSeeking || c.reasonForTherapy || c.formCompletedBy ||
+    c.modality || c.insurancePayer || c.referralSource || c.priorServices ||
+    c.patientDob || c.gender || c.streetAddress || c.city
+  );
+}
+
 function parseName(fullName: string): { firstName: string; lastName: string } {
   const parts = fullName.trim().split(/\s+/);
   if (parts.length <= 1) return { firstName: parts[0] || "", lastName: "" };
@@ -5269,6 +5285,7 @@ export async function registerRoutes(
         providerAssigned: !!assignment,
         providerName: assignment?.providerName || null,
         emailSent,
+        canGenerateIntakePdf: contactHasIntakeData(contact),
       });
     } catch (error) {
       console.error("[tn-v2] Error getting state:", error);
@@ -5303,6 +5320,7 @@ export async function registerRoutes(
       if (!assignment) unmet.push("provider not assigned");
       if (!emailSent) unmet.push("initial appointment confirmation email not sent");
       if (!hasDate || !hasTime) unmet.push("scheduled appointment date/time not set");
+      if (!contactHasIntakeData(contact)) unmet.push("no intake form data to generate PDF");
       if (unmet.length > 0) {
         return res.status(412).json({ error: `Preconditions not met: ${unmet.join("; ")}` });
       }
@@ -5316,6 +5334,12 @@ export async function registerRoutes(
       const dob = dobToMMDDYYYY(contact.patientDob);
       const { text: alertText, warnings } = computeAppointmentAlertText(contact, dob);
 
+      // Full HTTPS URL the TN agent fetches (with its X-API-Key). On-demand intake
+      // PDF, generated server-side. snapshot_pdf_url reuses the SAME URL tonight
+      // (P5 placeholder) — real snapshot-PDF generation is separate, later work.
+      const baseUrl = (process.env.APP_URL || "https://tfc-crm-2-0.fly.dev").replace(/\/$/, "");
+      const intakePdfUrl = `${baseUrl}/api/internal/contact-intake-pdf/${contactId}`;
+
       const payload: TnV2AgentPayload = {
         first_name: firstName,
         last_name: lastName,
@@ -5326,8 +5350,8 @@ export async function registerRoutes(
         email: contact.email || "",
         phone: contact.phone || "",
         rfs_url: contact.rfsLink || "",
-        intake_pdf_url: contact.rfsLink || "",   // OPEN ITEM: no dedicated intake PDF URL yet
-        snapshot_pdf_url: contact.rfsLink || "", // OPEN ITEM: snapshot PDF not yet a fetchable URL (placeholder)
+        intake_pdf_url: intakePdfUrl,
+        snapshot_pdf_url: intakePdfUrl, // P5 placeholder: same intake PDF for both until snapshot gen exists
         appointment_date: isoDateToMDY(contact.scheduledAppointmentDate),
         appointment_time: (contact.scheduledAppointmentTime || "").trim(),
         appointment_alert_text: alertText,
@@ -5841,6 +5865,62 @@ export async function registerRoutes(
       stream.end();
     } catch (error) {
       console.error("[intake-pdf] Error generating PDF:", error);
+      return res.status(500).json({ error: "Failed to generate intake PDF" });
+    }
+  });
+
+  // Internal: API-key-gated intake PDF for service-to-service fetch (TN V2 agent).
+  // Clones the on-demand pdfmake generation above; the public session-gated route
+  // stays unchanged. Allow-listed in auth.ts (publicPaths) so authMiddleware skips
+  // it — the X-API-Key check below (matching TN_API_KEY, NOT SYNC_API_KEY) is the
+  // only gate. No fallback: missing/wrong key → 401.
+  app.get("/api/internal/contact-intake-pdf/:contactId", async (req, res) => {
+    try {
+      const apiKey = req.headers["x-api-key"] as string | undefined;
+      if (!process.env.TN_API_KEY || apiKey !== process.env.TN_API_KEY) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const contactId = parseInt(req.params.contactId, 10);
+      if (isNaN(contactId)) {
+        return res.status(400).json({ error: "contactId must be a number" });
+      }
+
+      const contact = await getSyncContactById(contactId);
+      if (!contact) {
+        return res.status(404).json({ error: "Contact not found" });
+      }
+
+      if (!contactHasIntakeData(contact)) {
+        return res.status(404).json({ error: "No intake data available for this contact" });
+      }
+
+      // Same participant-data lookup as the public endpoint
+      const submissions = await getSubmissionsForContact(contactId);
+      const latestPayload = submissions.length > 0
+        ? (submissions[0].payload as Record<string, unknown>)
+        : null;
+
+      const pdfmake = require("pdfmake");
+      pdfmake.addFonts(require("pdfmake/standard-fonts/Helvetica"));
+
+      const { buildIntakeDocument } = await import("./pdf/intake-template");
+      const docDefinition = buildIntakeDocument(contact, latestPayload);
+      const pdfDoc = pdfmake.createPdf(docDefinition);
+
+      const safeName = contact.name.replace(/[^a-zA-Z0-9\s-]/g, "").replace(/\s+/g, "-");
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `inline; filename="Intake-${safeName}-${contact.contactId}.pdf"`
+      );
+      res.setHeader("Cache-Control", "no-cache");
+
+      const stream = await pdfDoc.getStream();
+      stream.pipe(res);
+      stream.end();
+    } catch (error) {
+      console.error("[internal-intake-pdf] Error generating PDF:", error);
       return res.status(500).json({ error: "Failed to generate intake PDF" });
     }
   });

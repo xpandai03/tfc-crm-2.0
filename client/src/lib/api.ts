@@ -410,6 +410,7 @@ export interface TnV2State {
   providerAssigned: boolean;
   providerName: string | null;
   emailSent: boolean;
+  canGenerateIntakePdf: boolean; // contact has intake data → intake PDF is generatable
 }
 
 export interface TnV2RunResult {
