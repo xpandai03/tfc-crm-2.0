@@ -50,6 +50,9 @@ export interface TnV2AgentPayload {
   appointment_time: string; // h:mm am/pm
   appointment_alert_text: string;
   clinician_name: string;
+  // Async progress (TN agent posts phase events to callback_url, tagged with runId)
+  runId: string;
+  callback_url: string;
 }
 
 // Matches the TN agent's response schema

@@ -29,6 +29,7 @@ export type ActivityType =
   | "referral_uploaded"
   | "scheduled_appointment_set"
   | "tn_schedule_started"
+  | "tn_schedule_phase"
   | "tn_schedule_completed"
   | "tn_schedule_failed";
 
@@ -519,6 +520,11 @@ function formatActivitySummary(
 
     case "tn_schedule_started": {
       return `Add to Schedule in TN (Beta) initiated for ${name}`;
+    }
+
+    case "tn_schedule_phase": {
+      const msg = String(metadata.message || metadata.phase || "progress");
+      return `TN ${name}: ${msg}`;
     }
 
     case "tn_schedule_completed": {
