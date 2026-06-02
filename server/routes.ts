@@ -3362,7 +3362,11 @@ export async function registerRoutes(
   });
 
   // Update a CRM-managed provider
-  app.patch("/api/providers/:id", async (req, res) => {
+  // NOTE: :id is constrained to digits so the sibling "/api/providers/override"
+  // route (registered below) is not shadowed by this param matcher. Without the
+  // \d+ constraint, PATCH /api/providers/override binds id="override" here and
+  // returns 400 "Invalid provider ID" instead of reaching the override handler.
+  app.patch("/api/providers/:id(\\d+)", async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id) || id <= 0) {
