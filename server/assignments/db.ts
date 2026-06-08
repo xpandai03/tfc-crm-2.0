@@ -209,3 +209,30 @@ export async function getLatestAssignmentsWithDates(): Promise<
     assignedAt: new Date(row.assignedAt as string),
   }));
 }
+
+/**
+ * Count contacts whose CURRENT assignment points at the given provider.
+ * "Current" = the latest row per contact, the same DISTINCT ON (contact_id)
+ * ORDER BY assigned_at DESC definition used for effective accepting-count.
+ * There is no closed/active status column on assignments, so this latest-row
+ * notion is the established "currently assigned" definition.
+ *
+ * Name match is credential-insensitive: assignment provider_name may carry a
+ * ", Credential" suffix while crm_providers.name does not, so we compare the
+ * bare name (text before the first comma), trimmed and lowercased — mirroring
+ * the normalizeProviderName logic used in the providers read path.
+ */
+export async function countActiveAssignmentsForProvider(providerName: string): Promise<number> {
+  const pool = getPool();
+  const result = await pool.query(
+    `SELECT count(*)::int AS n FROM (
+       SELECT DISTINCT ON (contact_id) provider_name
+       FROM contact_provider_assignments
+       ORDER BY contact_id, assigned_at DESC
+     ) latest
+     WHERE lower(trim(split_part(latest.provider_name, ',', 1)))
+         = lower(trim(split_part($1, ',', 1)))`,
+    [providerName]
+  );
+  return (result.rows[0]?.n as number) ?? 0;
+}
