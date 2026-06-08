@@ -11,6 +11,7 @@ import {
   getCrmProviderById,
   createCrmProvider,
   updateCrmProvider,
+  deactivateCrmProvider,
   getAllProviderOverrides,
   getProviderOverride,
   upsertProviderOverride,
@@ -29,7 +30,7 @@ import {
 import { randomUUID } from "crypto";
 import type { TnAgentPayload, TnV2AgentPayload, TnAgentResponse } from "./therapy-notes";
 import { saveEmailSnapshot, getEmailSnapshot, getSnapshotsForContact, hasSnapshotForTemplate, getLatestSnapshotForTemplate } from "./email-snapshots";
-import { createAssignment, getAssignmentsByContact, deleteAssignment, getLatestAssignmentsByAllContacts, getLatestAssignmentsWithDates, getLatestAssignment } from "./assignments/db";
+import { createAssignment, getAssignmentsByContact, deleteAssignment, getLatestAssignmentsByAllContacts, getLatestAssignmentsWithDates, getLatestAssignment, countActiveAssignmentsForProvider } from "./assignments/db";
 import {
   syncContacts as syncContactsToDb,
   recordSyncError,
@@ -3477,6 +3478,55 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[providers] Error updating provider override:", error);
       return res.status(500).json({ error: "Failed to update provider" });
+    }
+  });
+
+  // Soft-delete (deactivate) a CRM-managed provider. Sets is_active=false so it
+  // disappears from all read paths (which already filter is_active=true) while
+  // preserving the row and all name-keyed history (assignments, overrides,
+  // availability, activity). This is NOT a hard delete and is reversible.
+  // :id is digit-constrained (mirrors the PATCH route) so it never shadows
+  // /api/providers/override. Warn-and-allow: we report the count of contacts
+  // currently assigned to this provider but never block on it.
+  app.delete("/api/providers/:id(\\d+)", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id) || id <= 0) {
+        return res.status(400).json({ error: "Invalid provider ID" });
+      }
+
+      const existing = await getCrmProviderById(id);
+      if (!existing) {
+        return res.status(404).json({ error: "CRM provider not found" });
+      }
+
+      // Surface (do not block on) how many contacts are currently pointed here.
+      const activeAssignments = await countActiveAssignmentsForProvider(existing.name);
+
+      const deactivated = await deactivateCrmProvider(id);
+
+      // Invalidate provider cache so the next /api/providers read omits it
+      providerDataCache = null;
+
+      if (deactivated) {
+        await logActivity({
+          type: "provider_deactivated",
+          actorEmail: (req as any).user?.email || "system",
+          entityType: "provider",
+          entityId: String(id),
+          entityName: existing.name,
+          metadata: {
+            providerId: id,
+            providerName: existing.name,
+            activeAssignments,
+          },
+        });
+      }
+
+      return res.json({ success: true, activeAssignments });
+    } catch (error) {
+      console.error("[providers] Error deactivating provider:", error);
+      return res.status(500).json({ error: "Failed to deactivate provider" });
     }
   });
 

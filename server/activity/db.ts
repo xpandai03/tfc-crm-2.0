@@ -21,6 +21,7 @@ export type ActivityType =
   | "contact_assigned"
   | "assignment_deleted"
   | "provider_updated"
+  | "provider_deactivated"
   | "provider_availability_submitted"
   | "email_sent"
   | "therapy_notes_started"
@@ -477,6 +478,14 @@ function formatActivitySummary(
         return `Updated provider ${name} (${fieldsUpdated.join(", ")})`;
       }
       return `Updated provider ${name}`;
+    }
+
+    case "provider_deactivated": {
+      const n = metadata.activeAssignments;
+      if (typeof n === "number" && n > 0) {
+        return `Deactivated provider ${name} (${n} active assignment${n === 1 ? "" : "s"} remained)`;
+      }
+      return `Deactivated provider ${name}`;
     }
 
     case "provider_availability_submitted": {

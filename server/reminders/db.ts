@@ -580,6 +580,25 @@ export async function updateCrmProvider(id: number, updates: Partial<CreateCrmPr
   return (result.rowCount ?? 0) > 0;
 }
 
+/**
+ * Soft-delete (deactivate) a CRM provider by flipping is_active to false.
+ * All read paths filter WHERE is_active = true, so the provider disappears
+ * from every list/picker while its row and all name-keyed history
+ * (assignments, overrides, availability, activity log) are preserved. This is
+ * NOT a hard delete — it is fully reversible by setting is_active back to true.
+ * Returns true if an active row was deactivated (false if already inactive or
+ * missing). Mirrors updateCrmProvider's WHERE ... AND is_active = true guard.
+ */
+export async function deactivateCrmProvider(id: number): Promise<boolean> {
+  const pool = getPool();
+  const result = await pool.query(
+    `UPDATE crm_providers SET is_active = false, updated_at = NOW() WHERE id = $1 AND is_active = true`,
+    [id]
+  );
+  console.log(`[crm-providers] Deactivated provider ${id}: ${result.rowCount} rows`);
+  return (result.rowCount ?? 0) > 0;
+}
+
 // ============================================================================
 // Provider Overrides (edits to spreadsheet providers)
 // ============================================================================

@@ -3,7 +3,17 @@ import { PageLayout } from "@/components/layout/page-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/page-loader";
-import { AlertCircle, AlertTriangle, MapPin, FileText, MessageSquare, Shield, Users, Plus, Pencil, Loader2, Check, X, Search } from "lucide-react";
+import { AlertCircle, AlertTriangle, MapPin, FileText, MessageSquare, Shield, Users, Plus, Pencil, Loader2, Check, X, Search, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -801,6 +811,8 @@ function ProviderFormModal({
   const [state, setState] = useState<EditFormState>(() => buildInitialState(null));
   const [isSaving, setIsSaving] = useState(false);
   const [insuranceSearch, setInsuranceSearch] = useState("");
+  const [confirmDeactivate, setConfirmDeactivate] = useState(false);
+  const [isDeactivating, setIsDeactivating] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const isEditing = !!editingProvider;
@@ -925,9 +937,42 @@ function ProviderFormModal({
     }
   };
 
+  // Soft-delete (deactivate) a CRM-managed provider. Gated to CRM rows only
+  // (same isCrmManaged && crmId gate as the edit→/:id path). Warn-and-allow:
+  // the confirm dialog warns that assigned patients stay name-pointed; the
+  // exact server-computed active-assignment count is surfaced in the result
+  // toast. Never blocks on assignments.
+  const handleDeactivate = async () => {
+    if (!isCrmManaged || !editingProvider?.crmId) return;
+    setIsDeactivating(true);
+    try {
+      const res = await apiRequest("DELETE", `/api/providers/${editingProvider.crmId}`);
+      const data = await res.json().catch(() => ({} as { activeAssignments?: number }));
+      const n = typeof data.activeAssignments === "number" ? data.activeAssignments : 0;
+      toast({
+        title: "Provider deactivated",
+        description: n > 0
+          ? `${n} active assignment${n === 1 ? "" : "s"} remain pointed at this provider's name — reassign as needed.`
+          : "Removed from provider lists. Reversible by an admin.",
+      });
+      setConfirmDeactivate(false);
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast({
+        title: "Failed to deactivate provider",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDeactivating(false);
+    }
+  };
+
   const selectedCount = state.selectedInsurances.size;
 
   return (
+    <>
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); else resetForm(); }}>
       <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
         <DialogHeader className="flex-shrink-0">
@@ -1036,15 +1081,58 @@ function ProviderFormModal({
           </div>
         </ScrollArea>
 
-        <div className="flex justify-end gap-2 pt-3 border-t flex-shrink-0">
-          <Button variant="outline" onClick={onClose} disabled={isSaving}>Cancel</Button>
-          <Button onClick={handleSave} disabled={isSaving}>
-            {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            {isEditing ? "Save Changes" : "Create Provider"}
-          </Button>
+        <div className="flex items-center justify-between gap-2 pt-3 border-t flex-shrink-0">
+          {/* Deactivate (soft-delete) — CRM-managed providers only, same gate
+              as the edit→/:id path. Roster providers show no control. */}
+          <div>
+            {isCrmManaged && editingProvider?.crmId && (
+              <Button
+                variant="ghost"
+                onClick={() => setConfirmDeactivate(true)}
+                disabled={isSaving || isDeactivating}
+                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Deactivate
+              </Button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose} disabled={isSaving || isDeactivating}>Cancel</Button>
+            <Button onClick={handleSave} disabled={isSaving || isDeactivating}>
+              {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {isEditing ? "Save Changes" : "Create Provider"}
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
+
+    <AlertDialog open={confirmDeactivate} onOpenChange={setConfirmDeactivate}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Deactivate {editingProvider?.name}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This removes the provider from all provider lists, pickers, and matching.
+            Any patients currently assigned will remain pointed at this provider's name
+            until reassigned. The record and its history are preserved and can be
+            reactivated by an admin. This is not a permanent delete.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={isDeactivating}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={(e) => { e.preventDefault(); handleDeactivate(); }}
+            disabled={isDeactivating}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          >
+            {isDeactivating && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            Deactivate
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }
 
