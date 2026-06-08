@@ -20,6 +20,8 @@ export {
   createCrmProvider,
   updateCrmProvider,
   deactivateCrmProvider,
+  reactivateCrmProvider,
+  getInactiveCrmProviders,
   getProviderOverride,
   getAllProviderOverrides,
   upsertProviderOverride,

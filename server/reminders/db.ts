@@ -123,6 +123,18 @@ export async function initRemindersTable(): Promise<void> {
     // Column already exists — ignore
   }
 
+  // Roster soft-delete: a suppressed roster provider is hidden from the
+  // provider list / pickers / matching feed (filtered in the GET merge by
+  // normalized name). Additive + idempotent — runs on every boot, no
+  // RUN_MIGRATIONS dependency. CRM-authoritative: survives the manual xlsx import.
+  try {
+    await pool.query(`ALTER TABLE provider_overrides ADD COLUMN IF NOT EXISTS suppressed BOOLEAN NOT NULL DEFAULT false`);
+    await pool.query(`ALTER TABLE provider_overrides ADD COLUMN IF NOT EXISTS suppressed_at TIMESTAMPTZ`);
+    console.log("[reminders-db] Ensured suppressed/suppressed_at columns on provider_overrides");
+  } catch {
+    // Columns already exist — ignore
+  }
+
   // Provider availability — populated by the standalone Fly.io provider
   // availability form (separate app). Single integer accepting_clients +
   // optional special_considerations free-text. Keyed by lowercased email.
@@ -599,6 +611,47 @@ export async function deactivateCrmProvider(id: number): Promise<boolean> {
   return (result.rowCount ?? 0) > 0;
 }
 
+/**
+ * Reactivate a soft-deleted CRM provider (is_active back to true). Inverse of
+ * deactivateCrmProvider. Returns true if an inactive row was reactivated.
+ */
+export async function reactivateCrmProvider(id: number): Promise<boolean> {
+  const pool = getPool();
+  const result = await pool.query(
+    `UPDATE crm_providers SET is_active = true, updated_at = NOW() WHERE id = $1 AND is_active = false`,
+    [id]
+  );
+  console.log(`[crm-providers] Reactivated provider ${id}: ${result.rowCount} rows`);
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * List soft-deleted (inactive) CRM providers, for the hidden-providers view.
+ */
+export async function getInactiveCrmProviders(): Promise<CrmProvider[]> {
+  const pool = getPool();
+  const result = await pool.query(`
+    SELECT id, name, credentials, location, specialties, age_groups, insurances, notes,
+           is_active, created_at, updated_at
+    FROM crm_providers
+    WHERE is_active = false
+    ORDER BY name ASC
+  `);
+  return result.rows.map((row: any) => ({
+    id: row.id,
+    name: row.name,
+    credentials: row.credentials,
+    location: row.location,
+    specialties: JSON.parse(row.specialties || "[]"),
+    ageGroups: JSON.parse(row.age_groups || "[]"),
+    insurances: JSON.parse(row.insurances || "[]"),
+    notes: row.notes,
+    isActive: row.is_active === true,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+}
+
 // ============================================================================
 // Provider Overrides (edits to spreadsheet providers)
 // ============================================================================
@@ -611,6 +664,8 @@ export interface ProviderOverride {
   populations: string[] | null;
   notes: string | null;
   ageGroups: Record<string, Record<string, string>> | null;
+  suppressed: boolean;
+  suppressedAt: string | null;
   updatedAt: string;
 }
 
@@ -621,13 +676,14 @@ export interface UpsertOverrideParams {
   populations?: string[];
   notes?: string;
   ageGroups?: Record<string, Record<string, string>>;
+  suppressed?: boolean;
 }
 
 export async function getProviderOverride(providerName: string): Promise<ProviderOverride | null> {
   const pool = getPool();
   const result = await pool.query(
     `
-    SELECT id, provider_name, specialties, insurances, populations, notes, age_groups, updated_at
+    SELECT id, provider_name, specialties, insurances, populations, notes, age_groups, suppressed, suppressed_at, updated_at
     FROM provider_overrides WHERE provider_name = $1
   `,
     [providerName]
@@ -643,6 +699,8 @@ export async function getProviderOverride(providerName: string): Promise<Provide
     populations: row.populations ? JSON.parse(row.populations) : null,
     notes: row.notes,
     ageGroups: row.age_groups ? JSON.parse(row.age_groups) : null,
+    suppressed: row.suppressed === true,
+    suppressedAt: row.suppressed_at ?? null,
     updatedAt: row.updated_at,
   };
 }
@@ -650,7 +708,7 @@ export async function getProviderOverride(providerName: string): Promise<Provide
 export async function getAllProviderOverrides(): Promise<ProviderOverride[]> {
   const pool = getPool();
   const result = await pool.query(`
-    SELECT id, provider_name, specialties, insurances, populations, notes, age_groups, updated_at
+    SELECT id, provider_name, specialties, insurances, populations, notes, age_groups, suppressed, suppressed_at, updated_at
     FROM provider_overrides ORDER BY provider_name ASC
   `);
 
@@ -662,6 +720,8 @@ export async function getAllProviderOverrides(): Promise<ProviderOverride[]> {
     populations: row.populations ? JSON.parse(row.populations) : null,
     notes: row.notes,
     ageGroups: row.age_groups ? JSON.parse(row.age_groups) : null,
+    suppressed: row.suppressed === true,
+    suppressedAt: row.suppressed_at ?? null,
     updatedAt: row.updated_at,
   }));
 }
@@ -688,6 +748,11 @@ export async function upsertProviderOverride(params: UpsertOverrideParams): Prom
       if (params.populations !== undefined) { setClauses.push(`populations = $${paramIndex++}`); values.push(JSON.stringify(params.populations)); }
       if (params.notes !== undefined) { setClauses.push(`notes = $${paramIndex++}`); values.push(params.notes); }
       if (params.ageGroups !== undefined) { setClauses.push(`age_groups = $${paramIndex++}`); values.push(JSON.stringify(params.ageGroups)); }
+      if (params.suppressed !== undefined) {
+        setClauses.push(`suppressed = $${paramIndex++}`); values.push(params.suppressed);
+        // suppressed_at literal is derived from a boolean — no injection risk.
+        setClauses.push(`suppressed_at = ${params.suppressed ? "NOW()" : "NULL"}`);
+      }
 
       if (setClauses.length === 0) {
         await client.query("ROLLBACK");
@@ -703,8 +768,8 @@ export async function upsertProviderOverride(params: UpsertOverrideParams): Prom
     } else {
       await client.query(
         `
-        INSERT INTO provider_overrides (provider_name, specialties, insurances, populations, notes, age_groups)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO provider_overrides (provider_name, specialties, insurances, populations, notes, age_groups, suppressed, suppressed_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, ${params.suppressed === true ? "NOW()" : "NULL"})
       `,
         [
           params.providerName,
@@ -713,6 +778,7 @@ export async function upsertProviderOverride(params: UpsertOverrideParams): Prom
           params.populations ? JSON.stringify(params.populations) : null,
           params.notes !== undefined ? params.notes : null,
           params.ageGroups ? JSON.stringify(params.ageGroups) : null,
+          params.suppressed === true,
         ]
       );
     }
