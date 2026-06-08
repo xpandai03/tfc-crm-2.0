@@ -937,30 +937,33 @@ function ProviderFormModal({
     }
   };
 
-  // Soft-delete (deactivate) a CRM-managed provider. Gated to CRM rows only
-  // (same isCrmManaged && crmId gate as the edit→/:id path). Warn-and-allow:
-  // the confirm dialog warns that assigned patients stay name-pointed; the
-  // exact server-computed active-assignment count is surfaced in the result
-  // toast. Never blocks on assignments.
-  const handleDeactivate = async () => {
-    if (!isCrmManaged || !editingProvider?.crmId) return;
+  // Remove a provider — type-aware. CRM-managed rows soft-delete via
+  // DELETE /api/providers/:crmId (is_active=false); roster/spreadsheet providers
+  // suppress via POST /api/providers/override/suppress (name-keyed). Both are
+  // reversible from the Hidden providers view. Warn-and-allow: the dialog warns
+  // that assigned patients stay name-pointed; the exact server-computed
+  // active-assignment count is surfaced in the result toast. Never blocks.
+  const handleRemove = async () => {
+    if (!isEditing || !editingProvider) return;
     setIsDeactivating(true);
     try {
-      const res = await apiRequest("DELETE", `/api/providers/${editingProvider.crmId}`);
+      const res = (isCrmManaged && editingProvider.crmId)
+        ? await apiRequest("DELETE", `/api/providers/${editingProvider.crmId}`)
+        : await apiRequest("POST", "/api/providers/override/suppress", { providerName: editingProvider.name });
       const data = await res.json().catch(() => ({} as { activeAssignments?: number }));
       const n = typeof data.activeAssignments === "number" ? data.activeAssignments : 0;
       toast({
-        title: "Provider deactivated",
+        title: "Provider removed",
         description: n > 0
           ? `${n} active assignment${n === 1 ? "" : "s"} remain pointed at this provider's name — reassign as needed.`
-          : "Removed from provider lists. Reversible by an admin.",
+          : "Removed from provider lists and matching. Reversible from Hidden providers.",
       });
       setConfirmDeactivate(false);
       onSaved();
       onClose();
     } catch (err) {
       toast({
-        title: "Failed to deactivate provider",
+        title: "Failed to remove provider",
         description: err instanceof Error ? err.message : "Unknown error",
         variant: "destructive",
       });
@@ -1082,10 +1085,10 @@ function ProviderFormModal({
         </ScrollArea>
 
         <div className="flex items-center justify-between gap-2 pt-3 border-t flex-shrink-0">
-          {/* Deactivate (soft-delete) — CRM-managed providers only, same gate
-              as the edit→/:id path. Roster providers show no control. */}
+          {/* Remove — shown for ANY provider being edited. CRM rows soft-delete;
+              roster rows suppress (name-keyed). Both reversible from Hidden view. */}
           <div>
-            {isCrmManaged && editingProvider?.crmId && (
+            {isEditing && editingProvider && (
               <Button
                 variant="ghost"
                 onClick={() => setConfirmDeactivate(true)}
@@ -1093,7 +1096,7 @@ function ProviderFormModal({
                 className="text-destructive hover:text-destructive hover:bg-destructive/10"
               >
                 <Trash2 className="h-4 w-4 mr-2" />
-                Deactivate
+                Remove
               </Button>
             )}
           </div>
@@ -1111,28 +1114,127 @@ function ProviderFormModal({
     <AlertDialog open={confirmDeactivate} onOpenChange={setConfirmDeactivate}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Deactivate {editingProvider?.name}?</AlertDialogTitle>
+          <AlertDialogTitle>Remove {editingProvider?.name}?</AlertDialogTitle>
           <AlertDialogDescription>
             This removes the provider from all provider lists, pickers, and matching.
             Any patients currently assigned will remain pointed at this provider's name
-            until reassigned. The record and its history are preserved and can be
-            reactivated by an admin. This is not a permanent delete.
+            until reassigned. The record and its history are preserved — you can restore
+            them from the Hidden providers view. Removal persists across the monthly
+            spreadsheet import. This is not a permanent delete.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isDeactivating}>Cancel</AlertDialogCancel>
           <AlertDialogAction
-            onClick={(e) => { e.preventDefault(); handleDeactivate(); }}
+            onClick={(e) => { e.preventDefault(); handleRemove(); }}
             disabled={isDeactivating}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
             {isDeactivating && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            Deactivate
+            Remove
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
     </>
+  );
+}
+
+/**
+ * Hidden providers view — lists removed providers (CRM is_active=false +
+ * roster suppressed=true) with one-click reactivate for each type.
+ */
+function HiddenProvidersDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const { data, isLoading } = useQuery<{
+    crmInactive: { crmId: number; name: string; credentials?: string; location?: string }[];
+    suppressedRoster: { providerName: string; suppressedAt: string | null }[];
+  }>({
+    queryKey: ["/api/providers/hidden"],
+    queryFn: async () => {
+      const r = await fetch("/api/providers/hidden");
+      if (!r.ok) throw new Error(`Failed to load hidden providers: ${r.status}`);
+      return r.json();
+    },
+    enabled: open,
+  });
+
+  const reactivate = async (key: string, call: () => Promise<Response>, name: string) => {
+    setBusy(key);
+    try {
+      await call();
+      toast({ title: "Provider reactivated", description: `${name} is back in provider lists and matching.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/providers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/providers/hidden"] });
+    } catch (err) {
+      toast({ title: "Failed to reactivate", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const crmInactive = data?.crmInactive ?? [];
+  const suppressedRoster = data?.suppressedRoster ?? [];
+  const total = crmInactive.length + suppressedRoster.length;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg max-h-[80vh] flex flex-col">
+        <DialogHeader className="flex-shrink-0">
+          <DialogTitle>Hidden providers{total > 0 ? ` (${total})` : ""}</DialogTitle>
+        </DialogHeader>
+        <ScrollArea className="flex-1 -mx-6 px-6">
+          {isLoading ? (
+            <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+          ) : total === 0 ? (
+            <p className="text-sm text-muted-foreground py-10 text-center">No hidden providers.</p>
+          ) : (
+            <div className="space-y-2 py-2">
+              {crmInactive.map((p) => (
+                <div key={`crm-${p.crmId}`} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium">{p.name}</p>
+                    <p className="text-xs text-muted-foreground">CRM-managed{p.location ? ` · ${p.location}` : ""}</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy === `crm-${p.crmId}`}
+                    onClick={() => reactivate(`crm-${p.crmId}`, () => apiRequest("POST", `/api/providers/${p.crmId}/reactivate`), p.name)}
+                  >
+                    {busy === `crm-${p.crmId}` && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+                    Reactivate
+                  </Button>
+                </div>
+              ))}
+              {suppressedRoster.map((p) => (
+                <div key={`roster-${p.providerName}`} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium">{p.providerName}</p>
+                    <p className="text-xs text-muted-foreground">Roster (spreadsheet)</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy === `roster-${p.providerName}`}
+                    onClick={() => reactivate(`roster-${p.providerName}`, () => apiRequest("POST", "/api/providers/override/unsuppress", { providerName: p.providerName }), p.providerName)}
+                  >
+                    {busy === `roster-${p.providerName}` && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+                    Reactivate
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </ScrollArea>
+        <div className="flex justify-end pt-3 border-t flex-shrink-0">
+          <Button variant="outline" onClick={onClose}>Close</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1150,6 +1252,7 @@ export default function Providers() {
   const [selectedProvider, setSelectedProvider] = useState<ProviderWithInsurance | null>(null);
   const [showProviderForm, setShowProviderForm] = useState(false);
   const [editingProvider, setEditingProvider] = useState<any>(null);
+  const [showHidden, setShowHidden] = useState(false);
 
   const {
     data,
@@ -1227,6 +1330,14 @@ export default function Providers() {
             </p>
           </div>
           <div className="flex items-center gap-3">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowHidden(true)}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Hidden providers
+            </Button>
             <Button
               size="sm"
               onClick={() => { setEditingProvider(null); setShowProviderForm(true); }}
@@ -1307,6 +1418,9 @@ export default function Providers() {
           queryClient.invalidateQueries({ queryKey: ["/api/providers"] });
         }}
       />
+
+      {/* Hidden providers (removed CRM + suppressed roster) */}
+      <HiddenProvidersDialog open={showHidden} onClose={() => setShowHidden(false)} />
     </PageLayout>
   );
 }

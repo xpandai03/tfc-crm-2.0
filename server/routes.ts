@@ -12,6 +12,8 @@ import {
   createCrmProvider,
   updateCrmProvider,
   deactivateCrmProvider,
+  reactivateCrmProvider,
+  getInactiveCrmProviders,
   getAllProviderOverrides,
   getProviderOverride,
   upsertProviderOverride,
@@ -31,6 +33,7 @@ import { randomUUID } from "crypto";
 import type { TnAgentPayload, TnV2AgentPayload, TnAgentResponse } from "./therapy-notes";
 import { saveEmailSnapshot, getEmailSnapshot, getSnapshotsForContact, hasSnapshotForTemplate, getLatestSnapshotForTemplate } from "./email-snapshots";
 import { createAssignment, getAssignmentsByContact, deleteAssignment, getLatestAssignmentsByAllContacts, getLatestAssignmentsWithDates, getLatestAssignment, countActiveAssignmentsForProvider } from "./assignments/db";
+import { normalizeProviderName } from "./providers/normalize-name";
 import {
   syncContacts as syncContactsToDb,
   recordSyncError,
@@ -3151,13 +3154,35 @@ export async function registerRoutes(
         console.warn(`[providers] Skill-cell parser warnings (${warnings.length}):\n${lines}`);
       }
 
-      // Apply CRM overrides to spreadsheet providers
+      // Apply CRM overrides to spreadsheet providers.
+      // Join key: exact provider_name first (100% backward-compatible — any
+      // override that matched before still matches), then a normalized-name
+      // fallback (normalizeProviderName) so a spreadsheet rename that only adds
+      // a ", Credential" / changes case / collapses whitespace still applies the
+      // CRM edit instead of silently dropping it. Roster providers whose override
+      // has suppressed=true are collected into suppressedNormalizedNames and
+      // filtered out of the final list below (CRM-authoritative removal that
+      // survives the manual spreadsheet import).
+      const suppressedNormalizedNames = new Set<string>();
       try {
         const overrides = await getAllProviderOverrides();
-        const overrideMap = new Map(overrides.map(o => [o.providerName, o]));
+        const exactOverrideMap = new Map(overrides.map(o => [o.providerName, o]));
+        const normalizedOverrideMap = new Map<string, typeof overrides[number]>();
+        for (const o of overrides) {
+          const key = normalizeProviderName(o.providerName);
+          if (normalizedOverrideMap.has(key)) {
+            // Two distinct override rows normalize to the same key — do NOT
+            // silently merge distinct people; keep the first for the fallback
+            // and warn. Exact matches are unaffected (checked first below).
+            console.warn(`[providers] Override normalized-name collision on "${key}" ("${normalizedOverrideMap.get(key)!.providerName}" vs "${o.providerName}") — keeping first for fallback`);
+          } else {
+            normalizedOverrideMap.set(key, o);
+          }
+          if (o.suppressed === true) suppressedNormalizedNames.add(key);
+        }
         for (const p of providers) {
           const prov = p as any;
-          const override = overrideMap.get(prov.name);
+          const override = exactOverrideMap.get(prov.name) ?? normalizedOverrideMap.get(normalizeProviderName(prov.name));
           if (override) {
             prov._hasOverrides = true;
             if (override.specialties) prov._overrideSpecialties = override.specialties;
@@ -3252,8 +3277,6 @@ export async function registerRoutes(
         // trailing ", Credential", trim, lowercase, collapse whitespace),
         // since contact_provider_assignments has no provider_email column.
         const latestAssignments = await getLatestAssignmentsWithDates();
-        const normalizeProviderName = (n: string): string =>
-          (n || "").split(",")[0].trim().toLowerCase().replace(/\s+/g, " ");
 
         let mergedCount = 0;
         for (const p of providers) {
@@ -3297,15 +3320,32 @@ export async function registerRoutes(
         console.warn("[providers] Failed to load provider availability:", e);
       }
 
+      // Remove roster providers the CRM has suppressed (soft-delete for
+      // spreadsheet-sourced providers). Matches by normalized name and only
+      // affects roster rows — CRM-managed rows are already filtered by is_active
+      // in getAllCrmProviders. This is what makes a roster removal survive the
+      // manual spreadsheet import: the xlsx re-adds them, but the suppression
+      // (persisted in provider_overrides) re-hides them on every read.
+      const visibleProviders = suppressedNormalizedNames.size === 0
+        ? providers
+        : providers.filter((p) => {
+            const prov = p as any;
+            if (prov._crmManaged) return true; // CRM rows handled via is_active
+            return !suppressedNormalizedNames.has(normalizeProviderName(prov.name || ""));
+          });
+      if (visibleProviders.length !== providers.length) {
+        console.log(`[providers] Suppressed ${providers.length - visibleProviders.length} roster provider(s) from list/matching`);
+      }
+
       // Update cache
       providerDataCache = {
-        providers,
+        providers: visibleProviders,
         timestamp: Date.now(),
         lastModified: new Date().toISOString(),
       };
 
       return res.json({
-        providers,
+        providers: visibleProviders,
         _source: "spreadsheet",
         lastModified: providerDataCache.lastModified,
       });
@@ -3527,6 +3567,117 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[providers] Error deactivating provider:", error);
       return res.status(500).json({ error: "Failed to deactivate provider" });
+    }
+  });
+
+  // Suppress (soft-delete) a ROSTER/spreadsheet provider. Persists suppressed=true
+  // on provider_overrides (keyed by name); the GET merge re-hides them on every
+  // read by normalized name, so the removal survives the manual spreadsheet
+  // import (CRM-authoritative). Warn-and-allow: returns the active-assignment
+  // count, never blocks. Static path — not shadowed by /:id(\d+).
+  app.post("/api/providers/override/suppress", async (req, res) => {
+    try {
+      const { providerName } = req.body;
+      if (!providerName || typeof providerName !== "string" || providerName.trim() === "") {
+        return res.status(400).json({ error: "providerName is required" });
+      }
+      const name = providerName.trim();
+      const activeAssignments = await countActiveAssignmentsForProvider(name);
+      await upsertProviderOverride({ providerName: name, suppressed: true });
+      providerDataCache = null;
+      await logActivity({
+        type: "provider_suppressed",
+        actorEmail: (req as any).user?.email || "system",
+        entityType: "provider",
+        entityId: name,
+        entityName: name,
+        metadata: { providerName: name, activeAssignments },
+      });
+      return res.json({ success: true, activeAssignments });
+    } catch (error) {
+      console.error("[providers] Error suppressing roster provider:", error);
+      return res.status(500).json({ error: "Failed to remove provider" });
+    }
+  });
+
+  // Un-suppress (reactivate) a roster provider — inverse of the above.
+  app.post("/api/providers/override/unsuppress", async (req, res) => {
+    try {
+      const { providerName } = req.body;
+      if (!providerName || typeof providerName !== "string" || providerName.trim() === "") {
+        return res.status(400).json({ error: "providerName is required" });
+      }
+      const name = providerName.trim();
+      await upsertProviderOverride({ providerName: name, suppressed: false });
+      providerDataCache = null;
+      await logActivity({
+        type: "provider_reactivated",
+        actorEmail: (req as any).user?.email || "system",
+        entityType: "provider",
+        entityId: name,
+        entityName: name,
+        metadata: { providerName: name, kind: "roster" },
+      });
+      return res.json({ success: true });
+    } catch (error) {
+      console.error("[providers] Error reactivating roster provider:", error);
+      return res.status(500).json({ error: "Failed to reactivate provider" });
+    }
+  });
+
+  // Reactivate a soft-deleted CRM provider (is_active back to true). Digit-
+  // constrained id, mirrors the DELETE deactivate route.
+  app.post("/api/providers/:id(\\d+)/reactivate", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id) || id <= 0) {
+        return res.status(400).json({ error: "Invalid provider ID" });
+      }
+      const existing = await getCrmProviderById(id);
+      if (!existing) {
+        return res.status(404).json({ error: "CRM provider not found" });
+      }
+      const reactivated = await reactivateCrmProvider(id);
+      providerDataCache = null;
+      if (reactivated) {
+        await logActivity({
+          type: "provider_reactivated",
+          actorEmail: (req as any).user?.email || "system",
+          entityType: "provider",
+          entityId: String(id),
+          entityName: existing.name,
+          metadata: { providerId: id, providerName: existing.name, kind: "crm" },
+        });
+      }
+      return res.json({ success: true, reactivated });
+    } catch (error) {
+      console.error("[providers] Error reactivating provider:", error);
+      return res.status(500).json({ error: "Failed to reactivate provider" });
+    }
+  });
+
+  // Hidden-providers view: CRM rows with is_active=false + roster providers with
+  // a suppressed override. Static path — not shadowed by /:id(\d+).
+  app.get("/api/providers/hidden", async (_req, res) => {
+    try {
+      const [crmInactiveRows, overrides] = await Promise.all([
+        getInactiveCrmProviders(),
+        getAllProviderOverrides(),
+      ]);
+      const crmInactive = crmInactiveRows.map((p) => ({
+        crmId: p.id,
+        name: p.name,
+        credentials: p.credentials,
+        location: p.location,
+        updatedAt: p.updatedAt,
+      }));
+      const suppressedRoster = overrides
+        .filter((o) => o.suppressed === true)
+        .map((o) => ({ providerName: o.providerName, suppressedAt: o.suppressedAt }));
+      return res.json({ crmInactive, suppressedRoster });
+    } catch (error) {
+      console.error("[providers] Error listing hidden providers:", error);
+      return res.status(500).json({ error: "Failed to list hidden providers" });
     }
   });
 

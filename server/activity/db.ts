@@ -22,6 +22,8 @@ export type ActivityType =
   | "assignment_deleted"
   | "provider_updated"
   | "provider_deactivated"
+  | "provider_suppressed"
+  | "provider_reactivated"
   | "provider_availability_submitted"
   | "email_sent"
   | "therapy_notes_started"
@@ -486,6 +488,18 @@ function formatActivitySummary(
         return `Deactivated provider ${name} (${n} active assignment${n === 1 ? "" : "s"} remained)`;
       }
       return `Deactivated provider ${name}`;
+    }
+
+    case "provider_suppressed": {
+      const n = metadata.activeAssignments;
+      if (typeof n === "number" && n > 0) {
+        return `Removed roster provider ${name} (${n} active assignment${n === 1 ? "" : "s"} remained)`;
+      }
+      return `Removed roster provider ${name}`;
+    }
+
+    case "provider_reactivated": {
+      return `Reactivated provider ${name}`;
     }
 
     case "provider_availability_submitted": {
