@@ -886,7 +886,9 @@ function ProviderFormModal({
             credentials: state.credentials.trim(),
             location: state.location.trim(),
             specialties: uniqueSpecs,
-            ageGroups: [],
+            // Send the real per-skill matrix (x / x-Slow), mirroring the roster
+            // /override branch — was [] which dropped skill levels on save.
+            ageGroups: ageGroupsPayload,
             insurances: insurancesArr,
             notes: state.notes.trim(),
           });
@@ -917,7 +919,8 @@ function ProviderFormModal({
           credentials: state.credentials.trim(),
           location: state.location.trim(),
           specialties: uniqueSpecs,
-          ageGroups: [],
+          // Persist the real per-skill matrix on create too (was []).
+          ageGroups: ageGroupsPayload,
           insurances: insurancesArr,
           notes: state.notes.trim(),
         });
