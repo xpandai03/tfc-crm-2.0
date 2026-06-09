@@ -130,6 +130,19 @@ export async function initRemindersTable(): Promise<void> {
     console.error("[reminders-db] crm_providers.is_active type conversion FAILED:", e);
   }
 
+  // Phase 1 (provider unification): add email as the universal join key, with a
+  // case-insensitive UNIQUE index that doubles as the duplicate-from-retries
+  // guard. Partial (WHERE email IS NOT NULL) so existing/blank-email rows don't
+  // collide. Additive + idempotent — runs on boot, no RUN_MIGRATIONS dependency.
+  // Nothing READS this column yet (Phase 1 only captures it).
+  try {
+    await pool.query(`ALTER TABLE crm_providers ADD COLUMN IF NOT EXISTS email TEXT`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS crm_providers_email_lower_uniq ON crm_providers (lower(email)) WHERE email IS NOT NULL`);
+    console.log("[reminders-db] Ensured crm_providers.email column + case-insensitive partial-unique index");
+  } catch (e) {
+    console.error("[reminders-db] crm_providers.email column/index migration FAILED:", e);
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS provider_overrides (
       id SERIAL PRIMARY KEY,
@@ -497,6 +510,7 @@ export interface CrmProvider {
   name: string;
   credentials: string;
   location: string;
+  email: string | null;    // Phase 1: universal join key (UNIQUE on lower(email)). NULL = not captured yet.
   specialties: string[];   // stored as JSON array
   ageGroups: string[];     // stored as JSON array
   insurances: string[];    // stored as JSON array
@@ -510,16 +524,24 @@ export interface CreateCrmProviderParams {
   name: string;
   credentials?: string;
   location?: string;
+  email?: string;
   specialties?: string[];
   ageGroups?: string[];
   insurances?: string[];
   notes?: string;
 }
 
+// Normalize an email input for storage: trim; empty/whitespace -> NULL so a
+// blank email never collides under the partial-unique index or stores "".
+function normalizeEmailForStorage(email: string | undefined | null): string | null {
+  const v = (email ?? "").trim();
+  return v === "" ? null : v;
+}
+
 export async function getAllCrmProviders(): Promise<CrmProvider[]> {
   const pool = getPool();
   const result = await pool.query(`
-    SELECT id, name, credentials, location, specialties, age_groups, insurances, notes,
+    SELECT id, name, credentials, location, email, specialties, age_groups, insurances, notes,
            is_active, created_at, updated_at
     FROM crm_providers
     WHERE is_active = true
@@ -531,6 +553,7 @@ export async function getAllCrmProviders(): Promise<CrmProvider[]> {
     name: row.name,
     credentials: row.credentials,
     location: row.location,
+    email: row.email ?? null,
     specialties: JSON.parse(row.specialties || "[]"),
     ageGroups: JSON.parse(row.age_groups || "[]"),
     insurances: JSON.parse(row.insurances || "[]"),
@@ -545,7 +568,7 @@ export async function getCrmProviderById(id: number): Promise<CrmProvider | null
   const pool = getPool();
   const result = await pool.query(
     `
-    SELECT id, name, credentials, location, specialties, age_groups, insurances, notes,
+    SELECT id, name, credentials, location, email, specialties, age_groups, insurances, notes,
            is_active, created_at, updated_at
     FROM crm_providers WHERE id = $1
   `,
@@ -559,6 +582,7 @@ export async function getCrmProviderById(id: number): Promise<CrmProvider | null
     name: row.name,
     credentials: row.credentials,
     location: row.location,
+    email: row.email ?? null,
     specialties: JSON.parse(row.specialties || "[]"),
     ageGroups: JSON.parse(row.age_groups || "[]"),
     insurances: JSON.parse(row.insurances || "[]"),
@@ -573,14 +597,15 @@ export async function createCrmProvider(params: CreateCrmProviderParams): Promis
   const pool = getPool();
   const result = await pool.query(
     `
-    INSERT INTO crm_providers (name, credentials, location, specialties, age_groups, insurances, notes)
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    INSERT INTO crm_providers (name, credentials, location, email, specialties, age_groups, insurances, notes)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     RETURNING id
   `,
     [
       params.name.trim(),
       params.credentials?.trim() || "",
       params.location?.trim() || "",
+      normalizeEmailForStorage(params.email),
       JSON.stringify(params.specialties || []),
       JSON.stringify(params.ageGroups || []),
       JSON.stringify(params.insurances || []),
@@ -601,6 +626,7 @@ export async function updateCrmProvider(id: number, updates: Partial<CreateCrmPr
   if (updates.name !== undefined) { setClauses.push(`name = $${paramIndex++}`); values.push(updates.name.trim()); }
   if (updates.credentials !== undefined) { setClauses.push(`credentials = $${paramIndex++}`); values.push(updates.credentials.trim()); }
   if (updates.location !== undefined) { setClauses.push(`location = $${paramIndex++}`); values.push(updates.location.trim()); }
+  if (updates.email !== undefined) { setClauses.push(`email = $${paramIndex++}`); values.push(normalizeEmailForStorage(updates.email)); }
   if (updates.specialties !== undefined) { setClauses.push(`specialties = $${paramIndex++}`); values.push(JSON.stringify(updates.specialties)); }
   if (updates.ageGroups !== undefined) { setClauses.push(`age_groups = $${paramIndex++}`); values.push(JSON.stringify(updates.ageGroups)); }
   if (updates.insurances !== undefined) { setClauses.push(`insurances = $${paramIndex++}`); values.push(JSON.stringify(updates.insurances)); }
@@ -659,7 +685,7 @@ export async function reactivateCrmProvider(id: number): Promise<boolean> {
 export async function getInactiveCrmProviders(): Promise<CrmProvider[]> {
   const pool = getPool();
   const result = await pool.query(`
-    SELECT id, name, credentials, location, specialties, age_groups, insurances, notes,
+    SELECT id, name, credentials, location, email, specialties, age_groups, insurances, notes,
            is_active, created_at, updated_at
     FROM crm_providers
     WHERE is_active = false
@@ -670,6 +696,7 @@ export async function getInactiveCrmProviders(): Promise<CrmProvider[]> {
     name: row.name,
     credentials: row.credentials,
     location: row.location,
+    email: row.email ?? null,
     specialties: JSON.parse(row.specialties || "[]"),
     ageGroups: JSON.parse(row.age_groups || "[]"),
     insurances: JSON.parse(row.insurances || "[]"),
