@@ -3225,20 +3225,43 @@ export async function registerRoutes(
       try {
         const crmProviders = await getAllCrmProviders();
         for (const cp of crmProviders) {
+          // Fix B(2): parse the stored crm_providers.age_groups matrix
+          // (Record<group, Record<skill, "x" | "x - Slow">>) back into the
+          // card's SkillEntry structure, mirroring the roster-override block
+          // above. Legacy rows store "[]" (an array) -> parsed to an empty
+          // matrix, so nothing breaks for providers saved before this fix.
+          const crmAgeGroups: Record<string, Record<string, SkillEntry>> = {
+            "Adults (18+)": {},
+            "Adolescents (12-17)": {},
+            "Children (6-11)": {},
+            "Children (0-5)": {},
+          };
+          const storedAgeGroups = cp.ageGroups as unknown;
+          if (storedAgeGroups && typeof storedAgeGroups === "object" && !Array.isArray(storedAgeGroups)) {
+            for (const [group, caps] of Object.entries(storedAgeGroups as Record<string, Record<string, string>>)) {
+              if (!crmAgeGroups[group]) continue;
+              for (const [skill, val] of Object.entries(caps)) {
+                if (typeof val === "string" && val.trim() !== "") {
+                  crmAgeGroups[group][skill] = parseSkillCell(val, { row: -1, providerName: cp.name, group, skill });
+                }
+              }
+            }
+          }
           providers.push({
             id: 10000 + cp.id, // offset to avoid ID collisions with spreadsheet
             nameWithCredentials: cp.credentials ? `${cp.name}, ${cp.credentials}` : cp.name,
             name: cp.name,
             credentials: cp.credentials,
             location: cp.location,
-            ageGroups: {
-              "Adults (18+)": {},
-              "Adolescents (12-17)": {},
-              "Children (6-11)": {},
-              "Children (0-5)": {},
-            },
+            ageGroups: crmAgeGroups,
             notes: cp.notes,
             acceptedInsurances: cp.insurances.join(", "),
+            // Fix A: populate the array fields the card render
+            // (overrideInsurances) and the edit modal (buildInitialState reads
+            // _overrideInsurances || provider.insurances) actually read, so
+            // CRM insurances display as badges and re-check in the modal.
+            insurances: cp.insurances,
+            _overrideInsurances: cp.insurances,
             _crmManaged: true,
             crmId: cp.id,
             specialties: cp.specialties,
