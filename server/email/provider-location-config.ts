@@ -54,7 +54,7 @@ export const PROVIDER_LIST: ProviderEntry[] = [
   { name: "Kristi Simmons", credential: "Intern", email: "ksimmons@tfc.health" },
   { name: "Renee Singletary", credential: "LMSW", email: "renee@tfc.health" },
   { name: "Angelica Villicana", credential: "LCSW", email: "angelica@tfc.health" },
-  { name: "Ginger Rippey", credential: "", email: "GRippey@tfc.health" },
+  { name: "Ginger Rippey", credential: "LMHC", email: "GRippey@tfc.health" },
 ];
 
 // Derived email map for CC resolution (case-insensitive)
