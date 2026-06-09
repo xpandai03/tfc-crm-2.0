@@ -3249,7 +3249,10 @@ export async function registerRoutes(
           console.log("[providers] Merged", crmProviders.length, "CRM providers");
         }
       } catch (e) {
-        console.warn("[providers] Failed to load CRM providers:", e);
+        // Loud on purpose: a failure here silently drops ALL CRM-managed
+        // providers from the list (created rows appear to vanish). This class
+        // hid a column-type drift for weeks — keep it at error level.
+        console.error("[providers] Failed to load CRM providers (CRM providers will be MISSING from this response):", e);
       }
 
       // Merge self-reported availability (provider_availability table).

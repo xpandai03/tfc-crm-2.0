@@ -102,6 +102,34 @@ export async function initRemindersTable(): Promise<void> {
     )
   `);
 
+  // Type-drift fix: crm_providers.is_active came across as INTEGER during the
+  // SQLite->Postgres migration (b8913bf) even though the DDL declares BOOLEAN.
+  // As a result `WHERE is_active = true` threw "operator does not exist:
+  // integer = boolean" on every getAllCrmProviders() call, which the CRM-merge
+  // try/catch swallowed — so CRM-managed providers silently never appeared in
+  // GET /api/providers (created rows persisted but were invisible).
+  //
+  // Convert the column to BOOLEAN. GUARDED: ALTER ... TYPE is not self-
+  // idempotent, so we only run it while the column is still integer; once
+  // converted this whole block is a no-op on subsequent boots. Wrapped in its
+  // own try/catch so a failure here can't abort the rest of table init.
+  // 0/1 convert cleanly to false/true via (is_active <> 0).
+  try {
+    const { rows } = await pool.query(
+      `SELECT data_type FROM information_schema.columns
+       WHERE table_name = 'crm_providers' AND column_name = 'is_active'`
+    );
+    if (rows[0] && rows[0].data_type === "integer") {
+      await pool.query(`ALTER TABLE crm_providers ALTER COLUMN is_active DROP DEFAULT`);
+      await pool.query(`ALTER TABLE crm_providers ALTER COLUMN is_active TYPE boolean USING (is_active <> 0)`);
+      await pool.query(`ALTER TABLE crm_providers ALTER COLUMN is_active SET DEFAULT true`);
+      await pool.query(`ALTER TABLE crm_providers ALTER COLUMN is_active SET NOT NULL`);
+      console.log("[reminders-db] Converted crm_providers.is_active INTEGER -> BOOLEAN");
+    }
+  } catch (e) {
+    console.error("[reminders-db] crm_providers.is_active type conversion FAILED:", e);
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS provider_overrides (
       id SERIAL PRIMARY KEY,
