@@ -81,6 +81,7 @@ interface Provider {
   // CRM-managed provider fields
   _crmManaged?: boolean;
   crmId?: number;
+  email?: string | null;
   specialties?: string[];
   crmAgeGroups?: string[];
   insurances?: string[];
@@ -735,6 +736,7 @@ interface EditFormState {
   name: string;
   credentials: string;
   location: string;
+  email: string;
   // Age-group capabilities: { "Adults (18+)": { "Anxiety": "x", "Trauma": "x - Slow" }, ... }
   ageGroupCaps: Record<string, Record<string, CapState>>;
   // Selected insurance names
@@ -751,7 +753,7 @@ function buildInitialState(provider: Provider | null): EditFormState {
       ageGroupCaps[group] = {};
       for (const s of specs) ageGroupCaps[group][s] = "";
     }
-    return { name: "", credentials: "", location: "", ageGroupCaps, selectedInsurances: new Set(), notes: "" };
+    return { name: "", credentials: "", location: "", email: "", ageGroupCaps, selectedInsurances: new Set(), notes: "" };
   }
 
   // Build caps from provider's existing ageGroups data. The API now returns
@@ -790,6 +792,7 @@ function buildInitialState(provider: Provider | null): EditFormState {
     name: provider.name,
     credentials: provider.credentials || "",
     location: provider.location || "",
+    email: provider.email || "",
     ageGroupCaps,
     selectedInsurances: insuranceSet,
     notes,
@@ -885,6 +888,7 @@ function ProviderFormModal({
             name: state.name.trim(),
             credentials: state.credentials.trim(),
             location: state.location.trim(),
+            email: state.email.trim(),
             specialties: uniqueSpecs,
             // Send the real per-skill matrix (x / x-Slow), mirroring the roster
             // /override branch — was [] which dropped skill levels on save.
@@ -918,6 +922,7 @@ function ProviderFormModal({
           name: state.name.trim(),
           credentials: state.credentials.trim(),
           location: state.location.trim(),
+          email: state.email.trim(),
           specialties: uniqueSpecs,
           // Persist the real per-skill matrix on create too (was []).
           ageGroups: ageGroupsPayload,
@@ -1016,6 +1021,21 @@ function ProviderFormModal({
                   </div>
                 </div>
               </>
+            )}
+
+            {/* Email — CRM providers only (create or CRM edit); the future
+                universal join key. Optional for now; must be unique. */}
+            {(isCrmManaged || (!isEditing && !isSpreadsheetEdit)) && (
+              <div>
+                <Label className="text-xs">Email</Label>
+                <Input
+                  type="email"
+                  value={state.email}
+                  onChange={(e) => setState(p => ({ ...p, email: e.target.value }))}
+                  placeholder="provider@tfc.health"
+                />
+                <p className="text-[11px] text-muted-foreground mt-1">Provider's unique email key. Optional for now.</p>
+              </div>
             )}
 
             {/* Age Group Specialty Sections */}

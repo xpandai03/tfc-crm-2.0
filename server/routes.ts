@@ -3253,6 +3253,7 @@ export async function registerRoutes(
             name: cp.name,
             credentials: cp.credentials,
             location: cp.location,
+            email: cp.email,
             ageGroups: crmAgeGroups,
             notes: cp.notes,
             acceptedInsurances: cp.insurances.join(", "),
@@ -3387,7 +3388,7 @@ export async function registerRoutes(
   // Create a new CRM-managed provider
   app.post("/api/providers", async (req, res) => {
     try {
-      const { name, credentials, location, specialties, ageGroups, insurances, notes } = req.body;
+      const { name, credentials, location, email, specialties, ageGroups, insurances, notes } = req.body;
 
       if (!name || typeof name !== "string" || name.trim() === "") {
         return res.status(400).json({ error: "name is required" });
@@ -3397,6 +3398,7 @@ export async function registerRoutes(
         name,
         credentials,
         location,
+        email,
         specialties,
         ageGroups,
         insurances,
@@ -3423,6 +3425,10 @@ export async function registerRoutes(
       console.log(`[providers] Created CRM provider ${id}: ${name}`);
       return res.json({ success: true, id });
     } catch (error) {
+      // 23505 = unique_violation — the case-insensitive email index (Phase 1).
+      if ((error as any)?.code === "23505") {
+        return res.status(409).json({ error: "A provider with this email already exists" });
+      }
       console.error("[providers] Error creating provider:", error);
       return res.status(500).json({ error: "Failed to create provider" });
     }
@@ -3445,13 +3451,14 @@ export async function registerRoutes(
         return res.status(404).json({ error: "CRM provider not found" });
       }
 
-      const { name, credentials, location, specialties, ageGroups, insurances, notes } = req.body;
+      const { name, credentials, location, email, specialties, ageGroups, insurances, notes } = req.body;
 
       // Diff fields to know what changed
       const fieldsUpdated: string[] = [];
       if (name !== undefined && name.trim() !== existing.name) fieldsUpdated.push("name");
       if (credentials !== undefined && credentials.trim() !== existing.credentials) fieldsUpdated.push("credentials");
       if (location !== undefined && location.trim() !== existing.location) fieldsUpdated.push("location");
+      if (email !== undefined && (email.trim() || null) !== (existing.email || null)) fieldsUpdated.push("email");
       if (specialties !== undefined && JSON.stringify(specialties) !== JSON.stringify(existing.specialties)) fieldsUpdated.push("specialties");
       if (ageGroups !== undefined && JSON.stringify(ageGroups) !== JSON.stringify(existing.ageGroups)) fieldsUpdated.push("age groups");
       if (insurances !== undefined && JSON.stringify(insurances) !== JSON.stringify(existing.insurances)) fieldsUpdated.push("insurances");
@@ -3461,6 +3468,7 @@ export async function registerRoutes(
         name,
         credentials,
         location,
+        email,
         specialties,
         ageGroups,
         insurances,
@@ -3489,6 +3497,10 @@ export async function registerRoutes(
       const updatedProvider = await getCrmProviderById(id);
       return res.json({ success: true, updated, provider: updatedProvider });
     } catch (error) {
+      // 23505 = unique_violation — the case-insensitive email index (Phase 1).
+      if ((error as any)?.code === "23505") {
+        return res.status(409).json({ error: "A provider with this email already exists" });
+      }
       console.error("[providers] Error updating provider:", error);
       return res.status(500).json({ error: "Failed to update provider" });
     }
