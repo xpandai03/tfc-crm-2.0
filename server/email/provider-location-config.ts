@@ -9,6 +9,8 @@
  * Credentials: Provider Skills Spreadsheet
  */
 
+import { normalizeProviderName } from "../providers/normalize-name";
+
 export interface ProviderEntry {
   name: string;
   credential: string;
@@ -71,12 +73,49 @@ for (const p of PROVIDER_LIST) {
   entryByEmailLower[p.email.trim().toLowerCase()] = p;
 }
 
+// ===========================================================================
+// Phase 3 (provider unification): crm_providers-derived directory is the PRIMARY
+// source for the email axis; PROVIDER_LIST below is a SILENT FALLBACK on a miss.
+// The directory is pushed in by the server (setCrmDirectory) after querying
+// crm_providers (is_active = true AND email IS NOT NULL), so these resolvers stay
+// synchronous for their existing callers. Until the first refresh (or on a miss),
+// lookups fall back to PROVIDER_LIST — so nothing ever hard-fails during the
+// transition. Active-only by construction (the directory excludes inactive rows).
+// ===========================================================================
+let crmDirByEmail = new Map<string, ProviderEntry>();
+let crmDirByNorm = new Map<string, ProviderEntry>();
+
+/** Replace the in-memory crm directory (called by the server after querying). */
+export function setCrmDirectory(entries: ProviderEntry[]): void {
+  const byEmail = new Map<string, ProviderEntry>();
+  const byNorm = new Map<string, ProviderEntry>();
+  for (const e of entries) {
+    const email = (e.email || "").trim().toLowerCase();
+    if (!email) continue;
+    const entry: ProviderEntry = { name: e.name, credential: e.credential, email };
+    byEmail.set(email, entry);
+    byNorm.set(normalizeProviderName(e.name), entry);
+  }
+  crmDirByEmail = byEmail;
+  crmDirByNorm = byNorm;
+}
+
+/** Active emailed providers from crm_providers (the Assign-dropdown source). */
+export function getCrmDirectory(): ProviderEntry[] {
+  return Array.from(crmDirByEmail.values());
+}
+
 /**
  * Resolve a provider name to their email address.
- * Case-insensitive. Returns undefined if no match.
+ * Primary: crm_providers directory (by normalized name). Fallback: PROVIDER_LIST.
+ * Case-insensitive. Returns undefined only if neither source has it.
  */
 export function getProviderEmail(name: string): string | undefined {
-  return emailMapLower[name.toLowerCase()];
+  const hit = crmDirByNorm.get(normalizeProviderName(name || ""));
+  if (hit) return hit.email;
+  const fb = emailMapLower[(name || "").toLowerCase()];
+  if (fb) console.log(`[provider-dir] getProviderEmail fallback→PROVIDER_LIST for "${name}"`);
+  return fb;
 }
 
 /**
@@ -91,7 +130,12 @@ export function getProviderEmail(name: string): string | undefined {
  */
 export function getProviderByEmail(email: string): ProviderEntry | undefined {
   if (!email) return undefined;
-  return entryByEmailLower[email.trim().toLowerCase()];
+  const key = email.trim().toLowerCase();
+  const hit = crmDirByEmail.get(key);
+  if (hit) return hit;
+  const fb = entryByEmailLower[key];
+  if (fb) console.log(`[provider-dir] getProviderByEmail fallback→PROVIDER_LIST for "${key}"`);
+  return fb;
 }
 
 export const OFFICE_LOCATIONS: OfficeLocation[] = [

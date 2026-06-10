@@ -3976,7 +3976,10 @@ export async function registerRoutes(
   const {
     PROVIDER_LIST,
     OFFICE_LOCATIONS,
+    getCrmDirectory,
   } = await import("./email/provider-location-config");
+  // Phase 3: refresh the crm_providers-derived email-axis directory on demand.
+  const { refreshCrmDirectory } = await import("./providers/directory");
 
   // Log email service configuration status at startup
   const emailConfig = await validateEmailServiceConfig();
@@ -4193,15 +4196,25 @@ export async function registerRoutes(
   });
 
   // GET /api/email-config - Provider list + location list for the Send Email modal
-  app.get("/api/email-config", (_req, res) => {
+  app.get("/api/email-config", async (_req, res) => {
     try {
-      // Build providerEmails map from PROVIDER_LIST for backwards compat
-      const providerEmails: Record<string, string> = {};
-      for (const p of PROVIDER_LIST) {
-        providerEmails[p.name] = p.email;
+      // Phase 3: serve the ACTIVE, emailed crm_providers directory (inactive
+      // providers like Laura are excluded) instead of the hand-maintained
+      // PROVIDER_LIST. Refresh first so a just-created/edited provider shows up.
+      // If the directory is somehow empty (e.g. a transient DB miss at boot),
+      // fall back to PROVIDER_LIST so the dropdown never goes blank.
+      await refreshCrmDirectory();
+      const directory = getCrmDirectory();
+      const source = directory.length > 0
+        ? directory
+        : PROVIDER_LIST.map((p) => ({ name: p.name, credential: p.credential, email: p.email }));
+      if (directory.length === 0) {
+        console.log("[email-api] /api/email-config fallback→PROVIDER_LIST (crm directory empty)");
       }
+      const providerEmails: Record<string, string> = {};
+      for (const p of source) providerEmails[p.name] = p.email;
       return res.json({
-        providers: PROVIDER_LIST.map((p) => ({
+        providers: source.map((p) => ({
           name: p.name,
           credentials: p.credential,
           email: p.email,

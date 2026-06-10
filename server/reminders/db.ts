@@ -564,6 +564,23 @@ export async function getAllCrmProviders(): Promise<CrmProvider[]> {
   }));
 }
 
+/**
+ * Phase 3: the active, emailed provider directory derived from crm_providers —
+ * the new PRIMARY source for the Assign dropdown + email-CC + availability
+ * validation (PROVIDER_LIST is the fallback). Active-only (Laura excluded),
+ * email-only, lowercased email. Shape matches PROVIDER_LIST's ProviderEntry.
+ */
+export async function getCrmProviderDirectory(): Promise<{ name: string; credential: string; email: string }[]> {
+  const pool = getPool();
+  const result = await pool.query(`
+    SELECT name, credentials, lower(email) AS email
+    FROM crm_providers
+    WHERE is_active = true AND email IS NOT NULL
+    ORDER BY name ASC
+  `);
+  return result.rows.map((row: any) => ({ name: row.name, credential: row.credentials, email: row.email }));
+}
+
 export async function getCrmProviderById(id: number): Promise<CrmProvider | null> {
   const pool = getPool();
   const result = await pool.query(
