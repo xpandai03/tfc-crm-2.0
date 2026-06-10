@@ -2948,30 +2948,14 @@ export async function registerRoutes(
         console.log("[providers] Cache expired, re-reading spreadsheet");
       }
 
-      // Read the spreadsheet
-      let workbook: XLSX.WorkBook;
-      try {
-        workbook = XLSX.readFile(PROVIDER_SPREADSHEET_PATH);
-      } catch (fileError) {
-        console.error("[providers] Failed to read spreadsheet:", fileError);
-        return res.status(500).json({
-          error: "Failed to read Provider Skills Spreadsheet",
-          message: fileError instanceof Error ? fileError.message : "Unknown error",
-          path: PROVIDER_SPREADSHEET_PATH,
-        });
-      }
-
-      // Parse the "Current" sheet (active providers)
-      const sheet = workbook.Sheets["Current"];
-      if (!sheet) {
-        console.error("[providers] 'Current' sheet not found in spreadsheet");
-        return res.status(500).json({
-          error: "Sheet 'Current' not found in Provider Skills Spreadsheet",
-        });
-      }
-
-      const data = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as string[][];
-      console.log("[providers] Raw rows:", data.length);
+      // Phase 5 (unification complete): crm_providers is the SINGLE SOURCE OF
+      // TRUTH. The spreadsheet roster is no longer merged into the live read —
+      // it remains only the input to the occasional offline import
+      // (scripts/reconcile-providers.mjs). We feed an empty roster here so the
+      // legacy roster-parse / override / suppression blocks below are inert
+      // no-ops, and `providers` is populated solely by the crm_providers merge.
+      // (Reversible: restore the XLSX.readFile block to re-enable the roster.)
+      const data: string[][] = [];
 
       // Column mapping (Sandra's May 2026 schema):
       //   Col 0:    Provider Name (with credentials)
@@ -3165,7 +3149,11 @@ export async function registerRoutes(
       // survives the manual spreadsheet import).
       const suppressedNormalizedNames = new Set<string>();
       try {
-        const overrides = await getAllProviderOverrides();
+        // Phase 5: provider_overrides retired as a live source — all needed
+        // data was folded into crm_providers in Phase 2 (Kristi's override was
+        // empty; Laura's was suppression-only/inactive; the stale Ginger
+        // override was deleted). Empty here so this block is an inert no-op.
+        const overrides: Awaited<ReturnType<typeof getAllProviderOverrides>> = [];
         const exactOverrideMap = new Map(overrides.map(o => [o.providerName, o]));
         const normalizedOverrideMap = new Map<string, typeof overrides[number]>();
         for (const o of overrides) {
