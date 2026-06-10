@@ -138,6 +138,13 @@ app.use((req, res, next) => {
     await initSyncTables();
     await initActivityTable();
     startReminderCron();
+    // Phase 3: load the crm_providers-derived email-axis directory, then keep it
+    // fresh on an interval (mutations also refresh it on write). Sync resolvers
+    // fall back to PROVIDER_LIST until/if this populates, so startup is safe.
+    const { refreshCrmDirectory } = await import("./providers/directory");
+    const dirN = await refreshCrmDirectory();
+    log(`Provider directory loaded (${dirN} active emailed providers)`);
+    setInterval(() => { void refreshCrmDirectory(); }, 5 * 60 * 1000);
     log("Database and reminder system initialized (Postgres)");
   } catch (err) {
     log(`Warning: Database initialization failed: ${err}`, "db");
