@@ -3310,7 +3310,13 @@ export async function registerRoutes(
           const prov = p as Record<string, unknown>;
           const name = typeof prov.name === "string" ? prov.name : "";
           if (!name) continue;
-          const email = getProviderEmail(name);
+          // Phase 4: direct join — prefer the provider's own crm_providers.email
+          // (set on the CRM merge) over the getProviderEmail(name) PROVIDER_LIST
+          // name-bridge. Fall back to the name-bridge only for roster-only entries
+          // that have no crm email (until Phase 5 retires the roster source), so
+          // no provider that resolved before loses their availability.
+          const directEmail = typeof prov.email === "string" && prov.email.trim() ? prov.email.trim() : null;
+          const email = directEmail || getProviderEmail(name);
           if (!email) continue;
           const row = availabilityByEmail.get(email.trim().toLowerCase());
           if (!row) continue;
