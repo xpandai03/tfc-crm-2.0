@@ -330,6 +330,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     "/auth/callback",
     "/auth/logout",
     "/api/me", // This handles its own auth check
+    "/api/app-config", // Public app-config flag (fallback-mode banner); returns only a boolean
     "/api/sync/contacts", // n8n sync endpoint (uses X-Sync-Key auth)
     "/api/export/",        // all export endpoints (use X-Sync-Key auth)
     "/api/migrate",        // Migration endpoint (uses X-Migrate-Key auth)

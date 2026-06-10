@@ -4190,6 +4190,13 @@ export async function registerRoutes(
   });
 
   // GET /api/email-config - Provider list + location list for the Send Email modal
+  // Public app-config flag. Drives the staff-facing fallback-mode banner.
+  // Toggle via the FALLBACK_MODE env/secret (default off). Returns only a boolean
+  // (no sensitive data), so it's safe to serve unauthenticated for the banner.
+  app.get("/api/app-config", (_req, res) => {
+    return res.json({ fallbackMode: process.env.FALLBACK_MODE === "true" });
+  });
+
   app.get("/api/email-config", async (_req, res) => {
     try {
       // Phase 3: serve the ACTIVE, emailed crm_providers directory (inactive

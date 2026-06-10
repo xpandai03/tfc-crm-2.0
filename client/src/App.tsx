@@ -17,6 +17,7 @@ import AdminMigrate from "@/pages/admin-migrate";
 import Referral from "@/pages/referral";
 import Login from "@/pages/login";
 import NotFound from "@/pages/not-found";
+import { FallbackBanner } from "@/components/fallback-banner";
 
 function GuardedHome() {
   const { user } = useAuth();
@@ -80,6 +81,8 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
+        {/* Fallback-mode banner — all pages; renders nothing unless FALLBACK_MODE=true */}
+        <FallbackBanner />
         <AuthProvider>
           <AuthenticatedApp />
         </AuthProvider>
