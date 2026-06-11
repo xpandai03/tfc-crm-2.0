@@ -399,7 +399,9 @@ export function PatientMatchingModal({
           </Alert>
         )}
 
-        {/* Warnings */}
+        {/* Warnings — these describe gaps in the matched CONTACTS' intake data
+            (age/concern/insurance), not the provider. Header makes that clear so
+            they don't read as provider attributes. */}
         {hasWarnings && (
           <Alert
             variant="default"
@@ -407,8 +409,9 @@ export function PatientMatchingModal({
           >
             <AlertTriangle className="h-4 w-4 text-amber-600" />
             <AlertDescription className="text-amber-800 dark:text-amber-200 text-sm">
+              <p className="font-medium mb-0.5">Some contacts are missing intake data:</p>
               {warnings.length === 1 ? (
-                warnings[0]
+                <span>{warnings[0]}</span>
               ) : (
                 <ul className="list-disc list-inside space-y-0.5">
                   {warnings.map((w, i) => (
@@ -420,19 +423,19 @@ export function PatientMatchingModal({
           </Alert>
         )}
 
-        {/* Results */}
-        <div>
+        {/* Results — flex-1 + min-h-0 so the list scrolls WITHIN the modal
+            instead of spilling past it (the old hardcoded max-h calc didn't
+            account for the variable banner stack above). */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
           {hasMatches ? (
-            <div className="max-h-[calc(85vh-320px)] overflow-y-auto pr-2">
-              <div className="space-y-3 pb-1">
-                {matches.map((match, index) => (
-                  <PatientMatchCard
-                    key={match.contact.contactId}
-                    match={match}
-                    rank={index + 1}
-                  />
-                ))}
-              </div>
+            <div className="pr-2 space-y-3 pb-1">
+              {matches.map((match, index) => (
+                <PatientMatchCard
+                  key={match.contact.contactId}
+                  match={match}
+                  rank={index + 1}
+                />
+              ))}
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-12 text-center">

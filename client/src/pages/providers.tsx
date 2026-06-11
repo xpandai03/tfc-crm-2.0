@@ -822,6 +822,19 @@ function ProviderFormModal({
   const isCrmManaged = !!editingProvider?._crmManaged;
   const isSpreadsheetEdit = isEditing && !isCrmManaged;
 
+  // Sync form state to the provider every time the modal opens. The modal is
+  // permanently mounted (isOpen is a prop, not a mount guard) and resetForm()
+  // is wired only to Radix onOpenChange, which does NOT fire on controlled/
+  // programmatic open — so without this the form stayed at buildInitialState(null)
+  // (blank), and saving wiped the provider's real data. Reuses buildInitialState
+  // as-is (it already reads the crm_providers shape). New provider → null → blank.
+  useEffect(() => {
+    if (isOpen) {
+      setState(buildInitialState(editingProvider));
+      setInsuranceSearch("");
+    }
+  }, [isOpen, editingProvider]);
+
   const resetForm = () => {
     setState(buildInitialState(editingProvider));
     setInsuranceSearch("");
@@ -993,7 +1006,7 @@ function ProviderFormModal({
                 <span>{editingProvider?.name}</span>
                 {editingProvider?.credentials && (
                   <span className="text-sm font-normal text-muted-foreground ml-2">
-                    {editingProvider.name === "Bentley Carbone" ? "LAMFT" : editingProvider.credentials}
+                    {editingProvider.credentials}
                   </span>
                 )}
               </div>
@@ -1021,6 +1034,21 @@ function ProviderFormModal({
                   </div>
                 </div>
               </>
+            )}
+
+            {/* Credentials — editable in CRM edit mode (create has it in the
+                name/credentials/location grid above). Persists to
+                crm_providers.credentials via the existing save path. */}
+            {isCrmManaged && isEditing && (
+              <div>
+                <Label className="text-xs">Credentials</Label>
+                <Input
+                  value={state.credentials}
+                  onChange={(e) => setState(p => ({ ...p, credentials: e.target.value }))}
+                  placeholder="e.g. LCSW"
+                />
+                <p className="text-[11px] text-muted-foreground mt-1">Licensing / credential (e.g. LCSW, LICSW). Updates as the provider advances.</p>
+              </div>
             )}
 
             {/* Email — CRM providers only (create or CRM edit); the future
