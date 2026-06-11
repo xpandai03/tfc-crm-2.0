@@ -26,6 +26,15 @@ import {
 import type { ProviderWithInsurance } from "./provider-api";
 import type { ContactSnapshot } from "@shared/schema";
 
+// Supporting capacity numbers attached to a match when the provider has a
+// real (human-supplied) availability number on record. All null when the
+// provider has no availability data.
+export interface CapacityInfo {
+  reportedAccepting: number | null; // acceptingClients (form-submitted baseline)
+  assignedSinceForm: number | null; // contacts assigned since last form submission
+  effectiveAcceptingClients: number | null; // baseline minus assignedSinceForm
+}
+
 // Match result for a single provider
 export interface ProviderMatch {
   provider: Provider;
@@ -33,6 +42,12 @@ export interface ProviderMatch {
   tier: "excellent" | "good" | "fair" | "poor";
   reasons: MatchReason[];
   warnings: string[];
+  // Capacity is ADVISORY ONLY — it never excludes a provider from results.
+  // atCapacity is true only when the provider has a real availability number
+  // that has decayed to <= 0. Optional so the v2 shadow path (which builds
+  // its own ProviderMatch objects) is unaffected.
+  atCapacity?: boolean;
+  capacityInfo?: CapacityInfo;
 }
 
 // Individual reason for match/mismatch
@@ -393,6 +408,48 @@ export function isAcceptingByCapacity(provider: Provider | ProviderWithInsurance
 }
 
 /**
+ * Capacity status used by the matcher as an ADVISORY signal — NEVER an
+ * exclusion. Encodes the product-confirmed model:
+ *
+ *   - No number on record (no availability row / undefined) → hasData false,
+ *     atCapacity false, no badge. Preserves today's "no-row passes" behavior.
+ *   - Real number that has decayed to <= 0 → hasData true, atCapacity true.
+ *     The provider STILL appears in results, with an advisory badge and the
+ *     supporting numbers; they remain fully assignable.
+ *   - Real number > 0 → hasData true, atCapacity false, no badge.
+ *
+ * NOTE: This only reads the existing effectiveAcceptingClients /
+ * acceptingClients / assignedSinceForm fields — it does NOT change how those
+ * are computed (the assignment over-count fix is a separate, schema-touching
+ * task).
+ */
+export function getCapacityStatus(provider: Provider | ProviderWithInsurance): {
+  hasData: boolean;
+  atCapacity: boolean;
+  info: CapacityInfo;
+} {
+  const effective = provider.effectiveAcceptingClients;
+  const reported = provider.acceptingClients;
+  const n = effective ?? reported;
+  if (typeof n !== "number") {
+    return {
+      hasData: false,
+      atCapacity: false,
+      info: { reportedAccepting: null, assignedSinceForm: null, effectiveAcceptingClients: null },
+    };
+  }
+  return {
+    hasData: true,
+    atCapacity: n <= 0,
+    info: {
+      reportedAccepting: typeof reported === "number" ? reported : null,
+      assignedSinceForm: typeof provider.assignedSinceForm === "number" ? provider.assignedSinceForm : null,
+      effectiveAcceptingClients: typeof effective === "number" ? effective : null,
+    },
+  };
+}
+
+/**
  * Compute match score for a single provider
  * @param provider - Provider to score (may include acceptedInsurances)
  * @param context - Matching context derived from contact
@@ -415,10 +472,17 @@ export function computeProviderScore(
     return null;
   }
 
-  // Hard constraint: Capacity-aware acceptance check from provider_availability.
-  // See isAcceptingByCapacity() above for the no-data fall-through semantics.
-  if (!isAcceptingByCapacity(provider)) {
-    return null;
+  // Capacity is ADVISORY, not a hard constraint. A provider whose real
+  // availability number has decayed to <= 0 is still returned (flagged
+  // atCapacity with the supporting numbers) so they remain visible and
+  // assignable; a provider with no number on record passes silently. We
+  // never return null on capacity. See getCapacityStatus() above.
+  const capacity = getCapacityStatus(provider);
+  if (capacity.atCapacity) {
+    reasons.push({
+      type: "warning",
+      text: "Not accepting new patients",
+    });
   }
 
   // Hard constraint: Must serve age group (if known)
@@ -563,6 +627,8 @@ export function computeProviderScore(
     tier,
     reasons,
     warnings,
+    atCapacity: capacity.atCapacity,
+    capacityInfo: capacity.info,
   };
 }
 
@@ -665,6 +731,13 @@ export function computeProviderMatches(
     // First by score
     if (b.score !== a.score) {
       return b.score - a.score;
+    }
+
+    // Advisory de-prioritization: among equal scores, providers at capacity
+    // sort below available ones. This never removes them — they stay in the
+    // result set, just lower.
+    if (!!a.atCapacity !== !!b.atCapacity) {
+      return a.atCapacity ? 1 : -1;
     }
 
     // Then prefer providers without warnings (slow markers, insurance issues)
