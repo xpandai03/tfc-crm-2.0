@@ -53,9 +53,23 @@ const reasonStyles = {
   warning: "text-amber-600 dark:text-amber-400",
 };
 
+// Format the supporting capacity numbers, e.g. "reported 6 · 6 assigned".
+// Returns null when no numbers are available to show.
+function formatCapacityDetail(info?: {
+  reportedAccepting: number | null;
+  assignedSinceForm: number | null;
+}): string | null {
+  if (!info) return null;
+  const parts: string[] = [];
+  if (typeof info.reportedAccepting === "number") parts.push(`reported ${info.reportedAccepting}`);
+  if (typeof info.assignedSinceForm === "number") parts.push(`${info.assignedSinceForm} assigned`);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 export function ProviderMatchCard({ match, rank }: ProviderMatchCardProps) {
-  const { provider, score, tier, reasons } = match;
+  const { provider, score, tier, reasons, atCapacity, capacityInfo } = match;
   const tierStyle = tierStyles[tier];
+  const capacityDetail = atCapacity ? formatCapacityDetail(capacityInfo) : null;
 
   // Build subtitle from provider info
   const subtitleParts: string[] = [];
@@ -102,6 +116,21 @@ export function ProviderMatchCard({ match, rank }: ProviderMatchCardProps) {
               <p className="text-xs text-muted-foreground mt-0.5 truncate">
                 {subtitleParts.join(" · ")}
               </p>
+              {/* Advisory only — provider stays fully assignable/schedulable. */}
+              {atCapacity && (
+                <div className="mt-1.5">
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] font-medium gap-1 border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300"
+                  >
+                    <AlertTriangle className="h-2.5 w-2.5" />
+                    Not accepting new patients
+                    {capacityDetail && (
+                      <span className="font-normal opacity-80">({capacityDetail})</span>
+                    )}
+                  </Badge>
+                </div>
+              )}
             </div>
           </div>
 

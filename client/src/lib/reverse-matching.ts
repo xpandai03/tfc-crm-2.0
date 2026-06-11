@@ -15,6 +15,7 @@ import {
   mapCityToLocation,
   type MatchingContext,
   type MatchReason,
+  type CapacityInfo,
 } from "./provider-matching";
 import { normalizeInsurance } from "./insurance-utils";
 import { isActiveStatus } from "./status-config";
@@ -27,6 +28,11 @@ export interface PatientMatch {
   tier: "excellent" | "good" | "fair" | "poor";
   reasons: MatchReason[];
   warnings: string[];
+  // Provider-level capacity advisory (the provider is fixed in this
+  // direction, so this is identical across all patient matches). Surfaced as
+  // a single banner in the modal — never excludes any patient.
+  atCapacity?: boolean;
+  capacityInfo?: CapacityInfo;
 }
 
 export interface PatientMatchResult {
@@ -117,6 +123,8 @@ export function computePatientMatches(
       tier,
       reasons: match.reasons,
       warnings: match.warnings,
+      atCapacity: match.atCapacity,
+      capacityInfo: match.capacityInfo,
     });
 
     // Collect unique warnings

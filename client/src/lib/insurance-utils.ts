@@ -27,6 +27,7 @@ export const TFC_ACCEPTED_INSURANCES_RAW = [
   "Molina Healthcare",
   "Presbyterian Health Plan",
   "Presbyterian Turquoise Care",
+  "BlueCross BlueShield Turquoise Care",
   "Tricare",
   "United Health Care",
   "United Behavioral Health",
@@ -111,6 +112,10 @@ export const INSURANCE_NORMALIZATION_MAP: Record<string, string> = {
   "presbyterian centennial": "Presbyterian Turquoise Care",
 
   // 6. BlueCross BlueShield Turquoise Care (Medicaid managed care)
+  // Canonical-form self-map so this category round-trips through
+  // normalizeInsurance() (required for getTFCAcceptedInsurances() to surface
+  // it, since the raw clinic list now includes it).
+  "bluecross blueshield turquoise care": "BlueCross BlueShield Turquoise Care",
   "bcbs cent": "BlueCross BlueShield Turquoise Care",
   "bcbs - turquoise care": "BlueCross BlueShield Turquoise Care",
   "bcbs turquoise care": "BlueCross BlueShield Turquoise Care",
@@ -260,9 +265,12 @@ export function normalizeInsurance(rawValue: string | null | undefined): Insuran
       ["va community care", "VACCN"],
       ["vapc3", "VACCN"],
       ["tricare", "Tricare"],
+      // "turquoise care" must be tested BEFORE "bcbs"/"blue cross" so a
+      // Turquoise Care (Medicaid managed care) string isn't mis-bucketed as
+      // Commercial by the broader "bcbs"/"blue cross" keywords.
+      ["turquoise care", "Presbyterian Turquoise Care"],
       ["bcbs", "BlueCross BlueShield Commercial"],
       ["blue cross", "BlueCross BlueShield Commercial"],
-      ["turquoise care", "Presbyterian Turquoise Care"], // Check before Presbyterian
       ["presbyterian", "Presbyterian Commercial"],
       ["magellan", "Presbyterian Commercial"],
       ["uhc cent", "UHC Centennial"],

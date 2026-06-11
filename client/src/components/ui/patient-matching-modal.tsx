@@ -43,6 +43,7 @@ import {
   computePatientMatches,
   type PatientMatch,
 } from "@/lib/reverse-matching";
+import { getCapacityStatus } from "@/lib/provider-matching";
 import type { ProviderWithInsurance } from "@/lib/provider-api";
 
 interface PatientMatchingModalProps {
@@ -341,6 +342,16 @@ export function PatientMatchingModal({
   const hasWarnings = warnings.length > 0;
   const hasMatches = matches.length > 0;
 
+  // Capacity is a property of THIS provider (fixed in this direction), so it
+  // surfaces once as a banner — advisory only, never blocks any patient.
+  const capacity = getCapacityStatus(provider);
+  const capacityDetail = (() => {
+    const parts: string[] = [];
+    if (typeof capacity.info.reportedAccepting === "number") parts.push(`reported ${capacity.info.reportedAccepting}`);
+    if (typeof capacity.info.assignedSinceForm === "number") parts.push(`${capacity.info.assignedSinceForm} assigned`);
+    return parts.length > 0 ? parts.join(" · ") : null;
+  })();
+
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[600px] max-h-[85vh] flex flex-col">
@@ -370,6 +381,23 @@ export function PatientMatchingModal({
             therapy. Advisory only.
           </span>
         </div>
+
+        {/* Capacity advisory — informational only; this provider is still
+            fully assignable/schedulable regardless of this banner. */}
+        {capacity.atCapacity && (
+          <Alert
+            variant="default"
+            className="flex-shrink-0 bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-800"
+          >
+            <AlertTriangle className="h-4 w-4 text-amber-600" />
+            <AlertDescription className="text-amber-800 dark:text-amber-200 text-sm">
+              Not accepting new patients
+              {capacityDetail && <span className="opacity-80"> ({capacityDetail})</span>}
+              {". "}
+              Still assignable — capacity is advisory only.
+            </AlertDescription>
+          </Alert>
+        )}
 
         {/* Warnings */}
         {hasWarnings && (
