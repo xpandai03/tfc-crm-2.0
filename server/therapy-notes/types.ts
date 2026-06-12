@@ -49,6 +49,7 @@ export interface TnV2AgentPayload {
   appointment_date: string; // m/d/yyyy
   appointment_time: string; // h:mm am/pm
   appointment_alert_text: string;
+  appointment_modality: "Telehealth" | "In Person"; // discrete modality Axiom reads directly
   clinician_name: string;
   // Async progress — V2's Pydantic schema requires these EXACT snake_case names;
   // V2 silently skips callbacks if contact_id/run_id/callback_url are missing.

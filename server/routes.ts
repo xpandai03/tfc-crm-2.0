@@ -397,7 +397,7 @@ function computeAgeFromMMDDYYYY(dob: string): number | null {
 function computeAppointmentAlertText(
   contact: { serviceRequested?: string | null; requestingFor?: string | null; modality?: string | null },
   dobMMDDYYYY: string
-): { text: string; warnings: string[] } {
+): { text: string; warnings: string[]; modality: "Telehealth" | "In Person" } {
   const warnings: string[] = [];
 
   // ---- Type ----
@@ -437,7 +437,14 @@ function computeAppointmentAlertText(
     warnings.push(`Modality ambiguous or missing ("${contact.modality || ""}"), defaulted to In-Person`);
   }
 
-  return { text: `New ${type} ${modality} Therapy CRM`, warnings };
+  // Discrete modality for Axiom, derived from the SAME resolved `modality` so the
+  // structured field and the alert-text token can never disagree. Alert text keeps
+  // the hyphen form ("In-Person"); the contract field uses the spaced form Axiom
+  // matches literally ("In Person" / "Telehealth").
+  const appointmentModality: "Telehealth" | "In Person" =
+    modality === "Telehealth" ? "Telehealth" : "In Person";
+
+  return { text: `New ${type} ${modality} Therapy CRM`, warnings, modality: appointmentModality };
 }
 
 // 'YYYY-MM-DD' -> 'm/d/yyyy' (single-digit OK) for the V2 appointment_date.
@@ -5593,7 +5600,7 @@ export async function registerRoutes(
       // ---- Build the V2 payload ----
       const { firstName, lastName } = parseName(contactName);
       const dob = dobToMMDDYYYY(contact.patientDob);
-      const { text: alertText, warnings } = computeAppointmentAlertText(contact, dob);
+      const { text: alertText, warnings, modality: appointmentModality } = computeAppointmentAlertText(contact, dob);
 
       // Full HTTPS URLs the TN agent fetches (with its X-API-Key), generated
       // on-demand server-side: the intake referral PDF and the real
@@ -5621,6 +5628,7 @@ export async function registerRoutes(
         appointment_date: isoDateToMDY(contact.scheduledAppointmentDate),
         appointment_time: (contact.scheduledAppointmentTime || "").trim(),
         appointment_alert_text: alertText,
+        appointment_modality: appointmentModality,
         clinician_name: assignment!.providerName || "",
         contact_id: contactId,
         run_id: runId,
