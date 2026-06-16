@@ -1049,6 +1049,7 @@ export async function insertIntakeContact(fields: {
   sourceSubmissionId?: number | null;
   intakeSource?: string | null;
   referralAuth?: string | null;
+  language?: string | null;
 }): Promise<void> {
   const pool = getPool();
   const today = new Date().toISOString().split("T")[0];
@@ -1073,7 +1074,8 @@ export async function insertIntakeContact(fields: {
       last_contact, last_note,
       intake_source,
       synced_at, sync_hash,
-      source_submission_id
+      source_submission_id,
+      language
     ) VALUES (
       $1, $2, $3, $4,
       'New -- No Outreach', 100, $5,
@@ -1093,7 +1095,8 @@ export async function insertIntakeContact(fields: {
       $31, $32,
       $33,
       NOW(), $34,
-      $35
+      $35,
+      $36
     )
     ON CONFLICT(contact_id) DO UPDATE SET
       name = EXCLUDED.name,
@@ -1128,6 +1131,7 @@ export async function insertIntakeContact(fields: {
       END,
       intake_source = COALESCE(EXCLUDED.intake_source, sync_contacts.intake_source),
       source_submission_id = COALESCE(EXCLUDED.source_submission_id, sync_contacts.source_submission_id),
+      language = COALESCE(EXCLUDED.language, sync_contacts.language),
       synced_at = NOW()
   `, [
     fields.contactId,
@@ -1170,6 +1174,7 @@ export async function insertIntakeContact(fields: {
     fields.intakeSource || "website_form",
     `intake-${fields.contactId}`,
     fields.sourceSubmissionId ?? null,
+    fields.language || null,
   ]);
 
   console.log(`[sync-db] Intake contact upserted: ${fields.contactId} (${fields.name})`);
