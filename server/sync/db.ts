@@ -621,6 +621,7 @@ export async function getAllSyncContacts(): Promise<SyncContact[]> {
       last_contact AS "lastContact",
       last_note AS "lastNote",
       intake_source AS "intakeSource",
+      language AS "language",
       synced_at AS "syncedAt",
       sync_hash AS "syncHash"
     FROM sync_contacts
@@ -2111,6 +2112,9 @@ const SAFE_INTAKE_FIELDS: Record<string, string> = {
   priorProvider: "prior_provider",
   preferredContact: "preferred_contact",
   rfsLink: "rfs_link",
+  // CRM-owned, dropdown-constrained ("English"/"Spanish"/NULL). Persisted here
+  // but excluded from the n8n sync upserts so a sync never clobbers a manual value.
+  language: "language",
 };
 
 /**
