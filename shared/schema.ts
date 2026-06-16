@@ -39,6 +39,7 @@ export const contactSnapshotSchema = z.object({
   referralSource: z.string().nullable().optional(),  // How client found TFC
   priorServices: z.string().nullable().optional(),   // Previous service history
   priorProvider: z.string().nullable().optional(),   // Previous provider name
+  language: z.string().nullable().optional(),        // Preferred service language ("English"/"Spanish"); display-only, NULL = unknown
 
   // Insurance fields (Phase 6.3)
   insurancePayer: z.string().nullable().optional(),  // Insurance company name
