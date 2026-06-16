@@ -4766,6 +4766,11 @@ export async function registerRoutes(
         state: s(b.state),
         zipCode: s(b.zipCode),
         county: s(b.county),
+
+        // Preferred service language (e.g. "English" / "Spanish"). Stored
+        // as-is; the RFS form is responsible for sending the display string.
+        // Absent today → s(undefined) → null → column stays NULL (inert).
+        language: s(b.language),
       });
 
       boardCache = null;
