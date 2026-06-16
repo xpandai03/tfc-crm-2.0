@@ -923,6 +923,9 @@ export async function registerRoutes(
                 rfsLink: (detailed.rfsLink as string) || (detailed.rfs as string) || null,
                 documentLink: (detailed.documentLink as string) || (detailed.documents as string) || null,
                 intakeSource: syncContact.intakeSource,
+                // CRM/form-owned; n8n has no language, so source the stored value
+                // verbatim (NULL stays NULL — never inferred from another field).
+                language: syncContact.language ?? null,
                 statusCode,
                 umbrella,
                 status: syncContact.status || "intake",

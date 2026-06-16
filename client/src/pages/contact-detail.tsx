@@ -1720,7 +1720,7 @@ export default function ContactDetail() {
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">
                   {/* Intake Details Section — Blue */}
-                  {(isEditingIntake || contact?.requestingFor || contact?.reasonForSeeking || contact?.reasonForTherapy || contact?.formCompletedBy || contact?.modality) && (
+                  {(isEditingIntake || contact?.requestingFor || contact?.reasonForSeeking || contact?.reasonForTherapy || contact?.formCompletedBy || contact?.modality || contact?.language) && (
                     <div className="space-y-2 rounded-md p-2.5 bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/30">
                       <h4 className="text-xs font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide">Intake Details</h4>
                       {isEditingIntake ? (
@@ -1759,6 +1759,11 @@ export default function ContactDetail() {
                           )}
                           {contact?.modality && (
                             <div><span className="text-muted-foreground text-xs">Modality:</span><p className="font-medium text-foreground">{contact.modality}</p></div>
+                          )}
+                          {/* Display-only. Stored value verbatim; rendered only when present —
+                              NULL (all pre-existing contacts) shows nothing, never defaults to "English". */}
+                          {contact?.language && (
+                            <div><span className="text-muted-foreground text-xs">Language:</span><p className="font-medium text-foreground">{contact.language}</p></div>
                           )}
                           {contact?.formCompletedBy && (
                             <div><span className="text-muted-foreground text-xs">Form Completed By:</span><p className="font-medium text-foreground">{contact.formCompletedBy}</p></div>

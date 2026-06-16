@@ -154,6 +154,10 @@ export interface SyncContact {
   // Origin
   intakeSource: string | null;
 
+  // Preferred service language (e.g. "English"/"Spanish"); display-only.
+  // Optional: only getSyncContactById selects it; board reads omit it.
+  language?: string | null;
+
   // TN V2 scheduled appointment (CRM-owned)
   scheduledAppointmentDate: string | null;
   scheduledAppointmentTime: string | null;
@@ -861,6 +865,7 @@ export async function getSyncContactById(contactId: number): Promise<SyncContact
       last_contact AS "lastContact",
       last_note AS "lastNote",
       intake_source AS "intakeSource",
+      language AS "language",
       scheduled_appointment_date AS "scheduledAppointmentDate",
       scheduled_appointment_time AS "scheduledAppointmentTime",
       synced_at AS "syncedAt",
