@@ -316,6 +316,13 @@ export async function initSyncTables(): Promise<void> {
     try {
       await pool.query(`ALTER TABLE sync_contacts ADD COLUMN IF NOT EXISTS scheduled_appointment_time TEXT`);
     } catch (_) { /* column already exists */ }
+    // Contact preferred-language column (additive nullable; CRM-owned, never
+    // written by the n8n sync upsert). Prod adds it via
+    // migrations/add-language-column.sql (schema-before-code, C16); this keeps
+    // fresh/non-prod DBs in sync without a manual step.
+    try {
+      await pool.query(`ALTER TABLE sync_contacts ADD COLUMN IF NOT EXISTS language TEXT`);
+    } catch (_) { /* column already exists */ }
   }
 
   console.log("[sync-db] Sync tables initialized");
