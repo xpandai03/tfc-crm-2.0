@@ -138,6 +138,7 @@ export const waitlistContactSchema = z.object({
   insurancePayer: z.string().nullable().optional(), // Insurance company name (for insights aggregation)
   modality: z.string().nullable().optional(), // Desired modality/location (for insights aggregation)
   reasonForTherapy: z.array(z.string()).optional(), // Reason(s) for seeking services (for insights aggregation)
+  language: z.string().nullable().optional(), // Preferred service language ("English"/"Spanish"); for wait-list filter
   patientDob: z.string().nullable().optional(), // Patient date of birth (YYYY-MM-DD or MM/DD/YYYY)
   assignedProviderName: z.string().nullable().optional(), // Latest assigned provider name (from contact_provider_assignments)
 });

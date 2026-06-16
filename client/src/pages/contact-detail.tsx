@@ -477,6 +477,7 @@ export default function ContactDetail() {
       reasonForSeeking: contact.reasonForSeeking || "",
       reasonForTherapy: contact.reasonForTherapy || "",
       modality: contact.modality || "",
+      language: contact.language || "",
       formCompletedBy: contact.formCompletedBy || "",
       insurancePayer: contact.insurancePayer || "",
       insurancePlan: contact.insurancePlan || "",
@@ -1740,6 +1741,24 @@ export default function ContactDetail() {
                           <div>
                             <label className="text-muted-foreground text-xs">Modality</label>
                             <Input className="h-8 text-sm" value={intakeEdits.modality} onChange={(e) => setIntakeEdits(p => ({ ...p, modality: e.target.value }))} />
+                          </div>
+                          <div>
+                            {/* Dropdown-only — only "English"/"Spanish"/unset can be stored
+                                (no free-type variants). "none" sentinel maps to "" → saved as NULL. */}
+                            <label className="text-muted-foreground text-xs">Language</label>
+                            <Select
+                              value={intakeEdits.language || "none"}
+                              onValueChange={(v) => setIntakeEdits(p => ({ ...p, language: v === "none" ? "" : v }))}
+                            >
+                              <SelectTrigger className="h-8 text-sm" data-testid="select-language">
+                                <SelectValue placeholder="Unset" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">Unset</SelectItem>
+                                <SelectItem value="English">English</SelectItem>
+                                <SelectItem value="Spanish">Spanish</SelectItem>
+                              </SelectContent>
+                            </Select>
                           </div>
                           <div>
                             <label className="text-muted-foreground text-xs">Form Completed By</label>

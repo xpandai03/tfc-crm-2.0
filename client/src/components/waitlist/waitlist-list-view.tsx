@@ -208,6 +208,8 @@ export function WaitlistListView({
   const [hideInactive, setHideInactive] = useState(true);
   const [insuranceFilter, setInsuranceFilter] = useState<string>(initialInsuranceFilter || "all");
   const [modalityFilter, setModalityFilter] = useState<string>(initialModalityFilter || "all");
+  // Language filter (Lane): exact match on dropdown-constrained "English"/"Spanish".
+  const [languageFilter, setLanguageFilter] = useState<string>("all");
   const [reasonFilter, setReasonFilter] = useState<string>(initialReasonFilter || "all");
   const [serviceTypeFilter, setServiceTypeFilter] = useState<string>(initialServiceTypeFilter || "all");
 
@@ -308,6 +310,16 @@ export function WaitlistListView({
         }
       }
 
+      // Language filter — exact match on stored "English"/"Spanish" (dropdown-constrained,
+      // consistent with the manual field + form mapping). NULL/unset never matches a
+      // specific-language filter (those contacts appear only under "all").
+      if (languageFilter !== "all") {
+        const contactLanguage = (contact as { language?: string | null }).language ?? "";
+        if (contactLanguage !== languageFilter) {
+          return false;
+        }
+      }
+
       // Reason for Therapy filter — multi-value field stored as comma-separated
       // string OR array. Match if the selected reason appears as one of the
       // contact's tokens (per Bucket A migration, all tokens are canonical
@@ -343,7 +355,7 @@ export function WaitlistListView({
 
       return true;
     });
-  }, [contacts, umbrellaFilter, allowedStatusCodes, searchQuery, hideInactive, insuranceFilter, modalityFilter, reasonFilter, serviceTypeFilter]);
+  }, [contacts, umbrellaFilter, allowedStatusCodes, searchQuery, hideInactive, insuranceFilter, modalityFilter, languageFilter, reasonFilter, serviceTypeFilter]);
 
   // Sort contacts
   const sortedContacts = useMemo(() => {
@@ -471,6 +483,21 @@ export function WaitlistListView({
                   {modality}
                 </SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Language Filter — fixed options (dropdown-constrained values). */}
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">Language:</span>
+          <Select value={languageFilter} onValueChange={setLanguageFilter}>
+            <SelectTrigger className="w-[150px]" data-testid="select-language-filter">
+              <SelectValue placeholder="All Languages" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Languages</SelectItem>
+              <SelectItem value="English">English</SelectItem>
+              <SelectItem value="Spanish">Spanish</SelectItem>
             </SelectContent>
           </Select>
         </div>
