@@ -54,6 +54,7 @@ import {
   insertIntakeContact,
   insertFormSubmission,
   getRecentSubmissions,
+  getReferralsCount,
   getSubmissionsForContact,
   insertSubmission,
   normalizeDateValue,
@@ -6491,6 +6492,35 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[insights] Error computing status durations:", error);
       return res.status(500).json({ error: "Failed to compute status durations" });
+    }
+  });
+
+  // Read-only inflow count: inbound INTAKE submissions in a month (MT-bounded).
+  // ?month=YYYY-MM (defaults to the current month in America/Denver). Returns
+  // { month, count }. See getReferralsCount for the definition + switchable toggles.
+  app.get("/api/insights/referrals-count", async (req, res) => {
+    try {
+      const raw = typeof req.query.month === "string" ? req.query.month : "";
+      // Default to the current month in Mountain Time (not server/UTC).
+      const month = raw
+        || new Intl.DateTimeFormat("en-CA", { timeZone: "America/Denver", year: "numeric", month: "2-digit" }).format(new Date());
+
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+        return res.status(400).json({ error: "month must be in YYYY-MM format" });
+      }
+
+      // Half-open [monthStart, nextMonthStart) date strings; SQL applies the MT zone.
+      const [y, m] = month.split("-").map(Number);
+      const monthStart = `${month}-01`;
+      const nextY = m === 12 ? y + 1 : y;
+      const nextM = m === 12 ? 1 : m + 1;
+      const nextMonthStart = `${nextY}-${String(nextM).padStart(2, "0")}-01`;
+
+      const count = await getReferralsCount(monthStart, nextMonthStart);
+      return res.json({ month, count });
+    } catch (error) {
+      console.error("[insights] Error computing referrals count:", error);
+      return res.status(500).json({ error: "Failed to compute referrals count" });
     }
   });
 

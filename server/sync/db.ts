@@ -1613,6 +1613,51 @@ export async function insertSubmission(fields: {
   return result.rows[0].id as number;
 }
 
+/**
+ * Read-only inflow count: inbound INTAKE submissions received within a month,
+ * bounded in Mountain Time (America/Denver). Used by the Insights "Referrals in
+ * [month]" card. Replaces Lane's manual list-count (which caps at ~50 rows and
+ * mixes in non-intake form types).
+ *
+ * Bounds are passed as half-open [monthStart, nextMonthStart) date strings
+ * ('YYYY-MM-DD'); the SQL converts each MT wall-clock midnight to the correct
+ * UTC instant via `AT TIME ZONE 'America/Denver'`, so an 11pm-MT submission on
+ * the last day of a month counts in that month (not the next under naive UTC).
+ *
+ * NOTE: form_submissions.created_at is stored as TEXT in prod (SQLite→PG type
+ * drift; the DDL says TIMESTAMPTZ) — so we cast `created_at::timestamptz`. All
+ * rows are server-generated ISO timestamps (verified 0 uncastable / 0 null).
+ *
+ * Definition (default, easily switchable):
+ *   - form_type = 'intake'  (excludes provider_availability / consent / feedback)
+ *   - ALL sources (rfs_v2 self-submissions + uploaded_referral staff referrals)
+ *   - COUNT(*) = submissions (a re-submitting contact counts twice)
+ *   - test rows excluded by name (see below)
+ * To switch later (one-line edits):
+ *   - referral-sourced only → uncomment the `source = 'uploaded_referral'` line
+ *   - distinct people → swap COUNT(*) for COUNT(DISTINCT contact_id)
+ *
+ * Test-row exclusion: `name NOT LIKE 'ZZ_%'`. (Do NOT exclude by contact_id —
+ * ALL real intake contacts live in the 900000+ range via generateIntakeContactId,
+ * so a `contact_id < 900000` filter would zero out the count.)
+ */
+export async function getReferralsCount(monthStart: string, nextMonthStart: string): Promise<number> {
+  const pool = getPool();
+  const result = await pool.query(
+    `
+    SELECT COUNT(*)::int AS count
+    FROM form_submissions
+    WHERE form_type = 'intake'
+      AND created_at::timestamptz >= ($1::timestamp AT TIME ZONE 'America/Denver')
+      AND created_at::timestamptz <  ($2::timestamp AT TIME ZONE 'America/Denver')
+      AND name NOT LIKE 'ZZ_%'
+      -- AND source = 'uploaded_referral'   -- toggle: referral-sourced only (off by default)
+    `,
+    [monthStart, nextMonthStart],
+  );
+  return (result.rows[0]?.count as number) ?? 0;
+}
+
 export async function getRecentSubmissions(limit: number = 50): Promise<FormSubmission[]> {
   const pool = getPool();
   const result = await pool.query(`
