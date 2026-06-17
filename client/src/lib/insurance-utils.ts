@@ -69,6 +69,8 @@ export const INSURANCE_NORMALIZATION_MAP: Record<string, string> = {
   "pres commercial": "Presbyterian Commercial",
   "pres": "Presbyterian Commercial",
   "presbyterian health plan": "Presbyterian Commercial",
+  "pres comm": "Presbyterian Commercial", // abbreviation (item 3)
+  "pres commerical": "Presbyterian Commercial", // typo handling (item 3)
 
   // 3. BlueCross BlueShield Commercial / Highmark
   "bcbs of nm": "BlueCross BlueShield Commercial",
@@ -89,6 +91,13 @@ export const INSURANCE_NORMALIZATION_MAP: Record<string, string> = {
   "blue cross blue shield fep": "BlueCross BlueShield Commercial",
   "bcbsnm": "BlueCross BlueShield Commercial",
   "bcbs nm": "BlueCross BlueShield Commercial",
+  // Canonical round-trip (item 1): the normalizer must recognize its own output.
+  // "BlueCross BlueShield Commercial" lowercases to "bluecross..." (no space), so
+  // the space-required "blue cross" keyword and the "bcbs" keyword both miss it —
+  // without this exact key it fell through to Unknown (104 live contacts).
+  "bluecross blueshield commercial": "BlueCross BlueShield Commercial",
+  "blue cross blue shiled": "BlueCross BlueShield Commercial", // typo handling
+  "bluecross blueshiled": "BlueCross BlueShield Commercial", // typo handling
 
   // 4. Tricare
   "tricare": "Tricare",
@@ -110,6 +119,10 @@ export const INSURANCE_NORMALIZATION_MAP: Record<string, string> = {
   "turquoise care presbyterian": "Presbyterian Turquoise Care",
   "truq care presbyterian health plan": "Presbyterian Turquoise Care",
   "presbyterian centennial": "Presbyterian Turquoise Care",
+  // Abbreviations (item 3): "Centennial" is NM Medicaid managed care = Turquoise
+  // Care (same convention as "presbyterian centennial" above).
+  "pres cent": "Presbyterian Turquoise Care",
+  "presbyterian - cent": "Presbyterian Turquoise Care",
 
   // 6. BlueCross BlueShield Turquoise Care (Medicaid managed care)
   // Canonical-form self-map so this category round-trips through
@@ -253,6 +266,23 @@ export function normalizeInsurance(rawValue: string | null | undefined): Insuran
   if (!mapped && normalized.includes("(")) {
     const withoutParens = normalized.replace(/\s*\([^)]*\)\s*/g, "").trim();
     mapped = INSURANCE_NORMALIZATION_MAP[withoutParens];
+  }
+
+  // Qualifier-aware BCBS Turquoise Care (item 2): a string carrying BOTH a BCBS
+  // signal (bcbs / blue cross / bluecross — including the concatenated canonical
+  // form) AND "turquoise" must map to the BCBS Turquoise variant, NOT Presbyterian.
+  // This MUST run before the keyword loop below, whose unconditional
+  // "turquoise care" rule maps to Presbyterian and whose "bcbs"/"blue cross" rules
+  // map to Commercial — either of which would mis-bucket "BCBS Turquoise" strings
+  // that aren't covered by an exact key (e.g. bare "BCBS Turquoise" without "Care").
+  if (!mapped) {
+    const hasBcbsSignal =
+      normalized.includes("bcbs") ||
+      normalized.includes("blue cross") ||
+      normalized.includes("bluecross");
+    if (hasBcbsSignal && normalized.includes("turquoise")) {
+      mapped = "BlueCross BlueShield Turquoise Care";
+    }
   }
 
   // If still no match, try keyword-based matching for common patterns
