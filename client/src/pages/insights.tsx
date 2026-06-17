@@ -4,6 +4,13 @@ import { PageLayout } from "@/components/layout/page-layout";
 import { MetricCard } from "@/components/ui/metric-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/page-loader";
 import { FallbackBanner } from "@/components/ui/fallback-banner";
@@ -205,6 +212,36 @@ export default function Insights() {
     queryFn: async () => {
       const res = await fetch("/api/insights/status-durations", { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch status durations");
+      return res.json();
+    },
+  });
+
+  // ---- Monthly referral inflow (intake submissions per month, MT-bounded) ----
+  // Recent months for the selector, anchored to the CURRENT month in Mountain
+  // Time (not the browser/UTC month), then pure integer math (no TZ ambiguity).
+  const monthOptions = useMemo(() => {
+    const cur = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Denver", year: "numeric", month: "2-digit",
+    }).format(new Date()); // "YYYY-MM"
+    const MONTHS = ["January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December"];
+    let [y, m] = cur.split("-").map(Number);
+    const opts: { value: string; label: string }[] = [];
+    for (let i = 0; i < 12; i++) {
+      opts.push({ value: `${y}-${String(m).padStart(2, "0")}`, label: `${MONTHS[m - 1]} ${y}` });
+      m -= 1;
+      if (m === 0) { m = 12; y -= 1; }
+    }
+    return opts;
+  }, []);
+  const [selectedMonth, setSelectedMonth] = useState(() => monthOptions[0].value);
+  const selectedMonthLabel = monthOptions.find((o) => o.value === selectedMonth)?.label ?? selectedMonth;
+
+  const { data: referralsData } = useQuery<{ month: string; count: number }>({
+    queryKey: ["/api/insights/referrals-count", selectedMonth],
+    queryFn: async () => {
+      const res = await fetch(`/api/insights/referrals-count?month=${selectedMonth}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch referrals count");
       return res.json();
     },
   });
@@ -637,6 +674,33 @@ export default function Insights() {
             value={safeNumber(metrics.readyToSchedule)}
             variant="success"
           />
+        </div>
+
+        {/* Monthly referral inflow — intake submissions received in the selected
+            month (Mountain Time). Uncapped + intake-only, so this is typically
+            HIGHER than the manual submissions-list count (which caps at ~50 and
+            mixes form types). The label/tooltip make that an expected correction. */}
+        <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+          <div className="sm:w-72">
+            <MetricCard
+              label={`Referrals in ${selectedMonthLabel}`}
+              value={safeNumber(referralsData?.count ?? 0)}
+              tooltip="All intake submissions received that month (Mountain Time). Uncapped and intake-only — this is the corrected count that replaces the manual submissions-list tally."
+            />
+          </div>
+          <div className="sm:w-52 space-y-1">
+            <label className="text-xs text-muted-foreground">Month</label>
+            <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+              <SelectTrigger data-testid="select-referrals-month">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="max-h-[280px]">
+                {monthOptions.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
