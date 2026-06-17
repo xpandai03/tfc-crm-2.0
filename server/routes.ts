@@ -5577,7 +5577,12 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Not authorized for TN scheduling (Beta)" });
       }
 
-      const { contactId } = req.body as { contactId?: number };
+      // ---- Phase 1 redesign: read the EXPLICIT, user-confirmed inputs from the
+      // capture modal. Provider/date/time/modality are supplied directly instead
+      // of inferred from assignment/contact state (the source of prior errors). ----
+      const { contactId, providerName, appointmentDate, appointmentTime, modality } = req.body as {
+        contactId?: number; providerName?: string; appointmentDate?: string; appointmentTime?: string; modality?: string;
+      };
       if (!contactId || typeof contactId !== "number") {
         return res.status(400).json({ error: "contactId (number) is required" });
       }
@@ -5586,19 +5591,26 @@ export async function registerRoutes(
       if (!contact) return res.status(404).json({ error: "Contact not found" });
       const contactName = contact.name || `Contact ${contactId}`;
 
-      // ---- Re-check the three preconditions server-side (defense in depth) ----
-      const assignment = await getLatestAssignment(contactId);
-      const emailSent = await hasSnapshotForTemplate(contactId, APPOINTMENT_CONFIRMATION_TEMPLATE_ID);
-      const hasDate = !!(contact.scheduledAppointmentDate && contact.scheduledAppointmentDate.trim());
-      const hasTime = !!(contact.scheduledAppointmentTime && contact.scheduledAppointmentTime.trim());
-
-      const unmet: string[] = [];
-      if (!assignment) unmet.push("provider not assigned");
-      if (!emailSent) unmet.push("initial appointment confirmation email not sent");
-      if (!hasDate || !hasTime) unmet.push("scheduled appointment date/time not set");
-      if (!contactHasIntakeData(contact)) unmet.push("no intake form data to generate PDF");
-      if (unmet.length > 0) {
-        return res.status(412).json({ error: `Preconditions not met: ${unmet.join("; ")}` });
+      // ---- Validate the explicit inputs server-side (do NOT trust the modal). This
+      // REPLACES the old precondition gate (providerAssigned/emailSent/date-time
+      // lookups): the gate's provider/date/time guarantees are now preserved as
+      // explicit-input validation. Documents (intake/snapshot) keep their existing
+      // auto-resolution and are advised in the modal; manual override is Phase 2. ----
+      const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+      const APPT_TIME_RE = /^\d{1,2}:\d{2}\s*(am|pm)$/i;
+      const provider = (providerName || "").trim();
+      const apptDateIso = (appointmentDate || "").trim();
+      const apptTime = (appointmentTime || "").trim();
+      const apptModality = (modality || "").trim();
+      const invalid: string[] = [];
+      if (!provider) invalid.push("provider is required");
+      if (!ISO_DATE_RE.test(apptDateIso)) invalid.push("appointmentDate must be YYYY-MM-DD");
+      if (!APPT_TIME_RE.test(apptTime)) invalid.push("appointmentTime must be h:mm am/pm");
+      if (apptModality !== "In-Person" && apptModality !== "Telehealth") {
+        invalid.push("modality must be In-Person or Telehealth");
+      }
+      if (invalid.length > 0) {
+        return res.status(422).json({ error: `Invalid schedule inputs: ${invalid.join("; ")}` });
       }
 
       if (!process.env.TN_API_KEY) {
@@ -5608,7 +5620,11 @@ export async function registerRoutes(
       // ---- Build the V2 payload ----
       const { firstName, lastName } = parseName(contactName);
       const dob = dobToMMDDYYYY(contact.patientDob);
-      const { text: alertText, warnings, modality: appointmentModality } = computeAppointmentAlertText(contact, dob);
+      // Drive the alert text AND the discrete appointment_modality from the
+      // EXPLICIT modality (not contact.modality), so the silent else→"In-Person"
+      // default inside computeAppointmentAlertText is unreachable on the modal path.
+      const { text: alertText, warnings, modality: appointmentModality } =
+        computeAppointmentAlertText({ ...contact, modality: apptModality }, dob);
 
       // Full HTTPS URLs the TN agent fetches (with its X-API-Key), generated
       // on-demand server-side: the intake referral PDF and the real
@@ -5633,11 +5649,11 @@ export async function registerRoutes(
         rfs_url: contact.rfsLink || "",
         intake_pdf_url: intakePdfUrl,
         snapshot_pdf_url: snapshotPdfUrl,
-        appointment_date: isoDateToMDY(contact.scheduledAppointmentDate),
-        appointment_time: (contact.scheduledAppointmentTime || "").trim(),
+        appointment_date: isoDateToMDY(apptDateIso),
+        appointment_time: apptTime,
         appointment_alert_text: alertText,
         appointment_modality: appointmentModality,
-        clinician_name: assignment!.providerName || "",
+        clinician_name: provider,
         contact_id: contactId,
         run_id: runId,
         callback_url: callbackUrl,

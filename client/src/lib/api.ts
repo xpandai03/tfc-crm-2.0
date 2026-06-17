@@ -449,18 +449,31 @@ export async function saveScheduledAppointment(
 }
 
 /**
+ * Explicit, user-confirmed schedule inputs (Phase 1 redesign). These replace the
+ * server-side inference of provider/date/time/modality — the capture modal
+ * collects and re-confirms them at schedule time.
+ */
+export interface TnScheduleInputs {
+  providerName: string;     // → clinician_name
+  appointmentDate: string;  // ISO 'YYYY-MM-DD' → m/d/yyyy in payload
+  appointmentTime: string;  // 'h:mm am/pm'
+  modality: "In-Person" | "Telehealth"; // drives appointment_alert_text (no silent default)
+}
+
+/**
  * Run the synchronous V2 workflow (create patient + upload PDFs + schedule).
  * Can take 90–180s; uses a 240s client-side timeout to match the server (C14).
  * Throws Error("<status>: <message>") on non-2xx so callers can show the reason.
+ * Phase 1: provider/date/time/modality are supplied explicitly from the modal.
  */
-export async function createTherapyNotesWithSchedule(contactId: number): Promise<TnV2RunResult> {
+export async function createTherapyNotesWithSchedule(contactId: number, inputs: TnScheduleInputs): Promise<TnV2RunResult> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 240_000);
   try {
     const res = await fetch("/api/therapy-notes/create-with-schedule", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contactId }),
+      body: JSON.stringify({ contactId, ...inputs }),
       credentials: "include",
       cache: "no-store",
       signal: controller.signal,

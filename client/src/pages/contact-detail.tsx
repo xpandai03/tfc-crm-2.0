@@ -68,7 +68,7 @@ import {
   Hourglass,
   FlaskConical,
 } from "lucide-react";
-import { getContactSnapshot, updateContactStatus, addNoteToContact, deleteNote, deleteAssignment as deleteAssignmentApi, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, syncContactFromExcel, updateContactIntake, updateContactIdentity, deleteContact, getTnV2State, createTherapyNotesWithSchedule, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
+import { getContactSnapshot, updateContactStatus, addNoteToContact, deleteNote, deleteAssignment as deleteAssignmentApi, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, syncContactFromExcel, updateContactIntake, updateContactIdentity, deleteContact, getTnV2State, createTherapyNotesWithSchedule, type TnScheduleInputs, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
 import { ScheduleAppointmentWidget } from "@/components/ui/schedule-appointment-widget";
 import { ScheduleTnBetaModal } from "@/components/ui/schedule-tn-beta-modal";
 import { ReminderModal } from "@/components/ui/reminder-modal";
@@ -645,7 +645,7 @@ export default function ContactDetail() {
   }, [tnV2State]);
 
   const createWithScheduleMutation = useMutation({
-    mutationFn: () => createTherapyNotesWithSchedule(Number(contactId)),
+    mutationFn: (inputs: TnScheduleInputs) => createTherapyNotesWithSchedule(Number(contactId), inputs),
     onSuccess: (result) => {
       setShowScheduleTnModal(false);
       // Async pattern: the trigger now returns 202 "started" immediately. Live
@@ -2427,7 +2427,7 @@ export default function ContactDetail() {
                               variant="outline"
                               className="w-full justify-start border-amber-400 text-amber-700 hover:bg-amber-50 hover:text-amber-800 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950/30"
                               size="sm"
-                              disabled={createWithScheduleMutation.isPending || tnRun.inFlight || !tnV2Preconditions.ready}
+                              disabled={createWithScheduleMutation.isPending || tnRun.inFlight}
                               onClick={() => setShowScheduleTnModal(true)}
                               data-testid="button-add-to-schedule-tn-beta"
                             >
@@ -2451,10 +2451,11 @@ export default function ContactDetail() {
                           {tnRun.inFlight ? (
                             <p>TN workflow already in progress{tnRun.latestPhaseMessage ? ` — ${tnRun.latestPhaseMessage}` : ""}</p>
                           ) : tnV2Preconditions.ready ? (
-                            <p>Beta: extended TN workflow including PDF uploads and appointment scheduling</p>
+                            <p>Beta: confirm provider, date/time, and modality in the modal, then create the patient, upload PDFs, and schedule.</p>
                           ) : (
                             <div className="space-y-1">
-                              <p className="font-medium">Complete these first:</p>
+                              <p>Beta: opens a modal to confirm provider, date/time, and modality before scheduling.</p>
+                              <p className="font-medium">Heads-up (you can still proceed):</p>
                               <ul className="list-disc pl-4">
                                 {tnV2Preconditions.missing.map((m) => (
                                   <li key={m}>{m}</li>
@@ -2521,8 +2522,12 @@ export default function ContactDetail() {
           isOpen={showScheduleTnModal}
           onClose={() => setShowScheduleTnModal(false)}
           contact={contact || null}
-          providerName={tnV2State?.providerName ?? null}
-          onConfirm={() => createWithScheduleMutation.mutate()}
+          defaultProviderName={tnV2State?.providerName ?? null}
+          defaultDate={tnV2State?.scheduledAppointmentDate ?? contact?.scheduledAppointmentDate ?? null}
+          defaultTime={tnV2State?.scheduledAppointmentTime ?? contact?.scheduledAppointmentTime ?? null}
+          canGenerateIntakePdf={tnV2State?.canGenerateIntakePdf}
+          emailSent={tnV2State?.emailSent}
+          onConfirm={(inputs) => createWithScheduleMutation.mutate(inputs)}
           isSubmitting={createWithScheduleMutation.isPending}
         />
       )}
