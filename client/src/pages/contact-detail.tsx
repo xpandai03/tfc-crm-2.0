@@ -79,6 +79,7 @@ import { useDataSource, type DataSource } from "@/lib/data-source-context";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import type { ContactSnapshot, WaitlistContact } from "@shared/schema";
+import { isTnV2User } from "@shared/access-control";
 import { buildTimelineEvents, formatFullDate, matchSnapshotForEmailEvent, type EmailSnapshotMeta, type TimelineEvent } from "@/lib/timeline";
 import { ProviderMatchingModal } from "@/components/ui/provider-matching-modal";
 import { CreateTnModal } from "@/components/ui/create-tn-modal";
@@ -614,9 +615,9 @@ export default function ContactDetail() {
     },
   });
 
-  // ---- TN V2: "Add to Schedule in TN (Beta)" (gated to TFC beta team) ----
-  const TN_V2_BETA_EMAILS = ["lsego@tfc.health", "amanda@tfc.health", "sandra@tfc.health", "chantel@tfc.health", "ebenavidez@tfc.health", "raunek@tfc.health"];
-  const canUseTnV2 = !!user?.email && TN_V2_BETA_EMAILS.includes(user.email.toLowerCase());
+  // ---- "Add to Schedule in TN": open to all authenticated CRM users via the
+  // shared TN_V2_OPEN_TO_ALL flag (kill switch in shared/access-control.ts). ----
+  const canUseTnV2 = isTnV2User(user?.email);
 
   const { data: tnV2State, refetch: refetchTnV2State } = useQuery({
     queryKey: ["/api/therapy-notes/v2/state", contactId],

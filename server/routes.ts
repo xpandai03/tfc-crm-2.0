@@ -78,7 +78,7 @@ import {
   getActivityForContact,
   getStatusDurations,
 } from "./activity/db";
-import { isRestrictedUser, canAccessReferralUpload } from "@shared/access-control";
+import { isRestrictedUser, canAccessReferralUpload, isTnV2User } from "@shared/access-control";
 import { normalizeReasonForTherapy } from "@shared/reason-canonicals";
 import { getStatusLabel } from "@shared/status-codes";
 import { extractReferralData } from "./referral/extract";
@@ -351,18 +351,13 @@ const TN_AGENT_URL =
   process.env.TN_AGENT_URL || "https://axiom-browser-agent-clone-production.up.railway.app/api/tn/create-patient";
 
 // ---- TN V2 "Add to Schedule in TN (Beta)" ----------------------------------
-// Gated to TFC's beta team only (locked C6). Separate, smaller allow-list than
-// TN_ALLOWED_EMAILS so the untested V2 endpoint stays contained to 5 people.
-const TN_V2_BETA_EMAILS = [
-  "lsego@tfc.health",
-  "amanda@tfc.health",
-  "sandra@tfc.health",
-  "chantel@tfc.health",
-  "ebenavidez@tfc.health", // Erica Benavidez
-  "raunek@tfc.health",     // dev/testing access
-];
+// "Add to Schedule in TN" access. Now open to all AUTHENTICATED CRM users via the
+// shared TN_V2_OPEN_TO_ALL flag (see shared/access-control.ts). Kept as a thin
+// delegate so the three endpoint call sites are unchanged and the client + server
+// gates move in lockstep from one shared control. Flip TN_V2_OPEN_TO_ALL=false
+// there to re-restrict both sides to TN_V2_BETA_EMAILS.
 function isTnV2BetaUser(email: string | null | undefined): boolean {
-  return !!email && TN_V2_BETA_EMAILS.includes(email.toLowerCase().trim());
+  return isTnV2User(email);
 }
 
 // V2 base URL is configurable (C12). Reuse the V1 env if a dedicated one isn't
