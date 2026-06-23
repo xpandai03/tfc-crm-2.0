@@ -54,7 +54,10 @@ interface StatusLegendModalProps {
 }
 
 export function StatusLegendModal({ trigger }: StatusLegendModalProps) {
-  const umbrellaOrder: UmbrellaId[] = ["WL", "PS", "SCH", "PMR", "INS"];
+  // Order matches the Kanban board's PIPELINE_COLUMNS (WL, PS, SCH, REF, PMR, INS).
+  // REF was missing here — its color was wired into umbrellaStyles in v156 but it
+  // was never added to this render list, so the legend didn't show it.
+  const umbrellaOrder: UmbrellaId[] = ["WL", "PS", "SCH", "REF", "PMR", "INS"];
 
   return (
     <Dialog>
