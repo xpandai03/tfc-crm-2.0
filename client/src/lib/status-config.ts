@@ -29,8 +29,11 @@ export const STATUS_LABELS: Record<number, string> = {
   203: "No Response",
   204: "Declined",
   205: "Initial Appt Completed",
+  206: "Rescheduling Initial Appointment",
   300: "Submitted for Review",
   400: "Insurance Not Accepted",
+  402: "Referred Out",
+  500: "Resources Need to be Sent",
 };
 
 // Status code descriptions for the legend modal
@@ -46,8 +49,11 @@ export const STATUS_DESCRIPTIONS: Record<number, string> = {
   203: "No response to scheduling attempts",
   204: "Declined scheduling",
   205: "First appointment completed, moved to inactive",
+  206: "Client cancelled their initial appointment and is being rescheduled",
   300: "Requires PM attention",
   400: "Cannot proceed due to insurance",
+  402: "Referred out to another provider/service (inactive)",
+  500: "Active referral — resources need to be sent to the client",
 };
 
 /**
@@ -67,7 +73,7 @@ export const STATUS_UMBRELLAS = {
     color: "slate"
   },
   PS: {
-    codes: [200, 201],
+    codes: [200, 201, 206],
     entry: 200,
     label: "Pending Scheduling",
     color: "amber"
@@ -78,6 +84,12 @@ export const STATUS_UMBRELLAS = {
     label: "Scheduled",
     color: "green"
   },
+  REF: {
+    codes: [500],
+    entry: 500,
+    label: "Referred To Other Services",
+    color: "teal"
+  },
   PMR: {
     codes: [300],
     entry: 300,
@@ -85,7 +97,7 @@ export const STATUS_UMBRELLAS = {
     color: "purple"
   },
   INS: {
-    codes: [103, 104, 203, 204, 205, 400],
+    codes: [103, 104, 203, 204, 205, 400, 402],
     entry: 400,
     label: "Inactive",
     color: "red"
@@ -106,6 +118,7 @@ export const PIPELINE_COLUMNS: PipelineColumn[] = [
   { id: "WL", label: "Waitlist", codes: STATUS_UMBRELLAS.WL.codes, color: "slate" },
   { id: "PS", label: "Pending Scheduling", codes: STATUS_UMBRELLAS.PS.codes, color: "amber" },
   { id: "SCH", label: "Scheduled", codes: STATUS_UMBRELLAS.SCH.codes, color: "green" },
+  { id: "REF", label: "Referred To Other Services", codes: STATUS_UMBRELLAS.REF.codes, color: "teal" },
   { id: "PMR", label: "PM Review", codes: STATUS_UMBRELLAS.PMR.codes, color: "purple" },
   { id: "INS", label: "Inactive", codes: STATUS_UMBRELLAS.INS.codes, color: "red" },
 ];
@@ -142,7 +155,7 @@ export const ACTIVE_STATUS_CODES = [
  * 2. Add to appropriate umbrella in STATUS_UMBRELLAS
  * 3. If terminal/non-actionable: add to INACTIVE_STATUS_CODES
  */
-export const INACTIVE_STATUS_CODES: number[] = [103, 104, 203, 204, 205, 400];
+export const INACTIVE_STATUS_CODES: number[] = [103, 104, 203, 204, 205, 400, 402];
 
 /**
  * BACKWARD COMPATIBILITY: STATUS_GROUPS
@@ -157,7 +170,7 @@ export const STATUS_GROUPS = {
   scheduled: [202] as readonly number[],
   pm_review: [300] as readonly number[],
   declined: [103, 204] as readonly number[],
-  inactive: [103, 104, 203, 204, 205, 400] as readonly number[],
+  inactive: [103, 104, 203, 204, 205, 400, 402] as readonly number[],
 } as const;
 
 /**

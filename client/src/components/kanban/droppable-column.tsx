@@ -11,7 +11,7 @@ interface DroppableColumnProps {
   contacts: WaitlistContact[];
   onAddNote: (contact: WaitlistContact) => void;
   className?: string;
-  color?: "slate" | "amber" | "green" | "purple" | "red";
+  color?: "slate" | "amber" | "green" | "teal" | "purple" | "red";
   currentUserEmail?: string;
   isInactiveColumn?: boolean;
 }
@@ -32,6 +32,11 @@ const colorStyles = {
     header: "bg-green-50 dark:bg-green-900/30",
     badge: "bg-green-200 text-green-800 dark:bg-green-900/50 dark:text-green-300",
     border: "border-green-200 dark:border-green-800",
+  },
+  teal: {
+    header: "bg-teal-50 dark:bg-teal-900/30",
+    badge: "bg-teal-200 text-teal-800 dark:bg-teal-900/50 dark:text-teal-300",
+    border: "border-teal-200 dark:border-teal-800",
   },
   purple: {
     header: "bg-purple-50 dark:bg-purple-900/30",

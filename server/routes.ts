@@ -828,6 +828,7 @@ export async function registerRoutes(
               : statusCode >= 200 && statusCode < 300 ? "PS"
               : statusCode >= 300 && statusCode < 400 ? "PMR"
               : statusCode >= 400 && statusCode < 500 ? "INS"
+              : statusCode >= 500 && statusCode < 600 ? "REF"
               : "unknown";
 
             const notes = parseNotesFromLastNote(syncContact.lastNote || undefined);
@@ -870,6 +871,7 @@ export async function registerRoutes(
                 : statusCode >= 200 && statusCode < 300 ? "PS"
                 : statusCode >= 300 && statusCode < 400 ? "PMR"
                 : statusCode >= 400 && statusCode < 500 ? "INS"
+                : statusCode >= 500 && statusCode < 600 ? "REF"
                 : "unknown";
 
               const assignedTo = (() => {
@@ -947,6 +949,7 @@ export async function registerRoutes(
             : statusCode >= 200 && statusCode < 300 ? "PS"
             : statusCode >= 300 && statusCode < 400 ? "PMR"
             : statusCode >= 400 && statusCode < 500 ? "INS"
+            : statusCode >= 500 && statusCode < 600 ? "REF"
             : "unknown";
           return res.json({
             ...syncContact,
@@ -1053,6 +1056,7 @@ export async function registerRoutes(
                : statusCode >= 200 && statusCode < 300 ? "PS"
                : statusCode >= 300 && statusCode < 400 ? "PMR"
                : statusCode >= 400 && statusCode < 500 ? "INS"
+               : statusCode >= 500 && statusCode < 600 ? "REF"
                : "unknown")
             : "unknown";
 
@@ -1170,6 +1174,7 @@ export async function registerRoutes(
           : statusCode >= 200 && statusCode < 300 ? "PS"
           : statusCode >= 300 && statusCode < 400 ? "PMR"
           : statusCode >= 400 && statusCode < 500 ? "INS"
+          : statusCode >= 500 && statusCode < 600 ? "REF"
           : "unknown";
         return res.json({
           ...mockContact,
@@ -1723,8 +1728,10 @@ export async function registerRoutes(
         const contacts = await getAllSyncContacts();
         const activeContacts = contacts.filter((c) => {
           const sc = c.statusCode ?? 0;
-          // Inactive: 103, 104, 203, 204, 205, 400+
-          return ![103, 104, 203, 204, 205].includes(sc) && sc < 400;
+          // Inactive: 103, 104, 203, 204, 205, and the 400-block (incl. 402 Referred Out).
+          // Active: sub-400 (minus the explicit inactives) PLUS the 500-block
+          // (REF "Referred To Other Services" — 500 Resources Need to be Sent is active).
+          return ![103, 104, 203, 204, 205].includes(sc) && (sc < 400 || (sc >= 500 && sc < 600));
         });
 
         const waitDays = activeContacts
@@ -2200,12 +2207,14 @@ export async function registerRoutes(
   });
 
   // Valid status codes for the umbrella model
-  // WL (100-104), PS (200-205), PMR (300), INS (400)
-  // Note: 205 (Initial Appt Completed) is inactive and appears in INS column
-  const VALID_STATUS_CODES = [100, 101, 102, 103, 104, 200, 201, 202, 203, 204, 205, 300, 400];
+  // WL (100-104), PS (200-206), PMR (300), INS (400/402), REF (500)
+  // Note: 205 (Initial Appt Completed) is inactive and appears in INS column;
+  // 206 (Rescheduling Initial Appointment) is active in PS; 402 (Referred Out)
+  // is inactive in INS; 500 (Resources Need to be Sent) is active in REF.
+  const VALID_STATUS_CODES = [100, 101, 102, 103, 104, 200, 201, 202, 203, 204, 205, 206, 300, 400, 402, 500];
 
   // Umbrella types for status grouping
-  type UmbrellaId = "WL" | "PS" | "PMR" | "INS" | "unknown";
+  type UmbrellaId = "WL" | "PS" | "REF" | "PMR" | "INS" | "unknown";
 
   // Get umbrella ID from status code
   function getUmbrellaForStatusCode(statusCode: number | undefined): UmbrellaId {
@@ -2214,6 +2223,7 @@ export async function registerRoutes(
     if (statusCode >= 200 && statusCode < 300) return "PS";
     if (statusCode >= 300 && statusCode < 400) return "PMR";
     if (statusCode >= 400 && statusCode < 500) return "INS";
+    if (statusCode >= 500 && statusCode < 600) return "REF";
     return "unknown";
   }
 

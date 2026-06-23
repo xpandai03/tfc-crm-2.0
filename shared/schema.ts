@@ -13,7 +13,7 @@ export const contactStatuses = [
 export type ContactStatus = (typeof contactStatuses)[number];
 
 // Umbrella status types for pipeline columns
-export const umbrellaIds = ["WL", "PS", "PMR", "INS", "unknown"] as const;
+export const umbrellaIds = ["WL", "PS", "REF", "PMR", "INS", "unknown"] as const;
 export type UmbrellaId = (typeof umbrellaIds)[number];
 
 // Contact snapshot schema (matches expanded server contract)

@@ -28,8 +28,11 @@ export const STATUS_CODE_LABELS: Record<number, string> = {
   203: "waiting",
   204: "closed",
   205: "closed",
+  206: "waiting",       // Rescheduling Initial Appointment (PS, active)
   300: "on_hold",
   400: "closed",
+  402: "closed",        // Referred Out (Inactive)
+  500: "waiting",       // Resources Need to be Sent (Referred To Other Services, active)
 };
 
 export function getStatusLabel(code: number): string {
