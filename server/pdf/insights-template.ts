@@ -12,16 +12,20 @@ import fs from "fs";
 
 type Content = Record<string, unknown>;
 
-// Status code → active (same logic as frontend isActiveStatus)
+// Status code → active (same logic as frontend isActiveStatus).
+// Active: sub-400 (minus explicit inactives) PLUS the 500-block (REF, active).
+// Inactive: 103/104/203/204/205 and the 400-block (incl. 402 Referred Out).
 function isActive(code: number): boolean {
-  return ![103, 104, 203, 204, 205].includes(code) && code < 400;
+  return ![103, 104, 203, 204, 205].includes(code) && (code < 400 || (code >= 500 && code < 600));
 }
 
 function getColumnLabel(code: number): string {
   if (code >= 100 && code < 200) return "Waitlist";
+  if (code === 206) return "Pending Scheduling"; // Rescheduling Initial Appointment (active PS)
   if (code >= 200 && code < 203) return "Pending Scheduling";
   if (code >= 203 && code < 300) return "Scheduled";
   if (code >= 300 && code < 400) return "On Hold";
+  if (code >= 500 && code < 600) return "Referred To Other Services";
   return "Inactive";
 }
 

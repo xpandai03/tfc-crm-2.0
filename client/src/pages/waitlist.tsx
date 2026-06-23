@@ -614,14 +614,14 @@ export default function Waitlist() {
           >
             <ScrollArea className="w-full">
               <div className="flex gap-4 pb-4 min-w-max">
-                {PIPELINE_COLUMNS.filter(col => col.id !== "PMR" || isPM).map((column) => (
+                {PIPELINE_COLUMNS.filter(col => (col.id !== "PMR" || isPM) && col.id !== "INS").map((column) => (
                   <DroppableColumn
                     key={column.id}
                     columnId={column.id}
                     title={column.label}
                     contacts={getContactsByColumn(column.id)}
                     onAddNote={handleAddNote}
-                    color={column.color as "slate" | "amber" | "green" | "purple" | "red"}
+                    color={column.color as "slate" | "amber" | "green" | "teal" | "purple" | "red"}
                     className="h-[calc(100vh-220px)] min-h-[400px]"
                     currentUserEmail={user?.email}
                     isInactiveColumn={column.id === "INS"}

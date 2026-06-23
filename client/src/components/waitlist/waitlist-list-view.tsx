@@ -166,6 +166,7 @@ const umbrellaColors: Record<UmbrellaId, string> = {
   WL: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
   PS: "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300",
   SCH: "bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200",
+  REF: "bg-teal-100 text-teal-700 dark:bg-teal-900/50 dark:text-teal-300",
   PMR: "bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300",
   INS: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
 };
