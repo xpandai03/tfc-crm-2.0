@@ -24,7 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { ArrowUpDown, ArrowUp, ArrowDown, Search, X, EyeOff, Shield, AlertTriangle } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatDob } from "@/lib/utils";
 import {
   STATUS_UMBRELLAS,
   STATUS_LABELS,
@@ -591,12 +591,13 @@ export function WaitlistListView({
               </TableHead>
               <TableHead>Assigned To</TableHead>
               <TableHead>Assigned Provider</TableHead>
+              <TableHead>Household</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {sortedContacts.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
+                <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
                   No contacts match the current filters
                 </TableCell>
               </TableRow>
@@ -685,6 +686,33 @@ export function WaitlistListView({
                     <TableCell className="text-sm">
                       {contact.assignedProviderName ? (
                         <span className="text-foreground font-medium">{contact.assignedProviderName}</span>
+                      ) : (
+                        <span className="text-muted-foreground">no provider assigned yet</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      {contact.householdMembers && contact.householdMembers.length > 0 ? (
+                        <div className="space-y-0.5">
+                          {contact.householdMembers.map((m, i) => {
+                            const conflict = !!m.assignedProviderName && !!contact.assignedProviderName
+                              && m.assignedProviderName === contact.assignedProviderName;
+                            return (
+                              <div key={i} className="whitespace-nowrap">
+                                <span className="text-foreground font-medium">
+                                  {m.name}{m.dob ? ` (${formatDob(m.dob)})` : ""}
+                                </span>
+                                {m.assignedProviderName && (
+                                  <span className={cn(
+                                    "ml-1",
+                                    conflict ? "text-red-600 dark:text-red-400 font-semibold" : "text-muted-foreground"
+                                  )}>
+                                    · {conflict ? "⚠ same: " : ""}{m.assignedProviderName}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       ) : (
                         <span className="text-muted-foreground">—</span>
                       )}

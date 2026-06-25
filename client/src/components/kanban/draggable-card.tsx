@@ -9,7 +9,7 @@ import { OwnerBadge } from "@/components/ui/owner-badge";
 import { cn, formatDob } from "@/lib/utils";
 import { normalizeInsurance } from "@/lib/insurance-utils";
 import { getAttentionFlags } from "@/lib/api";
-import { Plus, Clock, Shield, Video, FileText, Brain, AlertTriangle, Cake, UserCheck } from "lucide-react";
+import { Plus, Clock, Shield, Video, FileText, Brain, AlertTriangle, Cake, UserCheck, Users } from "lucide-react";
 import type { WaitlistContact } from "@shared/schema";
 import { computeDaysWaiting } from "@/lib/days-waiting";
 
@@ -177,6 +177,53 @@ export function DraggableCard({ contact, onAddNote, isDragging = false, currentU
             </div>
           </div>
 
+          {/* Always-visible: assigned provider + household members (Lane: at a
+              glance, no hover) so staff can catch same-provider-in-household. */}
+          {!isDragging && (
+            <div className="mt-2 pt-2 border-t border-border/50 space-y-1">
+              <div className="flex items-center gap-1.5 text-[10px]">
+                <UserCheck className={cn("h-3 w-3 flex-shrink-0", contact.assignedProviderName ? "text-blue-500" : "text-muted-foreground")} />
+                <span className="text-muted-foreground">Provider:</span>
+                <span className={cn(
+                  "font-medium truncate",
+                  contact.assignedProviderName ? "text-blue-700 dark:text-blue-300" : "text-muted-foreground italic"
+                )}>
+                  {contact.assignedProviderName || "no provider assigned yet"}
+                </span>
+              </div>
+              {contact.householdMembers && contact.householdMembers.length > 0 && (
+                <>
+                  {contact.householdMembers.slice(0, 3).map((m, i) => {
+                    const conflict = !!m.assignedProviderName && !!contact.assignedProviderName
+                      && m.assignedProviderName === contact.assignedProviderName;
+                    return (
+                      <div key={i} className="flex items-center gap-1.5 text-[10px]">
+                        <Users className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                        <span className="text-muted-foreground">Household:</span>
+                        <span className="font-medium truncate text-foreground">
+                          {m.name}{m.dob ? ` (${formatDob(m.dob)})` : ""}
+                        </span>
+                        {m.assignedProviderName && (
+                          <span className={cn(
+                            "truncate",
+                            conflict ? "text-red-600 dark:text-red-400 font-semibold" : "text-muted-foreground"
+                          )}>
+                            · {conflict ? "⚠ same: " : ""}{m.assignedProviderName}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {contact.householdMembers.length > 3 && (
+                    <p className="text-[10px] text-muted-foreground pl-[18px]">
+                      +{contact.householdMembers.length - 3} more
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
           {/* Hover context: Intake decision data (hidden during drag) */}
           {!isDragging && (
             <div className="grid grid-rows-[0fr] group-hover:grid-rows-[1fr] transition-[grid-template-rows] duration-150">
@@ -237,16 +284,7 @@ export function DraggableCard({ contact, onAddNote, isDragging = false, currentU
                       {reasonDisplay || "Not collected (legacy intake)"}
                     </span>
                   </div>
-                  {/* Assigned Provider — only shown if assigned */}
-                  {contact.assignedProviderName && (
-                    <div className="flex items-center gap-1.5 text-[10px]">
-                      <UserCheck className="h-3 w-3 text-blue-500 flex-shrink-0" />
-                      <span className="text-muted-foreground">Provider:</span>
-                      <span className="font-medium truncate text-blue-700 dark:text-blue-300">
-                        {contact.assignedProviderName}
-                      </span>
-                    </div>
-                  )}
+                  {/* Provider moved to the always-visible section above. */}
                 </div>
               </div>
             </div>

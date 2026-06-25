@@ -935,6 +935,72 @@ export async function getHouseholdMembers(contactId: number, email: string | nul
 }
 
 /**
+ * BULK household resolution for the waitlist board cards.
+ *
+ * ONE simple query (a single seq scan of sync_contacts) + JS grouping — NOT a SQL
+ * self-join. A self-join on email/phone is O(n²) and, with no email/phone index,
+ * measured ~2s on ~1k rows; grouping in JS is O(n) and sub-100ms, needing no index
+ * (so no schema change). Same clustering + placeholder-email guard as
+ * getHouseholdMembers() above, so a card's household exactly matches the contact
+ * profile's household view. Returns Map<contactId, members[]> (member = the OTHER
+ * contact's id + name + dob). No N+1 (one query per board load). The member's
+ * provider is attached by the caller from the shared assignment map — this
+ * function does not query assignments.
+ */
+export async function getHouseholdMembersByAllContacts(): Promise<Map<number, Array<{ contactId: number; name: string; dob: string | null }>>> {
+  // Identical placeholder list to getHouseholdMembers() — keep in sync so the
+  // card cluster never diverges from the profile cluster.
+  const PLACEHOLDER_EMAILS = new Set([
+    "none@gmail.com", "none@none.com", "unknown@gmail.com",
+    "doesnot@haveone.com", "noemail@noemail.com",
+  ]);
+  const pool = getPool();
+  const result = await pool.query(`
+    SELECT contact_id AS "contactId", name, patient_dob AS "dob", email, phone
+    FROM sync_contacts
+  `);
+  type Row = { contactId: number; name: string; dob: string | null; email: string | null; phone: string | null };
+  const rows = result.rows as Row[];
+
+  // Build email/phone → contactId[] groups (same OR + placeholder semantics as
+  // getHouseholdMembers: a contact participates in an email group only if its
+  // email is present and non-placeholder; in a phone group only if phone present).
+  const byEmail = new Map<string, number[]>();
+  const byPhone = new Map<string, number[]>();
+  const rowById = new Map<number, Row>();
+  for (const r of rows) {
+    rowById.set(r.contactId, r);
+    const emailKey = r.email ? r.email.toLowerCase().trim() : "";
+    if (emailKey && !PLACEHOLDER_EMAILS.has(emailKey)) {
+      (byEmail.get(emailKey) ?? byEmail.set(emailKey, []).get(emailKey)!).push(r.contactId);
+    }
+    const phoneKey = r.phone ? r.phone.trim() : "";
+    if (phoneKey) {
+      (byPhone.get(phoneKey) ?? byPhone.set(phoneKey, []).get(phoneKey)!).push(r.contactId);
+    }
+  }
+
+  const map = new Map<number, Array<{ contactId: number; name: string; dob: string | null }>>();
+  for (const r of rows) {
+    const memberIds = new Set<number>();
+    const emailKey = r.email ? r.email.toLowerCase().trim() : "";
+    if (emailKey && !PLACEHOLDER_EMAILS.has(emailKey)) {
+      for (const id of byEmail.get(emailKey) ?? []) if (id !== r.contactId) memberIds.add(id);
+    }
+    const phoneKey = r.phone ? r.phone.trim() : "";
+    if (phoneKey) {
+      for (const id of byPhone.get(phoneKey) ?? []) if (id !== r.contactId) memberIds.add(id);
+    }
+    if (memberIds.size === 0) continue;
+    const members = [...memberIds]
+      .map((id) => { const m = rowById.get(id)!; return { contactId: id, name: m.name, dob: m.dob }; })
+      .sort((a, b) => a.name.localeCompare(b.name));
+    map.set(r.contactId, members);
+  }
+  return map;
+}
+
+/**
  * Get sync health metadata.
  */
 export async function getSyncMeta(): Promise<SyncMeta> {
