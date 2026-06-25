@@ -20,6 +20,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -799,6 +806,31 @@ function buildInitialState(provider: Provider | null): EditFormState {
   };
 }
 
+// Canonical TFC locations for the editable Location dropdown. Locations are an
+// enumerable set (matches provider-matching's ProviderLocation), so we use a
+// dropdown to keep the saved value matching-exact rather than free text.
+const LOCATION_OPTIONS: { code: string; label: string }[] = [
+  { code: "ABQ", label: "Albuquerque (ABQ)" },
+  { code: "LL", label: "Los Lunas (LL)" },
+  { code: "RR", label: "Rio Rancho (RR)" },
+];
+
+/**
+ * Map a stored free-text location to its canonical dropdown code (mirrors
+ * provider-api.mapLocation's recognition rules). Returns "" for unknown/blank so
+ * the dropdown shows a placeholder and forces a pick (e.g. a provider stranded in
+ * "unknown" after a sync). Never silently rewrites: the Select only changes
+ * state.location when the user actively selects, and the CRM PATCH no-op-guards
+ * location writes against the existing value.
+ */
+function toLocationCode(raw: string | null | undefined): string {
+  const l = (raw || "").toLowerCase().trim();
+  if (l.includes("ll") || l.includes("los lunas") || l.includes("loslunas")) return "LL";
+  if (l.includes("rr") || l.includes("rio rancho") || l.includes("riorancho")) return "RR";
+  if (l.includes("abq") || l.includes("albuquerque") || l.includes("corp")) return "ABQ";
+  return "";
+}
+
 function ProviderFormModal({
   isOpen,
   onClose,
@@ -1014,7 +1046,7 @@ function ProviderFormModal({
           </DialogTitle>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 -mx-6 px-6">
+        <ScrollArea className="flex-1 min-h-0 -mx-6 px-6">
           <div className="space-y-5 pb-4">
             {/* CRM-only: name/credentials/location */}
             {!isSpreadsheetEdit && !isEditing && (
@@ -1030,7 +1062,17 @@ function ProviderFormModal({
                   </div>
                   <div>
                     <Label className="text-xs">Location</Label>
-                    <Input value={state.location} onChange={(e) => setState(p => ({ ...p, location: e.target.value }))} placeholder="ABQ, LL, RR" />
+                    <Select
+                      value={toLocationCode(state.location)}
+                      onValueChange={(code) => setState(p => ({ ...p, location: code }))}
+                    >
+                      <SelectTrigger className="h-9"><SelectValue placeholder="Select location" /></SelectTrigger>
+                      <SelectContent>
+                        {LOCATION_OPTIONS.map(o => (
+                          <SelectItem key={o.code} value={o.code}>{o.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
               </>
@@ -1048,6 +1090,28 @@ function ProviderFormModal({
                   placeholder="e.g. LCSW"
                 />
                 <p className="text-[11px] text-muted-foreground mt-1">Licensing / credential (e.g. LCSW, LICSW). Updates as the provider advances.</p>
+              </div>
+            )}
+
+            {/* Location — editable in CRM edit mode (create has it in the grid
+                above). Persists to crm_providers.location via PATCH /api/providers/:id;
+                this is the same field provider-matching reads. Use this to move a
+                provider stranded in an unknown location back to ABQ/LL/RR. */}
+            {isCrmManaged && isEditing && (
+              <div>
+                <Label className="text-xs">Location</Label>
+                <Select
+                  value={toLocationCode(state.location)}
+                  onValueChange={(code) => setState(p => ({ ...p, location: code }))}
+                >
+                  <SelectTrigger className="h-9"><SelectValue placeholder="Select location" /></SelectTrigger>
+                  <SelectContent>
+                    {LOCATION_OPTIONS.map(o => (
+                      <SelectItem key={o.code} value={o.code}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground mt-1">Office location used for provider matching.</p>
               </div>
             )}
 
