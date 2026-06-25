@@ -2211,7 +2211,7 @@ export async function registerRoutes(
   // Note: 205 (Initial Appt Completed) is inactive and appears in INS column;
   // 206 (Rescheduling Initial Appointment) is active in PS; 402 (Referred Out)
   // is inactive in INS; 500 (Resources Need to be Sent) is active in REF.
-  const VALID_STATUS_CODES = [100, 101, 102, 103, 104, 200, 201, 202, 203, 204, 205, 206, 300, 400, 402, 500];
+  const VALID_STATUS_CODES = [100, 101, 102, 103, 104, 200, 201, 202, 203, 204, 205, 206, 300, 400, 402, 403, 500];
 
   // Umbrella types for status grouping
   type UmbrellaId = "WL" | "PS" | "REF" | "PMR" | "INS" | "unknown";

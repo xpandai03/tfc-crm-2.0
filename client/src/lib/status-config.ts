@@ -33,6 +33,7 @@ export const STATUS_LABELS: Record<number, string> = {
   300: "Submitted for Review",
   400: "Insurance Not Accepted",
   402: "Referred Out",
+  403: "Deferred Services",
   500: "Resources Need to be Sent",
 };
 
@@ -53,6 +54,7 @@ export const STATUS_DESCRIPTIONS: Record<number, string> = {
   300: "Requires PM attention",
   400: "Cannot proceed due to insurance",
   402: "Referred out to another provider/service (inactive)",
+  403: "Client temporarily unavailable (e.g. out of town); removed from waitlist, may submit a new RFS to return (inactive)",
   500: "Active referral — resources need to be sent to the client",
 };
 
@@ -97,7 +99,7 @@ export const STATUS_UMBRELLAS = {
     color: "purple"
   },
   INS: {
-    codes: [103, 104, 203, 204, 205, 400, 402],
+    codes: [103, 104, 203, 204, 205, 400, 402, 403],
     entry: 400,
     label: "Inactive",
     color: "red"
@@ -155,7 +157,7 @@ export const ACTIVE_STATUS_CODES = [
  * 2. Add to appropriate umbrella in STATUS_UMBRELLAS
  * 3. If terminal/non-actionable: add to INACTIVE_STATUS_CODES
  */
-export const INACTIVE_STATUS_CODES: number[] = [103, 104, 203, 204, 205, 400, 402];
+export const INACTIVE_STATUS_CODES: number[] = [103, 104, 203, 204, 205, 400, 402, 403];
 
 /**
  * BACKWARD COMPATIBILITY: STATUS_GROUPS
@@ -170,7 +172,7 @@ export const STATUS_GROUPS = {
   scheduled: [202] as readonly number[],
   pm_review: [300] as readonly number[],
   declined: [103, 204] as readonly number[],
-  inactive: [103, 104, 203, 204, 205, 400, 402] as readonly number[],
+  inactive: [103, 104, 203, 204, 205, 400, 402, 403] as readonly number[],
 } as const;
 
 /**

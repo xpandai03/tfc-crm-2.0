@@ -32,6 +32,7 @@ export const STATUS_CODE_LABELS: Record<number, string> = {
   300: "on_hold",
   400: "closed",
   402: "closed",        // Referred Out (Inactive)
+  403: "closed",        // Deferred Services — temporarily unavailable (Inactive)
   500: "waiting",       // Resources Need to be Sent (Referred To Other Services, active)
 };
 
