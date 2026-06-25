@@ -1301,7 +1301,7 @@ function HiddenProvidersDialog({ open, onClose }: { open: boolean; onClose: () =
         <DialogHeader className="flex-shrink-0">
           <DialogTitle>Hidden providers{total > 0 ? ` (${total})` : ""}</DialogTitle>
         </DialogHeader>
-        <ScrollArea className="flex-1 -mx-6 px-6">
+        <ScrollArea className="flex-1 min-h-0 -mx-6 px-6">
           {isLoading ? (
             <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
           ) : total === 0 ? (
