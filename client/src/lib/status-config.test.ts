@@ -23,6 +23,7 @@ const check = (name: string, actual: unknown, expected: unknown) => {
 check("isActiveStatus(206)", isActiveStatus(206), true);   // Rescheduling Initial Appointment — active
 check("isActiveStatus(500)", isActiveStatus(500), true);   // Resources Need to be Sent — active
 check("isActiveStatus(402)", isActiveStatus(402), false);  // Referred Out — inactive
+check("isActiveStatus(403)", isActiveStatus(403), false);  // Deferred Services — inactive
 // regression: existing classifications unchanged
 for (const c of [100, 102, 200, 202]) check(`isActiveStatus(${c}) stays active`, isActiveStatus(c), true);
 for (const c of [103, 104, 203, 204, 205, 400]) check(`isActiveStatus(${c}) stays inactive`, isActiveStatus(c), false);
@@ -31,12 +32,14 @@ for (const c of [103, 104, 203, 204, 205, 400]) check(`isActiveStatus(${c}) stay
 check("umbrella(206)", getUmbrellaForStatus(206), "PS");
 check("umbrella(500)", getUmbrellaForStatus(500), "REF");
 check("umbrella(402)", getUmbrellaForStatus(402), "INS");
+check("umbrella(403)", getUmbrellaForStatus(403), "INS");
 check("umbrella(202) unchanged", getUmbrellaForStatus(202), "SCH");
 
 // ---- labels present ----
 check("label(206)", STATUS_LABELS[206], "Rescheduling Initial Appointment");
 check("label(402)", STATUS_LABELS[402], "Referred Out");
 check("label(500)", STATUS_LABELS[500], "Resources Need to be Sent");
+check("label(403)", STATUS_LABELS[403], "Deferred Services");
 check("REF umbrella exists", STATUS_UMBRELLAS.REF.label, "Referred To Other Services");
 
 // ---- replica of the SERVER range derivation (must agree with client config) ----
@@ -51,12 +54,14 @@ function serverUmbrella(sc: number): string {
 check("server umbrella(206)", serverUmbrella(206), "PS");
 check("server umbrella(500)", serverUmbrella(500), "REF");
 check("server umbrella(402)", serverUmbrella(402), "INS");
+check("server umbrella(403)", serverUmbrella(403), "INS");
 
 // ---- replica of the widened server active-count bound ----
 const serverActive = (sc: number) =>
   ![103, 104, 203, 204, 205].includes(sc) && (sc < 400 || (sc >= 500 && sc < 600));
 check("server active(500)", serverActive(500), true);
 check("server active(402)", serverActive(402), false);
+check("server active(403)", serverActive(403), false);
 check("server active(206)", serverActive(206), true);
 for (const c of [103, 104, 203, 204, 205, 400]) check(`server active(${c})===false`, serverActive(c), false);
 
