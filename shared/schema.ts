@@ -141,6 +141,14 @@ export const waitlistContactSchema = z.object({
   language: z.string().nullable().optional(), // Preferred service language ("English"/"Spanish"); for wait-list filter
   patientDob: z.string().nullable().optional(), // Patient date of birth (YYYY-MM-DD or MM/DD/YYYY)
   assignedProviderName: z.string().nullable().optional(), // Latest assigned provider name (from contact_provider_assignments)
+  // Household members (other contacts sharing email/phone), with each member's
+  // own assigned provider — surfaced on the card so staff can avoid pairing two
+  // household members with the same provider. Bulk-resolved on the board path.
+  householdMembers: z.array(z.object({
+    name: z.string(),
+    dob: z.string().nullable().optional(),
+    assignedProviderName: z.string().nullable().optional(),
+  })).optional(),
 });
 
 export type WaitlistContact = z.infer<typeof waitlistContactSchema>;

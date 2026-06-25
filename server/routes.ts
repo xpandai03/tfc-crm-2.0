@@ -48,6 +48,7 @@ import {
   removeSyncContactNote,
   getSubmissionById,
   getHouseholdMembers,
+  getHouseholdMembersByAllContacts,
   enrichSyncContact,
   upsertSingleContact,
   generateIntakeContactId,
@@ -2039,15 +2040,32 @@ export async function registerRoutes(
   });
 
   // Enrich contacts with latest assigned provider name from CRM assignments table
+  // Enriches board contacts with the assigned provider name AND household members
+  // (name + dob + that member's own provider). Both are resolved with ONE bulk
+  // assignment query (providerMap, shared) and ONE bulk household self-join — never
+  // per-card (no N+1 across the hundreds of cards the board renders). Called by
+  // both the sync and n8n branches below, so household stays consistent on both.
   async function enrichContactsWithProvider(contacts: any[]): Promise<any[]> {
     try {
-      const providerMap = await getLatestAssignmentsByAllContacts();
+      const [providerMap, householdMap] = await Promise.all([
+        getLatestAssignmentsByAllContacts(),
+        getHouseholdMembersByAllContacts(),
+      ]);
       return contacts.map((c: any) => ({
         ...c,
         assignedProviderName: c.contactId ? (providerMap.get(c.contactId) ?? null) : null,
+        // Each household member's provider comes from the SAME providerMap — no
+        // second assignment query. Empty array when the contact has no cluster.
+        householdMembers: c.contactId
+          ? (householdMap.get(c.contactId) ?? []).map((m) => ({
+              name: m.name,
+              dob: m.dob,
+              assignedProviderName: providerMap.get(m.contactId) ?? null,
+            }))
+          : [],
       }));
     } catch (err) {
-      console.warn("[BOARD] Failed to enrich contacts with provider assignments:", err);
+      console.warn("[BOARD] Failed to enrich contacts with provider/household:", err);
       return contacts;
     }
   }
