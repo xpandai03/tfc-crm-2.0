@@ -18,7 +18,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -1046,7 +1045,14 @@ function ProviderFormModal({
           </DialogTitle>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 min-h-0 -mx-6 px-6">
+        {/* Native overflow body — NOT Radix ScrollArea. Radix's Viewport sets
+            overflow-y = scrollbarYEnabled ? "scroll" : "hidden"; with the default
+            type="hover" that flag only flips once a ResizeObserver detects
+            overflow, which mis-fires inside the animated Dialog (transform/zoom),
+            leaving overflow-y: hidden so tall content (insurance chips) was clipped
+            with no scrollbar / dead wheel. min-h-0 bounded the Root but couldn't
+            ungate it. overflow-y-auto always scrolls (matches provider-matching-modal). */}
+        <div className="flex-1 min-h-0 overflow-y-auto -mx-6 px-6">
           <div className="space-y-5 pb-4">
             {/* CRM-only: name/credentials/location */}
             {!isSpreadsheetEdit && !isEditing && (
@@ -1197,7 +1203,7 @@ function ProviderFormModal({
               </div>
             </div>
           </div>
-        </ScrollArea>
+        </div>
 
         <div className="flex items-center justify-between gap-2 pt-3 border-t flex-shrink-0">
           {/* Remove — shown for ANY provider being edited. CRM rows soft-delete;
@@ -1301,7 +1307,14 @@ function HiddenProvidersDialog({ open, onClose }: { open: boolean; onClose: () =
         <DialogHeader className="flex-shrink-0">
           <DialogTitle>Hidden providers{total > 0 ? ` (${total})` : ""}</DialogTitle>
         </DialogHeader>
-        <ScrollArea className="flex-1 min-h-0 -mx-6 px-6">
+        {/* Native overflow body — NOT Radix ScrollArea. Radix's Viewport sets
+            overflow-y = scrollbarYEnabled ? "scroll" : "hidden"; with the default
+            type="hover" that flag only flips once a ResizeObserver detects
+            overflow, which mis-fires inside the animated Dialog (transform/zoom),
+            leaving overflow-y: hidden so tall content (insurance chips) was clipped
+            with no scrollbar / dead wheel. min-h-0 bounded the Root but couldn't
+            ungate it. overflow-y-auto always scrolls (matches provider-matching-modal). */}
+        <div className="flex-1 min-h-0 overflow-y-auto -mx-6 px-6">
           {isLoading ? (
             <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
           ) : total === 0 ? (
@@ -1344,7 +1357,7 @@ function HiddenProvidersDialog({ open, onClose }: { open: boolean; onClose: () =
               ))}
             </div>
           )}
-        </ScrollArea>
+        </div>
         <div className="flex justify-end pt-3 border-t flex-shrink-0">
           <Button variant="outline" onClick={onClose}>Close</Button>
         </div>
