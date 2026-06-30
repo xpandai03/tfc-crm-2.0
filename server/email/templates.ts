@@ -5,7 +5,19 @@
  * Templates are code-defined (not editable by admins) for security and auditability.
  *
  * Variables use {{variableName}} pattern and are substituted server-side.
+ *
+ * STORAGE (Build 1): The 6 templates below remain the in-code source of truth
+ * AND the fallback. At startup `initEmailTemplatesTable()` creates an
+ * `email_templates` table and idempotently seeds it from this constant. The
+ * read path (`getTemplateById` / `getTemplateMetadataList`) reads from the
+ * table, falling back to this constant if the table is empty or the query
+ * fails — so a migration hiccup can never break live sends. Content stored in
+ * the table is byte-identical to what this constant holds at runtime
+ * (`bodyHtml` here is ALREADY wrapped by `wrapEmailContent()`, so the table
+ * stores the pre-wrapped HTML; rendering does not re-wrap).
  */
+
+import { getPool } from "../db/pool";
 
 export interface RequiredField {
   key: string;          // Variable name in template (e.g., "therapistName")
@@ -451,17 +463,140 @@ Albuquerque, New Mexico
   },
 ];
 
+// ============================================================================
+// DB-backed storage (Build 1): email_templates table
+// ============================================================================
+//
+// The constant above stays as both the seed source and the runtime fallback.
+// Reads go to the table; on empty/error they fall back to the constant so live
+// sends never break. No write path / editor in this build.
+
+/** pg returns jsonb pre-parsed; tolerate string too (defensive). */
+function asArray<T>(v: unknown): T[] {
+  if (Array.isArray(v)) return v as T[];
+  if (typeof v === "string") {
+    try {
+      const parsed = JSON.parse(v);
+      return Array.isArray(parsed) ? (parsed as T[]) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+/** Map an email_templates row to the EmailTemplate shape used by render/send. */
+function rowToTemplate(r: any): EmailTemplate {
+  return {
+    id: r.id,
+    name: r.name,
+    description: r.description ?? "",
+    subject: r.subject,
+    bodyHtml: r.body_html,
+    bodyText: r.body_text,
+    variables: asArray<string>(r.variables),
+    requiredFields: asArray<RequiredField>(r.required_fields),
+  };
+}
+
 /**
- * Get template by ID
+ * Create the email_templates table and idempotently seed it from EMAIL_TEMPLATES.
+ * Additive; follows the existing init*Table() startup pattern. Safe to run on
+ * every boot — ON CONFLICT DO NOTHING never duplicates or clobbers existing rows
+ * (so future editor writes survive re-seeding).
  */
-export function getTemplateById(id: string): EmailTemplate | undefined {
+export async function initEmailTemplatesTable(): Promise<void> {
+  const pool = getPool();
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS email_templates (
+      id              TEXT PRIMARY KEY,
+      name            TEXT NOT NULL,
+      description     TEXT NOT NULL DEFAULT '',
+      subject         TEXT NOT NULL,
+      body_html       TEXT NOT NULL,
+      body_text       TEXT NOT NULL,
+      variables       JSONB NOT NULL DEFAULT '[]',
+      required_fields JSONB NOT NULL DEFAULT '[]',
+      sort_order      INTEGER NOT NULL DEFAULT 0,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  // Idempotent seed from the constant. sort_order = array index, so the
+  // dropdown order is preserved exactly (ORDER BY sort_order on read).
+  let seeded = 0;
+  for (let i = 0; i < EMAIL_TEMPLATES.length; i++) {
+    const t = EMAIL_TEMPLATES[i];
+    const result = await pool.query(
+      `INSERT INTO email_templates
+         (id, name, description, subject, body_html, body_text, variables, required_fields, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        t.id,
+        t.name,
+        t.description,
+        t.subject,
+        t.bodyHtml,
+        t.bodyText,
+        JSON.stringify(t.variables),
+        JSON.stringify(t.requiredFields),
+        i,
+      ],
+    );
+    seeded += result.rowCount ?? 0;
+  }
+
+  console.log(
+    `[email-templates-db] Table initialized (${seeded} of ${EMAIL_TEMPLATES.length} templates newly seeded; existing rows untouched)`,
+  );
+}
+
+/**
+ * Get template by ID — reads from the table, falls back to the constant on
+ * empty/error so live preview/send never break.
+ */
+export async function getTemplateById(id: string): Promise<EmailTemplate | undefined> {
+  try {
+    const pool = getPool();
+    const result = await pool.query(`SELECT * FROM email_templates WHERE id = $1`, [id]);
+    if (result.rows.length > 0) {
+      return rowToTemplate(result.rows[0]);
+    }
+    console.warn(`[email-templates] id "${id}" not in table — falling back to constant`);
+  } catch (err) {
+    console.error(`[email-templates] getTemplateById("${id}") query failed — falling back to constant:`, err);
+  }
   return EMAIL_TEMPLATES.find((t) => t.id === id);
 }
 
 /**
- * Get template metadata list for frontend dropdown
+ * Get template metadata list for frontend dropdown — reads from the table
+ * (ordered by sort_order to preserve the existing dropdown order), falls back
+ * to the constant on empty/error.
  */
-export function getTemplateMetadataList(): TemplateMetadata[] {
+export async function getTemplateMetadataList(): Promise<TemplateMetadata[]> {
+  try {
+    const pool = getPool();
+    const result = await pool.query(
+      `SELECT id, name, description, required_fields
+         FROM email_templates
+        ORDER BY sort_order ASC, id ASC`,
+    );
+    if (result.rows.length > 0) {
+      return result.rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        description: r.description ?? "",
+        requiredFields: asArray<RequiredField>(r.required_fields),
+      }));
+    }
+    console.warn("[email-templates] table empty — falling back to EMAIL_TEMPLATES constant");
+  } catch (err) {
+    console.error("[email-templates] getTemplateMetadataList query failed — falling back to constant:", err);
+  }
   return EMAIL_TEMPLATES.map((t) => ({
     id: t.id,
     name: t.name,

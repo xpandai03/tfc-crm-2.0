@@ -10,6 +10,7 @@ import { initEmailSnapshotsTable } from "./email-snapshots";
 import { initAssignmentsTable } from "./assignments/db";
 import { initSyncTables } from "./sync/db";
 import { initActivityTable } from "./activity/db";
+import { initEmailTemplatesTable } from "./email/templates";
 
 const app = express();
 const httpServer = createServer(app);
@@ -137,6 +138,7 @@ app.use((req, res, next) => {
     await initAssignmentsTable();
     await initSyncTables();
     await initActivityTable();
+    await initEmailTemplatesTable();
     startReminderCron();
     // Phase 3: load the crm_providers-derived email-axis directory, then keep it
     // fresh on an interval (mutations also refresh it on write). Sync resolvers
