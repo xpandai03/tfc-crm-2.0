@@ -17,7 +17,7 @@ const allNavItems = [
   { href: "/providers", label: "Providers", icon: UserCheck, beta: true },
   { href: "/submissions", label: "Submissions", icon: FileText },
   { href: "/referral", label: "Referrals", icon: FileUp },
-  { href: "/email-templates", label: "Email Templates", icon: Mail },
+  { href: "/email-templates", label: "Templates", icon: Mail },
   { href: "/activity", label: "Activity", icon: Activity },
 ];
 

@@ -31,7 +31,8 @@ export interface EmailTemplate {
   name: string;
   description: string;
   subject: string;
-  bodyHtml: string;
+  bodyContent: string; // inner editable body (no branding shell); EDIT this
+  bodyHtml: string;    // derived = wrapEmailContent(bodyContent); render uses this
   bodyText: string;
   variables: string[]; // List of variable names used in this template
   requiredFields: RequiredField[]; // Admin-filled fields (empty = fully auto-populated)
@@ -74,7 +75,7 @@ const LOGO_URL = `${APP_URL}/tfc-logo.jpg`;
 const SURVEY_URL = process.env.SURVEY_URL || "https://customer-feedback-tfc.replit.app";
 
 // Shared email wrapper for consistent branding
-function wrapEmailContent(content: string): string {
+export function wrapEmailContent(content: string): string {
   return `
 <!DOCTYPE html>
 <html>
@@ -138,13 +139,17 @@ function wrapEmailContent(content: string): string {
   `.trim();
 }
 
-export const EMAIL_TEMPLATES: EmailTemplate[] = [
+// Source definitions hold the INNER body content; the branded bodyHtml is
+// derived once below via wrapEmailContent(). This is byte-identical to the
+// previous `bodyHtml: wrapEmailContent(...)` form (verified by the equivalence
+// test) and gives every template an editable inner-content field.
+const RAW_TEMPLATES: Omit<EmailTemplate, "bodyHtml">[] = [
   {
     id: "waitlist-status",
     name: "Waitlist Status",
     description: "General update about waitlist status and next steps",
     subject: "Update on Your Waitlist Status - The Family Connection",
-    bodyHtml: wrapEmailContent(`
+    bodyContent: `
       <p style="margin: 0 0 20px 0;">
         Hi {{firstName}},
       </p>
@@ -165,7 +170,7 @@ export const EMAIL_TEMPLATES: EmailTemplate[] = [
         Warm regards,<br>
         <strong>The Family Connection Team</strong>
       </p>
-    `),
+    `,
     bodyText: `
 Hi {{firstName}},
 
@@ -190,7 +195,7 @@ Albuquerque, New Mexico
     name: "Scheduling Follow-up",
     description: "Follow-up to schedule an appointment with a matched provider",
     subject: "Ready to Schedule Your Appointment - The Family Connection",
-    bodyHtml: wrapEmailContent(`
+    bodyContent: `
       <p style="margin: 0 0 20px 0;">
         Hi {{firstName}},
       </p>
@@ -215,7 +220,7 @@ Albuquerque, New Mexico
         Warm regards,<br>
         <strong>The Family Connection Team</strong>
       </p>
-    `),
+    `,
     bodyText: `
 Hi {{firstName}},
 
@@ -242,7 +247,7 @@ Albuquerque, New Mexico
     name: "Therapy Notes Portal (New Patients)",
     description: "Portal enrollment instructions for new patients",
     subject: "Therapy Notes Portal -- The Family Connection",
-    bodyHtml: wrapEmailContent(`
+    bodyContent: `
       <p style="margin: 0 0 20px 0;">
         Hello {{firstName}},
       </p>
@@ -266,7 +271,7 @@ Albuquerque, New Mexico
         Warm regards,<br>
         <strong>The Family Connection Team</strong>
       </p>
-    `),
+    `,
     bodyText: `
 Hello {{firstName}},
 
@@ -294,7 +299,7 @@ Albuquerque, New Mexico
     name: "Initial Appointment Confirmation",
     description: "Confirm initial appointment details with the client",
     subject: "Initial Appointment Confirmation -- The Family Connection",
-    bodyHtml: wrapEmailContent(`
+    bodyContent: `
       <p style="margin: 0 0 20px 0;">
         Hello {{firstName}},
       </p>
@@ -325,7 +330,7 @@ Albuquerque, New Mexico
         Warm regards,<br>
         <strong>The Family Connection Team</strong>
       </p>
-    `),
+    `,
     bodyText: `
 Hello {{firstName}},
 
@@ -360,7 +365,7 @@ Albuquerque, New Mexico
     name: "Initial Appointment Survey",
     description: "Post-appointment feedback survey request",
     subject: "Initial Appointment Survey -- The Family Connection",
-    bodyHtml: wrapEmailContent(`
+    bodyContent: `
       <p style="margin: 0 0 20px 0;">
         Hello {{firstName}},
       </p>
@@ -393,7 +398,7 @@ Albuquerque, New Mexico
         Warm regards,<br>
         <strong>The Family Connection Team</strong>
       </p>
-    `),
+    `,
     bodyText: `
 Hello {{firstName}},
 
@@ -420,7 +425,7 @@ Albuquerque, New Mexico
     name: "Intake Form Reminder",
     description: "Reminder to complete intake forms before appointment",
     subject: "Intake Form Reminder -- The Family Connection",
-    bodyHtml: wrapEmailContent(`
+    bodyContent: `
       <p style="margin: 0 0 20px 0;">
         Hello {{firstName}},
       </p>
@@ -441,7 +446,7 @@ Albuquerque, New Mexico
         Warm regards,<br>
         <strong>The Family Connection Team</strong>
       </p>
-    `),
+    `,
     bodyText: `
 Hello {{firstName}},
 
@@ -462,6 +467,14 @@ Albuquerque, New Mexico
     requiredFields: [],
   },
 ];
+
+// Derive the branded bodyHtml from the inner content for each template.
+// wrapEmailContent() is applied exactly once here — identical to the prior
+// inline form, so the 6 system templates' bodyHtml stays byte-identical.
+export const EMAIL_TEMPLATES: EmailTemplate[] = RAW_TEMPLATES.map((t) => ({
+  ...t,
+  bodyHtml: wrapEmailContent(t.bodyContent),
+}));
 
 // ============================================================================
 // DB-backed storage (Build 1): email_templates table
@@ -492,6 +505,7 @@ function rowToTemplate(r: any): EmailTemplate {
     name: r.name,
     description: r.description ?? "",
     subject: r.subject,
+    bodyContent: r.body_content ?? "",
     bodyHtml: r.body_html,
     bodyText: r.body_text,
     variables: asArray<string>(r.variables),
@@ -514,6 +528,7 @@ export async function initEmailTemplatesTable(): Promise<void> {
       name            TEXT NOT NULL,
       description     TEXT NOT NULL DEFAULT '',
       subject         TEXT NOT NULL,
+      body_content    TEXT NOT NULL DEFAULT '',
       body_html       TEXT NOT NULL,
       body_text       TEXT NOT NULL,
       variables       JSONB NOT NULL DEFAULT '[]',
@@ -524,6 +539,14 @@ export async function initEmailTemplatesTable(): Promise<void> {
     )
   `);
 
+  // Additive migration: existing tables (Build 1/2) lack body_content.
+  try {
+    await pool.query(`ALTER TABLE email_templates ADD COLUMN body_content TEXT NOT NULL DEFAULT ''`);
+    console.log("[email-templates-db] Added body_content column");
+  } catch {
+    // Column already exists — expected on subsequent startups
+  }
+
   // Idempotent seed from the constant. sort_order = array index, so the
   // dropdown order is preserved exactly (ORDER BY sort_order on read).
   let seeded = 0;
@@ -531,14 +554,15 @@ export async function initEmailTemplatesTable(): Promise<void> {
     const t = EMAIL_TEMPLATES[i];
     const result = await pool.query(
       `INSERT INTO email_templates
-         (id, name, description, subject, body_html, body_text, variables, required_fields, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)
+         (id, name, description, subject, body_content, body_html, body_text, variables, required_fields, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10)
        ON CONFLICT (id) DO NOTHING`,
       [
         t.id,
         t.name,
         t.description,
         t.subject,
+        t.bodyContent,
         t.bodyHtml,
         t.bodyText,
         JSON.stringify(t.variables),
@@ -549,8 +573,22 @@ export async function initEmailTemplatesTable(): Promise<void> {
     seeded += result.rowCount ?? 0;
   }
 
+  // Backfill body_content for the 6 system rows that predate the column (their
+  // body_html is the pre-wrapped form; body_content is the inner source from the
+  // constant). Idempotent — only fills empties; never touches body_html (render
+  // stays byte-identical) or editor-authored rows.
+  let backfilled = 0;
+  for (const t of EMAIL_TEMPLATES) {
+    const r = await pool.query(
+      `UPDATE email_templates SET body_content = $2
+        WHERE id = $1 AND (body_content IS NULL OR body_content = '')`,
+      [t.id, t.bodyContent],
+    );
+    backfilled += r.rowCount ?? 0;
+  }
+
   console.log(
-    `[email-templates-db] Table initialized (${seeded} of ${EMAIL_TEMPLATES.length} templates newly seeded; existing rows untouched)`,
+    `[email-templates-db] Table initialized (${seeded} of ${EMAIL_TEMPLATES.length} newly seeded; ${backfilled} body_content backfilled; body_html untouched)`,
   );
 }
 
@@ -711,7 +749,7 @@ export interface CreateTemplateInput {
   name: string;
   description: string;
   subject: string;
-  bodyHtml: string;
+  bodyContent: string; // inner body; branded body_html is derived on save
   bodyText: string;
 }
 
@@ -719,30 +757,33 @@ export interface UpdateTemplateInput {
   name?: string;
   description?: string;
   subject?: string;
-  bodyHtml?: string;
+  bodyContent?: string;
   bodyText?: string;
 }
 
 /** Create an editor-authored template. id is generated (never collides with the
  *  6 system ids); requiredFields default to [] (no structural editor in v1);
- *  variables are derived from the content. */
+ *  body_html is derived from bodyContent via wrapEmailContent() (so it's always
+ *  branded and never empty); variables are derived from the content. */
 export async function createTemplate(input: CreateTemplateInput): Promise<EmailTemplate> {
   const pool = getPool();
   const id = await generateUniqueId(input.name);
-  const variables = extractVariables(input.subject, input.bodyHtml, input.bodyText);
+  const bodyHtml = wrapEmailContent(input.bodyContent);
+  const variables = extractVariables(input.subject, input.bodyContent, input.bodyText);
   const orderRes = await pool.query(`SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM email_templates`);
   const sortOrder = orderRes.rows[0].next;
 
   await pool.query(
     `INSERT INTO email_templates
-       (id, name, description, subject, body_html, body_text, variables, required_fields, sort_order)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, '[]'::jsonb, $8)`,
+       (id, name, description, subject, body_content, body_html, body_text, variables, required_fields, sort_order)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, '[]'::jsonb, $9)`,
     [
       id,
       input.name,
       input.description,
       input.subject,
-      input.bodyHtml,
+      input.bodyContent,
+      bodyHtml,
       input.bodyText,
       JSON.stringify(variables),
       sortOrder,
@@ -755,8 +796,9 @@ export async function createTemplate(input: CreateTemplateInput): Promise<EmailT
 }
 
 /** Update an existing template's editable fields (name/description/subject/body).
- *  Never changes id or required_fields. Recomputes variables from the merged
- *  content. Returns null if the id doesn't exist. */
+ *  Never changes id or required_fields. body_html is re-derived from the merged
+ *  bodyContent via wrapEmailContent() (branded, never empty). Recomputes
+ *  variables from the merged content. Returns null if the id doesn't exist. */
 export async function updateTemplate(id: string, patch: UpdateTemplateInput): Promise<EmailTemplate | null> {
   const existing = await getTemplateById(id);
   if (!existing) return null;
@@ -765,18 +807,19 @@ export async function updateTemplate(id: string, patch: UpdateTemplateInput): Pr
     name: patch.name ?? existing.name,
     description: patch.description ?? existing.description,
     subject: patch.subject ?? existing.subject,
-    bodyHtml: patch.bodyHtml ?? existing.bodyHtml,
+    bodyContent: patch.bodyContent ?? existing.bodyContent,
     bodyText: patch.bodyText ?? existing.bodyText,
   };
-  const variables = extractVariables(merged.subject, merged.bodyHtml, merged.bodyText);
+  const bodyHtml = wrapEmailContent(merged.bodyContent);
+  const variables = extractVariables(merged.subject, merged.bodyContent, merged.bodyText);
 
   const pool = getPool();
   await pool.query(
     `UPDATE email_templates
-        SET name = $2, description = $3, subject = $4, body_html = $5, body_text = $6,
-            variables = $7::jsonb, updated_at = NOW()
+        SET name = $2, description = $3, subject = $4, body_content = $5, body_html = $6,
+            body_text = $7, variables = $8::jsonb, updated_at = NOW()
       WHERE id = $1`,
-    [id, merged.name, merged.description, merged.subject, merged.bodyHtml, merged.bodyText, JSON.stringify(variables)],
+    [id, merged.name, merged.description, merged.subject, merged.bodyContent, bodyHtml, merged.bodyText, JSON.stringify(variables)],
   );
 
   return (await getTemplateById(id)) ?? null;
