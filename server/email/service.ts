@@ -156,12 +156,12 @@ function substituteVariables(
 /**
  * Render a template with contact data and optional admin-provided dynamic fields
  */
-export function renderTemplate(
+export async function renderTemplate(
   templateId: string,
   contact: ContactForEmail,
   dynamicFields?: Record<string, string>
-): RenderedEmail | null {
-  const template = getTemplateById(templateId);
+): Promise<RenderedEmail | null> {
+  const template = await getTemplateById(templateId);
   if (!template) {
     console.error(`[email-service] Template not found: ${templateId}`);
     return null;
@@ -183,7 +183,7 @@ export function renderTemplate(
 /**
  * Get template list for frontend
  */
-export function getTemplateList(): TemplateMetadata[] {
+export async function getTemplateList(): Promise<TemplateMetadata[]> {
   return getTemplateMetadataList();
 }
 
@@ -217,7 +217,7 @@ export async function sendTemplatedEmail(params: {
   }
 
   // Render template with admin-provided dynamic fields
-  const rendered = renderTemplate(templateId, contact, dynamicFields);
+  const rendered = await renderTemplate(templateId, contact, dynamicFields);
   if (!rendered) {
     return { success: false, error: `Template not found: ${templateId}` };
   }
