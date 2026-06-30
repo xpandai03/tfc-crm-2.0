@@ -35,6 +35,7 @@ function rowToTemplate(r: any): EmailTemplate {
     name: r.name,
     description: r.description ?? "",
     subject: r.subject,
+    bodyContent: r.body_content ?? "",
     bodyHtml: r.body_html,
     bodyText: r.body_text,
     variables: asArray<string>(r.variables),
@@ -52,6 +53,7 @@ function simulateSeedAndRead(t: EmailTemplate): EmailTemplate {
     name: t.name,
     description: t.description, // TEXT verbatim
     subject: t.subject, // TEXT verbatim
+    body_content: t.bodyContent, // TEXT verbatim — inner editable source
     body_html: t.bodyHtml, // TEXT verbatim — pre-wrapped HTML preserved exactly
     body_text: t.bodyText, // TEXT verbatim
     variables: JSON.parse(writtenVariables), // jsonb returns parsed array
@@ -71,6 +73,26 @@ const EXPECTED_IDS = [
   "intake-form-reminder",
 ];
 
+// 0. Regression guard for the bodyContent refactor: bodyHtml byte-lengths must
+//    EXACTLY match the pre-refactor fingerprints (captured before this change),
+//    proving wrapEmailContent(bodyContent) reproduces the old inline-wrapped HTML.
+const EXPECTED_HTML_LEN: Record<string, number> = {
+  "waitlist-status": 3379,
+  "scheduling-followup": 3395,
+  "portal-enrollment": 3758,
+  "appointment-confirmation": 3753,
+  "post-appointment-survey": 3786,
+  "intake-form-reminder": 3303,
+};
+for (const t of EMAIL_TEMPLATES) {
+  const exp = EXPECTED_HTML_LEN[t.id];
+  if (t.bodyHtml.length !== exp) {
+    console.error(`✗ ${t.id}: bodyHtml length ${t.bodyHtml.length} != expected ${exp} (REFACTOR REGRESSED branding)`);
+    failures++;
+  }
+}
+console.log(`✓ bodyHtml byte-lengths match pre-refactor fingerprints (no branding drift)`);
+
 // 1. Exact ids preserved, in order (load-bearing: CC list keys off ids).
 const actualIds = EMAIL_TEMPLATES.map((t) => t.id);
 if (!eq(actualIds, EXPECTED_IDS)) {
@@ -84,7 +106,7 @@ if (!eq(actualIds, EXPECTED_IDS)) {
 for (const t of EMAIL_TEMPLATES) {
   const rt = simulateSeedAndRead(t);
   const fields: Array<keyof EmailTemplate> = [
-    "id", "name", "description", "subject", "bodyHtml", "bodyText", "variables", "requiredFields",
+    "id", "name", "description", "subject", "bodyContent", "bodyHtml", "bodyText", "variables", "requiredFields",
   ];
   const diffs = fields.filter((f) => !eq(t[f], rt[f]));
   if (diffs.length > 0) {

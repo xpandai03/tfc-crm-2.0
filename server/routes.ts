@@ -3995,6 +3995,7 @@ export async function registerRoutes(
   const {
     getTemplateList,
     renderTemplate,
+    renderDraftPreview,
     sendTemplatedEmail,
     getEccStatus,
     validateEmailServiceConfig,
@@ -4341,6 +4342,23 @@ export async function registerRoutes(
     }
   });
 
+  // POST /api/email-templates/preview - live rendered preview of an UNSAVED draft
+  // (gated). Wraps the inner bodyContent with the branding shell + substitutes
+  // sample variables — same mechanism as a real send.
+  app.post("/api/email-templates/preview", async (req, res) => {
+    if (!requireTemplateEditor(req, res)) return;
+    try {
+      const subject = String(req.body?.subject ?? "");
+      const bodyContent = String(req.body?.bodyContent ?? "");
+      const bodyText = String(req.body?.bodyText ?? "");
+      const rendered = renderDraftPreview({ subject, bodyContent, bodyText });
+      return res.json(rendered);
+    } catch (error) {
+      console.error("[email-templates] draft preview failed:", error);
+      return res.status(500).json({ error: "Failed to render preview" });
+    }
+  });
+
   // POST /api/email-templates - create a new editor-authored template (gated).
   app.post("/api/email-templates", async (req, res) => {
     const editor = requireTemplateEditor(req, res);
@@ -4349,15 +4367,15 @@ export async function registerRoutes(
       const name = String(req.body?.name ?? "").trim();
       const description = String(req.body?.description ?? "").trim();
       const subject = String(req.body?.subject ?? "").trim();
-      const bodyHtml = String(req.body?.bodyHtml ?? "");
+      const bodyContent = String(req.body?.bodyContent ?? "");
       const bodyText = String(req.body?.bodyText ?? "");
 
-      if (!name || !subject || (!bodyHtml.trim() && !bodyText.trim())) {
+      if (!name || !subject || (!bodyContent.trim() && !bodyText.trim())) {
         return res.status(400).json({ error: "name, subject, and body are required" });
       }
-      if (rejectUnknownVariables(res, subject, bodyHtml, bodyText)) return;
+      if (rejectUnknownVariables(res, subject, bodyContent, bodyText)) return;
 
-      const created = await createTemplate({ name, description, subject, bodyHtml, bodyText });
+      const created = await createTemplate({ name, description, subject, bodyContent, bodyText });
 
       await logActivity({
         type: "email_template_created",
@@ -4365,7 +4383,7 @@ export async function registerRoutes(
         entityType: "email_template",
         entityId: created.id,
         entityName: created.name,
-        metadata: { fields: ["name", "description", "subject", "bodyHtml", "bodyText"] },
+        metadata: { fields: ["name", "description", "subject", "bodyContent", "bodyText"] },
       });
 
       console.log(`[email-templates] CREATE id=${created.id} by ${editor}`);
@@ -4388,7 +4406,7 @@ export async function registerRoutes(
       }
 
       const patch: Record<string, string> = {};
-      for (const key of ["name", "description", "subject", "bodyHtml", "bodyText"] as const) {
+      for (const key of ["name", "description", "subject", "bodyContent", "bodyText"] as const) {
         if (req.body?.[key] !== undefined) patch[key] = String(req.body[key]);
       }
       if (patch.name !== undefined && !patch.name.trim()) {
@@ -4400,12 +4418,12 @@ export async function registerRoutes(
 
       // Validate variables against the merged (post-edit) content.
       const mergedSubject = patch.subject ?? existing.subject;
-      const mergedHtml = patch.bodyHtml ?? existing.bodyHtml;
+      const mergedContent = patch.bodyContent ?? existing.bodyContent;
       const mergedText = patch.bodyText ?? existing.bodyText;
-      if (rejectUnknownVariables(res, mergedSubject, mergedHtml, mergedText)) return;
+      if (rejectUnknownVariables(res, mergedSubject, mergedContent, mergedText)) return;
 
       // Changed-field names for the activity log (no body content).
-      const changedFields = (["name", "description", "subject", "bodyHtml", "bodyText"] as const).filter(
+      const changedFields = (["name", "description", "subject", "bodyContent", "bodyText"] as const).filter(
         (k) => patch[k] !== undefined && patch[k] !== (existing as any)[k],
       );
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Redirect } from "wouter";
 import { PageLayout } from "@/components/layout/page-layout";
 import { useAuth } from "@/lib/auth-context";
@@ -34,6 +34,7 @@ interface EmailTemplate {
   name: string;
   description: string;
   subject: string;
+  bodyContent: string;
   bodyHtml: string;
   bodyText: string;
   variables: string[];
@@ -55,11 +56,11 @@ interface FormState {
   name: string;
   description: string;
   subject: string;
-  bodyHtml: string;
+  bodyContent: string;
   bodyText: string;
 }
 
-const emptyForm: FormState = { name: "", description: "", subject: "", bodyHtml: "", bodyText: "" };
+const emptyForm: FormState = { name: "", description: "", subject: "", bodyContent: "", bodyText: "" };
 
 /** Tokens referenced in the form content (for the live unknown-variable hint). */
 function tokensIn(...texts: string[]): string[] {
@@ -83,7 +84,15 @@ export default function EmailTemplates() {
   const [isSaving, setIsSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<EmailTemplate | null>(null);
 
-  // Access gate — non-editors are redirected away (server still enforces 403).
+  // Live preview (rendered server-side: branding wrapper + sample substitution)
+  const [previewHtml, setPreviewHtml] = useState("");
+  const [previewSubject, setPreviewSubject] = useState("");
+
+  // Cursor-insertion: track which body field is focused + refs for selection.
+  const contentRef = useRef<HTMLTextAreaElement>(null);
+  const textRef = useRef<HTMLTextAreaElement>(null);
+  const [activeField, setActiveField] = useState<"bodyContent" | "bodyText">("bodyContent");
+
   const allowed = canEditEmailTemplates(user?.email);
 
   const loadTemplates = useCallback(async () => {
@@ -110,8 +119,32 @@ export default function EmailTemplates() {
 
   const unknownTokens = useMemo(() => {
     const known = new Set(allowedVariables);
-    return tokensIn(form.subject, form.bodyHtml, form.bodyText).filter((t) => !known.has(t));
+    return tokensIn(form.subject, form.bodyContent, form.bodyText).filter((t) => !known.has(t));
   }, [form, allowedVariables]);
+
+  const inForm = editor.mode === "create" || editor.mode === "edit";
+
+  // Debounced live preview while editing (server renders branding + sample vars).
+  useEffect(() => {
+    if (!inForm) return;
+    const handle = setTimeout(async () => {
+      try {
+        const res = await fetch("/api/email-templates/preview", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ subject: form.subject, bodyContent: form.bodyContent, bodyText: form.bodyText }),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        setPreviewHtml(data.html || "");
+        setPreviewSubject(data.subject || "");
+      } catch {
+        /* preview is best-effort */
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [inForm, form.subject, form.bodyContent, form.bodyText]);
 
   if (!allowed) {
     return <Redirect to="/waitlist" replace />;
@@ -119,10 +152,16 @@ export default function EmailTemplates() {
 
   const startCreate = () => {
     setForm(emptyForm);
+    setPreviewHtml("");
+    setPreviewSubject("");
+    setActiveField("bodyContent");
     setEditor({ mode: "create" });
   };
   const startEdit = (t: EmailTemplate) => {
-    setForm({ name: t.name, description: t.description, subject: t.subject, bodyHtml: t.bodyHtml, bodyText: t.bodyText });
+    setForm({ name: t.name, description: t.description, subject: t.subject, bodyContent: t.bodyContent, bodyText: t.bodyText });
+    setPreviewHtml("");
+    setPreviewSubject("");
+    setActiveField("bodyContent");
     setEditor({ mode: "edit", template: t });
   };
   const backToList = () => {
@@ -130,8 +169,30 @@ export default function EmailTemplates() {
     setForm(emptyForm);
   };
 
+  // Insert {{token}} at the cursor of the active body field.
+  const insertVariable = (varName: string) => {
+    const token = `{{${varName}}}`;
+    const ref = activeField === "bodyText" ? textRef.current : contentRef.current;
+    const key = activeField;
+    const current = form[key];
+    if (!ref) {
+      setForm({ ...form, [key]: current + token });
+      return;
+    }
+    const start = ref.selectionStart ?? current.length;
+    const end = ref.selectionEnd ?? current.length;
+    const next = current.slice(0, start) + token + current.slice(end);
+    setForm({ ...form, [key]: next });
+    // restore caret just after the inserted token
+    requestAnimationFrame(() => {
+      ref.focus();
+      const pos = start + token.length;
+      ref.setSelectionRange(pos, pos);
+    });
+  };
+
   const handleSave = async () => {
-    if (!form.name.trim() || !form.subject.trim() || (!form.bodyHtml.trim() && !form.bodyText.trim())) {
+    if (!form.name.trim() || !form.subject.trim() || (!form.bodyContent.trim() && !form.bodyText.trim())) {
       toast({ title: "Missing required fields", description: "Name, subject, and a body are required.", variant: "destructive" });
       return;
     }
@@ -198,10 +259,10 @@ export default function EmailTemplates() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-                <Mail className="h-6 w-6" /> Email Templates
+                <Mail className="h-6 w-6" /> Templates
               </h1>
               <p className="text-sm text-muted-foreground mt-1">
-                Create and edit the templates staff use in the contact send-email dropdown.
+                Create and edit the email templates staff use in the contact send-email dropdown.
               </p>
             </div>
             <Button onClick={startCreate} data-testid="button-new-template">
@@ -289,7 +350,7 @@ export default function EmailTemplates() {
 
   return (
     <PageLayout>
-      <div className="max-w-3xl mx-auto space-y-6">
+      <div className="max-w-6xl mx-auto space-y-5">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={backToList}>
             <ArrowLeft className="h-4 w-4 mr-1" /> Back
@@ -304,70 +365,108 @@ export default function EmailTemplates() {
           )}
         </div>
 
-        {/* Allowed variables helper */}
+        {/* Clickable variable chips — insert at cursor in the focused body field */}
         <div className="rounded-lg border bg-muted/30 p-3">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-            Allowed variables (substituted at send time)
+            Variables — click to insert at cursor ({activeField === "bodyText" ? "plain-text body" : "body"})
           </p>
           <div className="flex flex-wrap gap-1.5">
             {allowedVariables.map((v) => (
-              <code key={v} className="text-xs px-1.5 py-0.5 rounded bg-background border">{`{{${v}}}`}</code>
+              <button
+                key={v}
+                type="button"
+                onClick={() => insertVariable(v)}
+                className="text-xs px-1.5 py-0.5 rounded bg-background border hover:bg-accent hover:border-primary transition-colors font-mono"
+                data-testid={`chip-${v}`}
+              >{`{{${v}}}`}</button>
             ))}
           </div>
           <p className="text-[11px] text-muted-foreground mt-2">
-            Body fields hold the full email HTML / text exactly as sent (branding wrapper included). Only the
-            variables above are substituted — any other <code>{`{{token}}`}</code> is rejected on save.
+            Write the body content only — the system adds the branded header/footer automatically (see live preview).
+            Only the variables above substitute; any other <code>{`{{token}}`}</code> is rejected on save.
           </p>
         </div>
 
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="tpl-name">Name <span className="text-destructive">*</span></Label>
-            <Input id="tpl-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder="e.g. Waitlist Status" data-testid="input-name" />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="tpl-desc">Description</Label>
-            <Input id="tpl-desc" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
-              placeholder="Short description shown in the dropdown" />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="tpl-subject">Subject <span className="text-destructive">*</span></Label>
-            <Input id="tpl-subject" value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })}
-              placeholder="Email subject line" data-testid="input-subject" />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="tpl-html">Email body — HTML <span className="text-destructive">*</span></Label>
-            <Textarea id="tpl-html" value={form.bodyHtml} onChange={(e) => setForm({ ...form, bodyHtml: e.target.value })}
-              className="min-h-[220px] font-mono text-xs" placeholder="<p>Hi {{firstName}}, …</p>" data-testid="input-bodyhtml" />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="tpl-text">Email body — plain text</Label>
-            <Textarea id="tpl-text" value={form.bodyText} onChange={(e) => setForm({ ...form, bodyText: e.target.value })}
-              className="min-h-[140px] font-mono text-xs" placeholder="Hi {{firstName}}, …" />
-          </div>
-
-          {/* Read-only required fields (structural — not editable in v1) */}
-          {editing && editing.requiredFields.length > 0 && (
-            <div className="rounded-lg border p-3 bg-muted/20">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-                Required fields (structural — read-only)
-              </p>
-              <div className="space-y-1">
-                {editing.requiredFields.map((f) => (
-                  <div key={f.key} className="text-xs text-muted-foreground">
-                    <code className="text-foreground">{f.key}</code> — {f.label} ({f.type})
-                  </div>
-                ))}
-              </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Left: form fields */}
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="tpl-name">Name <span className="text-destructive">*</span></Label>
+              <Input id="tpl-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="e.g. Waitlist Status" data-testid="input-name" />
             </div>
-          )}
+            <div className="space-y-1.5">
+              <Label htmlFor="tpl-desc">Description</Label>
+              <Input id="tpl-desc" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="Short description shown in the dropdown" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="tpl-subject">Subject <span className="text-destructive">*</span></Label>
+              <Input id="tpl-subject" value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })}
+                placeholder="Email subject line" data-testid="input-subject" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="tpl-content">Body <span className="text-destructive">*</span></Label>
+              <Textarea
+                id="tpl-content"
+                ref={contentRef}
+                value={form.bodyContent}
+                onFocus={() => setActiveField("bodyContent")}
+                onChange={(e) => setForm({ ...form, bodyContent: e.target.value })}
+                className="min-h-[220px] text-sm"
+                placeholder="Hi {{firstName}}, …  (basic HTML like <p>, <strong>, <a> is supported)"
+                data-testid="input-bodycontent"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="tpl-text">Plain-text version</Label>
+              <Textarea
+                id="tpl-text"
+                ref={textRef}
+                value={form.bodyText}
+                onFocus={() => setActiveField("bodyText")}
+                onChange={(e) => setForm({ ...form, bodyText: e.target.value })}
+                className="min-h-[120px] text-sm"
+                placeholder="Hi {{firstName}}, …  (shown in email clients that don't render HTML)"
+              />
+            </div>
 
-          {unknownTokens.length > 0 && (
-            <p className="text-xs text-destructive">
-              Unknown variable(s): {unknownTokens.map((t) => `{{${t}}}`).join(", ")} — these won't substitute and will be rejected on save.
-            </p>
-          )}
+            {editing && editing.requiredFields.length > 0 && (
+              <div className="rounded-lg border p-3 bg-muted/20">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                  Required fields (structural — read-only)
+                </p>
+                <div className="space-y-1">
+                  {editing.requiredFields.map((f) => (
+                    <div key={f.key} className="text-xs text-muted-foreground">
+                      <code className="text-foreground">{f.key}</code> — {f.label} ({f.type})
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {unknownTokens.length > 0 && (
+              <p className="text-xs text-destructive">
+                Unknown variable(s): {unknownTokens.map((t) => `{{${t}}}`).join(", ")} — these won't substitute and will be rejected on save.
+              </p>
+            )}
+          </div>
+
+          {/* Right: live rendered preview */}
+          <div className="space-y-2">
+            <Label>Live preview (sample values)</Label>
+            <div className="border rounded-lg overflow-hidden lg:sticky lg:top-20">
+              <div className="px-4 py-2 bg-muted border-b">
+                <span className="text-xs text-muted-foreground">Subject: </span>
+                <span className="text-sm font-medium">{previewSubject || form.subject || "—"}</span>
+              </div>
+              <div
+                className="bg-white text-sm max-h-[480px] overflow-y-auto"
+                dangerouslySetInnerHTML={{ __html: previewHtml || "<p style='padding:24px;color:#9ca3af'>Start typing the body to see the rendered preview…</p>" }}
+              />
+            </div>
+          </div>
         </div>
 
         <div className="flex items-center justify-end gap-2 pt-2">

@@ -11,6 +11,7 @@ import {
   getTemplateById,
   getTemplateMetadataList,
   extractFirstName,
+  wrapEmailContent,
   type EmailTemplate,
   type TemplateMetadata,
 } from "./templates";
@@ -177,6 +178,36 @@ export async function renderTemplate(
     bodyText: substituteVariables(template.bodyText, variables),
     recipientEmail: contact.email || "",
     recipientName: contact.name,
+  };
+}
+
+/**
+ * Render an UNSAVED draft (editor live preview). Reuses the exact same render
+ * mechanism as a real send — wrapEmailContent() applies the branding shell to
+ * the inner bodyContent, then substituteVariables() substitutes a sample
+ * variable map — so the editor preview matches what an actual send produces for
+ * a saved template (whose body_html = wrapEmailContent(bodyContent)).
+ */
+export function renderDraftPreview(input: {
+  subject: string;
+  bodyContent: string;
+  bodyText: string;
+}): { subject: string; html: string; text: string } {
+  const sampleContact: ContactForEmail = {
+    contactId: 0,
+    name: "Jordan Sample",
+    email: "sample@example.com",
+    modality: "Telehealth",
+    city: "Albuquerque",
+    serviceRequested: "therapy",
+    requestingFor: "Myself",
+    eccConsent: true,
+  };
+  const variables = buildVariableMap(sampleContact);
+  return {
+    subject: substituteVariables(input.subject, variables),
+    html: substituteVariables(wrapEmailContent(input.bodyContent), variables),
+    text: substituteVariables(input.bodyText, variables),
   };
 }
 
