@@ -604,3 +604,187 @@ export async function getTemplateMetadataList(): Promise<TemplateMetadata[]> {
     requiredFields: t.requiredFields,
   }));
 }
+
+// ============================================================================
+// Editor support (Build 2): system-template guard, variable validation, CRUD
+// ============================================================================
+
+/**
+ * The 6 seeded ids are "system" templates with id-coupled behavior (the CC
+ * QUALIFYING_TEMPLATES list in service.ts keys off these ids). They may be
+ * edited (name/subject/body) but MUST NOT be deleted or have their ids changed.
+ */
+export const SYSTEM_TEMPLATE_IDS: ReadonlySet<string> = new Set(EMAIL_TEMPLATES.map((t) => t.id));
+export function isSystemTemplate(id: string): boolean {
+  return SYSTEM_TEMPLATE_IDS.has(id);
+}
+
+/**
+ * Known/allowed {{variables}} an editor may use. MUST stay in sync with the
+ * keys built in service.ts:buildVariableMap() — any token not in this set would
+ * silently fail to substitute at send time, so saves are validated against it.
+ * (requiredField-driven keys therapistName/appointmentDatetime/locationBlock*
+ * are already included; structural requiredFields are read-only in v1.)
+ */
+export const KNOWN_TEMPLATE_VARIABLES: readonly string[] = [
+  "firstName",
+  "name",
+  "modality",
+  "city",
+  "serviceRequested",
+  "therapistName",
+  "appointmentDatetime",
+  "appointmentLocationOrModality",
+  "surveyLink",
+  "locationBlock",
+  "locationBlockText",
+];
+
+const VARIABLE_TOKEN_PATTERN = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
+
+/** Unique list of {{token}} names referenced across the given text blobs. */
+export function extractVariables(...texts: Array<string | null | undefined>): string[] {
+  const found = new Set<string>();
+  for (const text of texts) {
+    if (!text) continue;
+    for (const m of Array.from(text.matchAll(VARIABLE_TOKEN_PATTERN))) {
+      found.add(m[1]);
+    }
+  }
+  return Array.from(found);
+}
+
+/** Tokens used by the content that are NOT in the known/allowed set. */
+export function findUnknownVariables(...texts: Array<string | null | undefined>): string[] {
+  const known = new Set(KNOWN_TEMPLATE_VARIABLES);
+  return extractVariables(...texts).filter((v) => !known.has(v));
+}
+
+/** All templates with full fields (for the editor list/edit forms), table-sourced
+ *  with constant fallback. */
+export async function getAllTemplatesFull(): Promise<EmailTemplate[]> {
+  try {
+    const pool = getPool();
+    const result = await pool.query(`SELECT * FROM email_templates ORDER BY sort_order ASC, id ASC`);
+    if (result.rows.length > 0) {
+      return result.rows.map(rowToTemplate);
+    }
+    console.warn("[email-templates] table empty — getAllTemplatesFull falling back to constant");
+  } catch (err) {
+    console.error("[email-templates] getAllTemplatesFull query failed — falling back to constant:", err);
+  }
+  return EMAIL_TEMPLATES;
+}
+
+function slugify(s: string): string {
+  return (
+    s
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48) || "template"
+  );
+}
+
+async function idExists(id: string): Promise<boolean> {
+  if (isSystemTemplate(id)) return true; // never reuse a system id
+  const pool = getPool();
+  const r = await pool.query(`SELECT 1 FROM email_templates WHERE id = $1`, [id]);
+  return r.rows.length > 0;
+}
+
+/** Generate a unique, non-colliding id for a new template. The "custom-" prefix
+ *  guarantees it can never equal one of the 6 system ids. */
+async function generateUniqueId(name: string): Promise<string> {
+  const base = `custom-${slugify(name)}`;
+  let id = base;
+  let n = 1;
+  while (await idExists(id)) {
+    n++;
+    id = `${base}-${n}`;
+  }
+  return id;
+}
+
+export interface CreateTemplateInput {
+  name: string;
+  description: string;
+  subject: string;
+  bodyHtml: string;
+  bodyText: string;
+}
+
+export interface UpdateTemplateInput {
+  name?: string;
+  description?: string;
+  subject?: string;
+  bodyHtml?: string;
+  bodyText?: string;
+}
+
+/** Create an editor-authored template. id is generated (never collides with the
+ *  6 system ids); requiredFields default to [] (no structural editor in v1);
+ *  variables are derived from the content. */
+export async function createTemplate(input: CreateTemplateInput): Promise<EmailTemplate> {
+  const pool = getPool();
+  const id = await generateUniqueId(input.name);
+  const variables = extractVariables(input.subject, input.bodyHtml, input.bodyText);
+  const orderRes = await pool.query(`SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM email_templates`);
+  const sortOrder = orderRes.rows[0].next;
+
+  await pool.query(
+    `INSERT INTO email_templates
+       (id, name, description, subject, body_html, body_text, variables, required_fields, sort_order)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, '[]'::jsonb, $8)`,
+    [
+      id,
+      input.name,
+      input.description,
+      input.subject,
+      input.bodyHtml,
+      input.bodyText,
+      JSON.stringify(variables),
+      sortOrder,
+    ],
+  );
+
+  const created = await getTemplateById(id);
+  if (!created) throw new Error(`createTemplate: row not found after insert (${id})`);
+  return created;
+}
+
+/** Update an existing template's editable fields (name/description/subject/body).
+ *  Never changes id or required_fields. Recomputes variables from the merged
+ *  content. Returns null if the id doesn't exist. */
+export async function updateTemplate(id: string, patch: UpdateTemplateInput): Promise<EmailTemplate | null> {
+  const existing = await getTemplateById(id);
+  if (!existing) return null;
+
+  const merged = {
+    name: patch.name ?? existing.name,
+    description: patch.description ?? existing.description,
+    subject: patch.subject ?? existing.subject,
+    bodyHtml: patch.bodyHtml ?? existing.bodyHtml,
+    bodyText: patch.bodyText ?? existing.bodyText,
+  };
+  const variables = extractVariables(merged.subject, merged.bodyHtml, merged.bodyText);
+
+  const pool = getPool();
+  await pool.query(
+    `UPDATE email_templates
+        SET name = $2, description = $3, subject = $4, body_html = $5, body_text = $6,
+            variables = $7::jsonb, updated_at = NOW()
+      WHERE id = $1`,
+    [id, merged.name, merged.description, merged.subject, merged.bodyHtml, merged.bodyText, JSON.stringify(variables)],
+  );
+
+  return (await getTemplateById(id)) ?? null;
+}
+
+/** Delete a template. Caller MUST block system ids first (isSystemTemplate). */
+export async function deleteTemplate(id: string): Promise<boolean> {
+  const pool = getPool();
+  const res = await pool.query(`DELETE FROM email_templates WHERE id = $1`, [id]);
+  return (res.rowCount ?? 0) > 0;
+}

@@ -70,3 +70,28 @@ export function canAccessReferralUpload(email: string | null | undefined): boole
   if (!email) return false;
   return REFERRAL_UPLOAD_EMAILS.includes(email.toLowerCase().trim());
 }
+
+// ============================================================================
+// Email-template editor access (Build 2)
+//
+// The 5 management users allowed to CREATE/EDIT email templates. All staff keep
+// USING templates read-only via the contact-level send-email dropdown (the GET
+// endpoint is ungated); only these 5 can hit the write endpoints (server-side
+// 403). Emails confirmed against the existing TN_V2_BETA_EMAILS group above —
+// same domain pattern; note "chantel" (not "chantelle") and ebenavidez = Erica
+// Benavidez, both matching the established lists.
+//   Lane → lsego · Amanda → amanda · Chantelle → chantel · Sandra → sandra · Erica → ebenavidez
+// ============================================================================
+export const EMAIL_TEMPLATE_EDITOR_EMAILS = [
+  "lsego@tfc.health",      // Lane
+  "amanda@tfc.health",     // Amanda
+  "chantel@tfc.health",    // Chantelle
+  "sandra@tfc.health",     // Sandra
+  "ebenavidez@tfc.health", // Erica Benavidez
+  "raunek@tfc.health",     // dev/testing access (same precedent as REFERRAL_UPLOAD_EMAILS / TN_V2_BETA_EMAILS) — remove for strict 5-only
+];
+
+export function canEditEmailTemplates(email: string | null | undefined): boolean {
+  if (!email) return false;
+  return EMAIL_TEMPLATE_EDITOR_EMAILS.includes(email.toLowerCase().trim());
+}

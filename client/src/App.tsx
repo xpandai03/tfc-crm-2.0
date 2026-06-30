@@ -15,6 +15,7 @@ import Submissions from "@/pages/submissions";
 import ActivityPage from "@/pages/activity";
 import AdminMigrate from "@/pages/admin-migrate";
 import Referral from "@/pages/referral";
+import EmailTemplates from "@/pages/email-templates";
 import Login from "@/pages/login";
 import NotFound from "@/pages/not-found";
 import { FallbackBanner } from "@/components/fallback-banner";
@@ -39,6 +40,7 @@ function Router() {
       <Route path="/activity" component={ActivityPage} />
       <Route path="/admin/migrate" component={AdminMigrate} />
       <Route path="/referral" component={Referral} />
+      <Route path="/email-templates" component={EmailTemplates} />
       <Route component={NotFound} />
     </Switch>
   );
