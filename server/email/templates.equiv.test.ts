@@ -35,6 +35,7 @@ function rowToTemplate(r: any): EmailTemplate {
     name: r.name,
     description: r.description ?? "",
     subject: r.subject,
+    contentFormat: r.content_format === "html" ? "html" : "text",
     bodyContent: r.body_content ?? "",
     bodyHtml: r.body_html,
     bodyText: r.body_text,
@@ -53,6 +54,7 @@ function simulateSeedAndRead(t: EmailTemplate): EmailTemplate {
     name: t.name,
     description: t.description, // TEXT verbatim
     subject: t.subject, // TEXT verbatim
+    content_format: t.contentFormat, // TEXT verbatim ("html" for all 6 system templates)
     body_content: t.bodyContent, // TEXT verbatim — inner editable source
     body_html: t.bodyHtml, // TEXT verbatim — pre-wrapped HTML preserved exactly
     body_text: t.bodyText, // TEXT verbatim
@@ -106,7 +108,7 @@ if (!eq(actualIds, EXPECTED_IDS)) {
 for (const t of EMAIL_TEMPLATES) {
   const rt = simulateSeedAndRead(t);
   const fields: Array<keyof EmailTemplate> = [
-    "id", "name", "description", "subject", "bodyContent", "bodyHtml", "bodyText", "variables", "requiredFields",
+    "id", "name", "description", "subject", "contentFormat", "bodyContent", "bodyHtml", "bodyText", "variables", "requiredFields",
   ];
   const diffs = fields.filter((f) => !eq(t[f], rt[f]));
   if (diffs.length > 0) {

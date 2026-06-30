@@ -34,6 +34,7 @@ interface EmailTemplate {
   name: string;
   description: string;
   subject: string;
+  contentFormat: "html" | "text";
   bodyContent: string;
   bodyHtml: string;
   bodyText: string;
@@ -57,10 +58,9 @@ interface FormState {
   description: string;
   subject: string;
   bodyContent: string;
-  bodyText: string;
 }
 
-const emptyForm: FormState = { name: "", description: "", subject: "", bodyContent: "", bodyText: "" };
+const emptyForm: FormState = { name: "", description: "", subject: "", bodyContent: "" };
 
 /** Tokens referenced in the form content (for the live unknown-variable hint). */
 function tokensIn(...texts: string[]): string[] {
@@ -88,12 +88,14 @@ export default function EmailTemplates() {
   const [previewHtml, setPreviewHtml] = useState("");
   const [previewSubject, setPreviewSubject] = useState("");
 
-  // Cursor-insertion: track which body field is focused + refs for selection.
+  // Cursor-insertion into the single Body field.
   const contentRef = useRef<HTMLTextAreaElement>(null);
-  const textRef = useRef<HTMLTextAreaElement>(null);
-  const [activeField, setActiveField] = useState<"bodyContent" | "bodyText">("bodyContent");
 
   const allowed = canEditEmailTemplates(user?.email);
+
+  // Content format drives newline handling: new templates are plain-text; an
+  // existing template keeps its stored format (system templates are HTML).
+  const contentFormat: "html" | "text" = editor.mode === "edit" ? editor.template.contentFormat : "text";
 
   const loadTemplates = useCallback(async () => {
     setIsLoading(true);
@@ -119,12 +121,13 @@ export default function EmailTemplates() {
 
   const unknownTokens = useMemo(() => {
     const known = new Set(allowedVariables);
-    return tokensIn(form.subject, form.bodyContent, form.bodyText).filter((t) => !known.has(t));
+    return tokensIn(form.subject, form.bodyContent).filter((t) => !known.has(t));
   }, [form, allowedVariables]);
 
   const inForm = editor.mode === "create" || editor.mode === "edit";
 
-  // Debounced live preview while editing (server renders branding + sample vars).
+  // Debounced live preview while editing — server renders the branded shell with
+  // the SAME newline handling the sent email will have (truthful preview).
   useEffect(() => {
     if (!inForm) return;
     const handle = setTimeout(async () => {
@@ -133,7 +136,7 @@ export default function EmailTemplates() {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ subject: form.subject, bodyContent: form.bodyContent, bodyText: form.bodyText }),
+          body: JSON.stringify({ subject: form.subject, bodyContent: form.bodyContent, contentFormat }),
         });
         if (!res.ok) return;
         const data = await res.json();
@@ -144,7 +147,7 @@ export default function EmailTemplates() {
       }
     }, 300);
     return () => clearTimeout(handle);
-  }, [inForm, form.subject, form.bodyContent, form.bodyText]);
+  }, [inForm, form.subject, form.bodyContent, contentFormat]);
 
   if (!allowed) {
     return <Redirect to="/waitlist" replace />;
@@ -154,14 +157,12 @@ export default function EmailTemplates() {
     setForm(emptyForm);
     setPreviewHtml("");
     setPreviewSubject("");
-    setActiveField("bodyContent");
     setEditor({ mode: "create" });
   };
   const startEdit = (t: EmailTemplate) => {
-    setForm({ name: t.name, description: t.description, subject: t.subject, bodyContent: t.bodyContent, bodyText: t.bodyText });
+    setForm({ name: t.name, description: t.description, subject: t.subject, bodyContent: t.bodyContent });
     setPreviewHtml("");
     setPreviewSubject("");
-    setActiveField("bodyContent");
     setEditor({ mode: "edit", template: t });
   };
   const backToList = () => {
@@ -169,21 +170,19 @@ export default function EmailTemplates() {
     setForm(emptyForm);
   };
 
-  // Insert {{token}} at the cursor of the active body field.
+  // Insert {{token}} at the cursor of the Body field.
   const insertVariable = (varName: string) => {
     const token = `{{${varName}}}`;
-    const ref = activeField === "bodyText" ? textRef.current : contentRef.current;
-    const key = activeField;
-    const current = form[key];
+    const ref = contentRef.current;
+    const current = form.bodyContent;
     if (!ref) {
-      setForm({ ...form, [key]: current + token });
+      setForm({ ...form, bodyContent: current + token });
       return;
     }
     const start = ref.selectionStart ?? current.length;
     const end = ref.selectionEnd ?? current.length;
     const next = current.slice(0, start) + token + current.slice(end);
-    setForm({ ...form, [key]: next });
-    // restore caret just after the inserted token
+    setForm({ ...form, bodyContent: next });
     requestAnimationFrame(() => {
       ref.focus();
       const pos = start + token.length;
@@ -192,7 +191,7 @@ export default function EmailTemplates() {
   };
 
   const handleSave = async () => {
-    if (!form.name.trim() || !form.subject.trim() || (!form.bodyContent.trim() && !form.bodyText.trim())) {
+    if (!form.name.trim() || !form.subject.trim() || !form.bodyContent.trim()) {
       toast({ title: "Missing required fields", description: "Name, subject, and a body are required.", variant: "destructive" });
       return;
     }
@@ -365,10 +364,10 @@ export default function EmailTemplates() {
           )}
         </div>
 
-        {/* Clickable variable chips — insert at cursor in the focused body field */}
+        {/* Clickable variable chips — insert at cursor in the Body field */}
         <div className="rounded-lg border bg-muted/30 p-3">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-            Variables — click to insert at cursor ({activeField === "bodyText" ? "plain-text body" : "body"})
+            Variables — click to insert at cursor in the body
           </p>
           <div className="flex flex-wrap gap-1.5">
             {allowedVariables.map((v) => (
@@ -382,8 +381,9 @@ export default function EmailTemplates() {
             ))}
           </div>
           <p className="text-[11px] text-muted-foreground mt-2">
-            Write the body content only — the system adds the branded header/footer automatically (see live preview).
-            Only the variables above substitute; any other <code>{`{{token}}`}</code> is rejected on save.
+            Just type the message — press Enter for a new line and leave a blank line between paragraphs; those breaks
+            appear in the email (see live preview). The branded header/footer and the plain-text version are added
+            automatically. Only the variables above substitute; any other <code>{`{{token}}`}</code> is rejected on save.
           </p>
         </div>
 
@@ -411,23 +411,10 @@ export default function EmailTemplates() {
                 id="tpl-content"
                 ref={contentRef}
                 value={form.bodyContent}
-                onFocus={() => setActiveField("bodyContent")}
                 onChange={(e) => setForm({ ...form, bodyContent: e.target.value })}
-                className="min-h-[220px] text-sm"
-                placeholder="Hi {{firstName}}, …  (basic HTML like <p>, <strong>, <a> is supported)"
+                className="min-h-[300px] text-sm"
+                placeholder={"Hi {{firstName}},\n\nThanks for your patience on our waitlist…\n\nWarm regards,\nThe Family Connection Team"}
                 data-testid="input-bodycontent"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="tpl-text">Plain-text version</Label>
-              <Textarea
-                id="tpl-text"
-                ref={textRef}
-                value={form.bodyText}
-                onFocus={() => setActiveField("bodyText")}
-                onChange={(e) => setForm({ ...form, bodyText: e.target.value })}
-                className="min-h-[120px] text-sm"
-                placeholder="Hi {{firstName}}, …  (shown in email clients that don't render HTML)"
               />
             </div>
 

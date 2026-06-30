@@ -12,6 +12,7 @@ import {
   getTemplateMetadataList,
   extractFirstName,
   wrapEmailContent,
+  renderBodyContentToHtml,
   type EmailTemplate,
   type TemplateMetadata,
 } from "./templates";
@@ -182,17 +183,19 @@ export async function renderTemplate(
 }
 
 /**
- * Render an UNSAVED draft (editor live preview). Reuses the exact same render
- * mechanism as a real send — wrapEmailContent() applies the branding shell to
- * the inner bodyContent, then substituteVariables() substitutes a sample
- * variable map — so the editor preview matches what an actual send produces for
- * a saved template (whose body_html = wrapEmailContent(bodyContent)).
+ * Render an UNSAVED draft (editor live preview). Reuses the EXACT same render
+ * mechanism as a real send: renderBodyContentToHtml() honors the content format
+ * (text → newline-converted; html → as-is), wrapEmailContent() applies the
+ * branding shell, then substituteVariables() substitutes a sample variable map.
+ * Mirrors what createTemplate/updateTemplate bake into body_html, so the editor
+ * preview is truthful — same line-break handling the sent email will have.
  */
 export function renderDraftPreview(input: {
   subject: string;
   bodyContent: string;
-  bodyText: string;
+  contentFormat?: "html" | "text";
 }): { subject: string; html: string; text: string } {
+  const format: "html" | "text" = input.contentFormat === "html" ? "html" : "text";
   const sampleContact: ContactForEmail = {
     contactId: 0,
     name: "Jordan Sample",
@@ -204,10 +207,11 @@ export function renderDraftPreview(input: {
     eccConsent: true,
   };
   const variables = buildVariableMap(sampleContact);
+  const html = substituteVariables(wrapEmailContent(renderBodyContentToHtml(input.bodyContent, format)), variables);
   return {
     subject: substituteVariables(input.subject, variables),
-    html: substituteVariables(wrapEmailContent(input.bodyContent), variables),
-    text: substituteVariables(input.bodyText, variables),
+    html,
+    text: substituteVariables(input.bodyContent, variables),
   };
 }
 
