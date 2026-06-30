@@ -31,8 +31,12 @@ export interface EmailTemplate {
   name: string;
   description: string;
   subject: string;
+  contentFormat: "html" | "text"; // how bodyContent is authored:
+  //   "html" → system templates, authored with <p> markup; rendered as-is
+  //   "text" → editor templates, plain text with line breaks; converted to HTML
+  //            (escaped + \n\n→paragraph, \n→<br>) at render so typed spacing shows
   bodyContent: string; // inner editable body (no branding shell); EDIT this
-  bodyHtml: string;    // derived = wrapEmailContent(bodyContent); render uses this
+  bodyHtml: string;    // derived = wrapEmailContent(renderBodyContentToHtml(bodyContent, contentFormat))
   bodyText: string;
   variables: string[]; // List of variable names used in this template
   requiredFields: RequiredField[]; // Admin-filled fields (empty = fully auto-populated)
@@ -139,11 +143,69 @@ export function wrapEmailContent(content: string): string {
   `.trim();
 }
 
+// ============================================================================
+// Body-content rendering: honor editor-typed line breaks for "text" templates
+// ============================================================================
+
+/** Escape the 4 HTML-significant chars in user-authored plain text so literal
+ *  characters (e.g. "<", "&") render as themselves. {{tokens}} are unaffected
+ *  (letters/braces aren't escaped), so variable substitution still works. */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Convert plain text with line breaks into HTML, preserving the author's
+ *  spatial formatting: blank line (\n\n) → paragraph break, single \n → <br>.
+ *  Paragraph styling matches the system templates' <p> spacing for visual
+ *  consistency. User text is escaped first; {{tokens}} survive escaping and are
+ *  substituted later (so variable-injected HTML like {{locationBlock}} / links
+ *  still render as HTML, never escaped). */
+function textToHtml(text: string): string {
+  const normalized = (text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const paragraphs = normalized
+    .split(/\n[ \t]*\n/) // blank line separates paragraphs
+    .map((p) => p.replace(/^\n+|\n+$/g, "")) // trim leading/trailing newlines per block
+    .filter((p) => p.length > 0);
+  if (paragraphs.length === 0) return "";
+  return paragraphs
+    .map((p) => `<p style="margin: 0 0 20px 0;">${escapeHtml(p).replace(/\n/g, "<br>")}</p>`)
+    .join("\n");
+}
+
+/** Render inner body content to HTML for the wrapper. "html" content (system
+ *  templates) is already markup → identity. "text" content (editor templates)
+ *  is converted so typed line breaks are honored. */
+export function renderBodyContentToHtml(content: string, format: "html" | "text"): string {
+  return format === "text" ? textToHtml(content) : content;
+}
+
+/** Derive the plain-text twin from body content. For "text" templates the
+ *  content IS the clean plain text (newlines preserved) — used verbatim. For
+ *  "html" templates, strip tags to a readable plain-text approximation. */
+export function deriveBodyText(content: string, format: "html" | "text"): string {
+  if (format === "text") return content;
+  return content
+    .replace(/<\s*br\s*\/?>/gi, "\n")
+    .replace(/<\/\s*p\s*>/gi, "\n\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 // Source definitions hold the INNER body content; the branded bodyHtml is
 // derived once below via wrapEmailContent(). This is byte-identical to the
 // previous `bodyHtml: wrapEmailContent(...)` form (verified by the equivalence
 // test) and gives every template an editable inner-content field.
-const RAW_TEMPLATES: Omit<EmailTemplate, "bodyHtml">[] = [
+const RAW_TEMPLATES: Omit<EmailTemplate, "bodyHtml" | "contentFormat">[] = [
   {
     id: "waitlist-status",
     name: "Waitlist Status",
@@ -468,12 +530,14 @@ Albuquerque, New Mexico
   },
 ];
 
-// Derive the branded bodyHtml from the inner content for each template.
-// wrapEmailContent() is applied exactly once here — identical to the prior
-// inline form, so the 6 system templates' bodyHtml stays byte-identical.
+// All 6 system templates are HTML-authored (their bodyContent has <p> markup).
+// renderBodyContentToHtml(content, "html") is the identity, so bodyHtml stays
+// byte-identical to the prior wrapEmailContent(bodyContent) form (verified by
+// the equivalence test).
 export const EMAIL_TEMPLATES: EmailTemplate[] = RAW_TEMPLATES.map((t) => ({
   ...t,
-  bodyHtml: wrapEmailContent(t.bodyContent),
+  contentFormat: "html" as const,
+  bodyHtml: wrapEmailContent(renderBodyContentToHtml(t.bodyContent, "html")),
 }));
 
 // ============================================================================
@@ -505,6 +569,7 @@ function rowToTemplate(r: any): EmailTemplate {
     name: r.name,
     description: r.description ?? "",
     subject: r.subject,
+    contentFormat: r.content_format === "html" ? "html" : "text",
     bodyContent: r.body_content ?? "",
     bodyHtml: r.body_html,
     bodyText: r.body_text,
@@ -528,6 +593,7 @@ export async function initEmailTemplatesTable(): Promise<void> {
       name            TEXT NOT NULL,
       description     TEXT NOT NULL DEFAULT '',
       subject         TEXT NOT NULL,
+      content_format  TEXT NOT NULL DEFAULT 'text',
       body_content    TEXT NOT NULL DEFAULT '',
       body_html       TEXT NOT NULL,
       body_text       TEXT NOT NULL,
@@ -539,12 +605,18 @@ export async function initEmailTemplatesTable(): Promise<void> {
     )
   `);
 
-  // Additive migration: existing tables (Build 1/2) lack body_content.
-  try {
-    await pool.query(`ALTER TABLE email_templates ADD COLUMN body_content TEXT NOT NULL DEFAULT ''`);
-    console.log("[email-templates-db] Added body_content column");
-  } catch {
-    // Column already exists — expected on subsequent startups
+  // Additive migrations: existing tables (Build 1/2/3) lack these columns.
+  const additiveColumns: Array<[string, string]> = [
+    ["body_content", `ALTER TABLE email_templates ADD COLUMN body_content TEXT NOT NULL DEFAULT ''`],
+    ["content_format", `ALTER TABLE email_templates ADD COLUMN content_format TEXT NOT NULL DEFAULT 'text'`],
+  ];
+  for (const [name, sql] of additiveColumns) {
+    try {
+      await pool.query(sql);
+      console.log(`[email-templates-db] Added ${name} column`);
+    } catch {
+      // Column already exists — expected on subsequent startups
+    }
   }
 
   // Idempotent seed from the constant. sort_order = array index, so the
@@ -554,14 +626,15 @@ export async function initEmailTemplatesTable(): Promise<void> {
     const t = EMAIL_TEMPLATES[i];
     const result = await pool.query(
       `INSERT INTO email_templates
-         (id, name, description, subject, body_content, body_html, body_text, variables, required_fields, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10)
+         (id, name, description, subject, content_format, body_content, body_html, body_text, variables, required_fields, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11)
        ON CONFLICT (id) DO NOTHING`,
       [
         t.id,
         t.name,
         t.description,
         t.subject,
+        t.contentFormat,
         t.bodyContent,
         t.bodyHtml,
         t.bodyText,
@@ -573,14 +646,14 @@ export async function initEmailTemplatesTable(): Promise<void> {
     seeded += result.rowCount ?? 0;
   }
 
-  // Backfill body_content for the 6 system rows that predate the column (their
-  // body_html is the pre-wrapped form; body_content is the inner source from the
-  // constant). Idempotent — only fills empties; never touches body_html (render
-  // stays byte-identical) or editor-authored rows.
+  // Backfill the 6 system rows that predate these columns. body_content from the
+  // constant (their body_html is the pre-wrapped form); content_format='html'
+  // (they are HTML-authored). Idempotent — only fills empties; NEVER touches
+  // body_html (render stays byte-identical) or editor-authored rows.
   let backfilled = 0;
   for (const t of EMAIL_TEMPLATES) {
     const r = await pool.query(
-      `UPDATE email_templates SET body_content = $2
+      `UPDATE email_templates SET body_content = $2, content_format = 'html'
         WHERE id = $1 AND (body_content IS NULL OR body_content = '')`,
       [t.id, t.bodyContent],
     );
@@ -588,7 +661,7 @@ export async function initEmailTemplatesTable(): Promise<void> {
   }
 
   console.log(
-    `[email-templates-db] Table initialized (${seeded} of ${EMAIL_TEMPLATES.length} newly seeded; ${backfilled} body_content backfilled; body_html untouched)`,
+    `[email-templates-db] Table initialized (${seeded} of ${EMAIL_TEMPLATES.length} newly seeded; ${backfilled} system rows backfilled (content_format=html); body_html untouched)`,
   );
 }
 
@@ -749,8 +822,8 @@ export interface CreateTemplateInput {
   name: string;
   description: string;
   subject: string;
-  bodyContent: string; // inner body; branded body_html is derived on save
-  bodyText: string;
+  bodyContent: string; // inner body (plain text w/ line breaks); branded body_html
+  //                      and plain-text twin are derived on save — no hand-entry.
 }
 
 export interface UpdateTemplateInput {
@@ -758,33 +831,36 @@ export interface UpdateTemplateInput {
   description?: string;
   subject?: string;
   bodyContent?: string;
-  bodyText?: string;
 }
 
 /** Create an editor-authored template. id is generated (never collides with the
- *  6 system ids); requiredFields default to [] (no structural editor in v1);
- *  body_html is derived from bodyContent via wrapEmailContent() (so it's always
- *  branded and never empty); variables are derived from the content. */
+ *  6 system ids); requiredFields default to [] (no structural editor in v1).
+ *  Editor templates are content_format="text": body_html = wrapEmailContent of
+ *  the newline-converted content (typed line breaks honored, never empty), and
+ *  body_text is auto-derived (= the plain-text content). Variables from content. */
 export async function createTemplate(input: CreateTemplateInput): Promise<EmailTemplate> {
   const pool = getPool();
   const id = await generateUniqueId(input.name);
-  const bodyHtml = wrapEmailContent(input.bodyContent);
-  const variables = extractVariables(input.subject, input.bodyContent, input.bodyText);
+  const format: "html" | "text" = "text";
+  const bodyHtml = wrapEmailContent(renderBodyContentToHtml(input.bodyContent, format));
+  const bodyText = deriveBodyText(input.bodyContent, format);
+  const variables = extractVariables(input.subject, input.bodyContent);
   const orderRes = await pool.query(`SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM email_templates`);
   const sortOrder = orderRes.rows[0].next;
 
   await pool.query(
     `INSERT INTO email_templates
-       (id, name, description, subject, body_content, body_html, body_text, variables, required_fields, sort_order)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, '[]'::jsonb, $9)`,
+       (id, name, description, subject, content_format, body_content, body_html, body_text, variables, required_fields, sort_order)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, '[]'::jsonb, $10)`,
     [
       id,
       input.name,
       input.description,
       input.subject,
+      format,
       input.bodyContent,
       bodyHtml,
-      input.bodyText,
+      bodyText,
       JSON.stringify(variables),
       sortOrder,
     ],
@@ -796,9 +872,11 @@ export async function createTemplate(input: CreateTemplateInput): Promise<EmailT
 }
 
 /** Update an existing template's editable fields (name/description/subject/body).
- *  Never changes id or required_fields. body_html is re-derived from the merged
- *  bodyContent via wrapEmailContent() (branded, never empty). Recomputes
- *  variables from the merged content. Returns null if the id doesn't exist. */
+ *  Never changes id, required_fields, or content_format. body_html is re-derived
+ *  from the merged bodyContent honoring the row's content_format (text → newline
+ *  conversion; html → as-is, so system templates aren't distorted). body_text is
+ *  re-derived for text templates; preserved as-authored for html (system) ones.
+ *  Returns null if the id doesn't exist. */
 export async function updateTemplate(id: string, patch: UpdateTemplateInput): Promise<EmailTemplate | null> {
   const existing = await getTemplateById(id);
   if (!existing) return null;
@@ -808,10 +886,13 @@ export async function updateTemplate(id: string, patch: UpdateTemplateInput): Pr
     description: patch.description ?? existing.description,
     subject: patch.subject ?? existing.subject,
     bodyContent: patch.bodyContent ?? existing.bodyContent,
-    bodyText: patch.bodyText ?? existing.bodyText,
   };
-  const bodyHtml = wrapEmailContent(merged.bodyContent);
-  const variables = extractVariables(merged.subject, merged.bodyContent, merged.bodyText);
+  const format = existing.contentFormat;
+  const bodyHtml = wrapEmailContent(renderBodyContentToHtml(merged.bodyContent, format));
+  // text → content IS the plain text; html (system) → keep the authored body_text
+  // (its {{locationBlockText}} etc. must not be lost to tag-stripping).
+  const bodyText = format === "text" ? deriveBodyText(merged.bodyContent, format) : existing.bodyText;
+  const variables = extractVariables(merged.subject, merged.bodyContent);
 
   const pool = getPool();
   await pool.query(
@@ -819,7 +900,7 @@ export async function updateTemplate(id: string, patch: UpdateTemplateInput): Pr
         SET name = $2, description = $3, subject = $4, body_content = $5, body_html = $6,
             body_text = $7, variables = $8::jsonb, updated_at = NOW()
       WHERE id = $1`,
-    [id, merged.name, merged.description, merged.subject, merged.bodyContent, bodyHtml, merged.bodyText, JSON.stringify(variables)],
+    [id, merged.name, merged.description, merged.subject, merged.bodyContent, bodyHtml, bodyText, JSON.stringify(variables)],
   );
 
   return (await getTemplateById(id)) ?? null;

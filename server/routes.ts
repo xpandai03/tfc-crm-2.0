@@ -4350,8 +4350,8 @@ export async function registerRoutes(
     try {
       const subject = String(req.body?.subject ?? "");
       const bodyContent = String(req.body?.bodyContent ?? "");
-      const bodyText = String(req.body?.bodyText ?? "");
-      const rendered = renderDraftPreview({ subject, bodyContent, bodyText });
+      const contentFormat = req.body?.contentFormat === "html" ? "html" : "text";
+      const rendered = renderDraftPreview({ subject, bodyContent, contentFormat });
       return res.json(rendered);
     } catch (error) {
       console.error("[email-templates] draft preview failed:", error);
@@ -4368,14 +4368,14 @@ export async function registerRoutes(
       const description = String(req.body?.description ?? "").trim();
       const subject = String(req.body?.subject ?? "").trim();
       const bodyContent = String(req.body?.bodyContent ?? "");
-      const bodyText = String(req.body?.bodyText ?? "");
 
-      if (!name || !subject || (!bodyContent.trim() && !bodyText.trim())) {
+      if (!name || !subject || !bodyContent.trim()) {
         return res.status(400).json({ error: "name, subject, and body are required" });
       }
-      if (rejectUnknownVariables(res, subject, bodyContent, bodyText)) return;
+      // Plain-text twin is auto-derived on save — only subject + body are validated.
+      if (rejectUnknownVariables(res, subject, bodyContent, "")) return;
 
-      const created = await createTemplate({ name, description, subject, bodyContent, bodyText });
+      const created = await createTemplate({ name, description, subject, bodyContent });
 
       await logActivity({
         type: "email_template_created",
@@ -4383,7 +4383,7 @@ export async function registerRoutes(
         entityType: "email_template",
         entityId: created.id,
         entityName: created.name,
-        metadata: { fields: ["name", "description", "subject", "bodyContent", "bodyText"] },
+        metadata: { fields: ["name", "description", "subject", "bodyContent"] },
       });
 
       console.log(`[email-templates] CREATE id=${created.id} by ${editor}`);
@@ -4406,7 +4406,7 @@ export async function registerRoutes(
       }
 
       const patch: Record<string, string> = {};
-      for (const key of ["name", "description", "subject", "bodyContent", "bodyText"] as const) {
+      for (const key of ["name", "description", "subject", "bodyContent"] as const) {
         if (req.body?.[key] !== undefined) patch[key] = String(req.body[key]);
       }
       if (patch.name !== undefined && !patch.name.trim()) {
@@ -4416,14 +4416,14 @@ export async function registerRoutes(
         return res.status(400).json({ error: "subject cannot be empty" });
       }
 
-      // Validate variables against the merged (post-edit) content.
+      // Validate variables against the merged (post-edit) content. body_text is
+      // auto-derived on save, so only subject + body are checked.
       const mergedSubject = patch.subject ?? existing.subject;
       const mergedContent = patch.bodyContent ?? existing.bodyContent;
-      const mergedText = patch.bodyText ?? existing.bodyText;
-      if (rejectUnknownVariables(res, mergedSubject, mergedContent, mergedText)) return;
+      if (rejectUnknownVariables(res, mergedSubject, mergedContent, "")) return;
 
       // Changed-field names for the activity log (no body content).
-      const changedFields = (["name", "description", "subject", "bodyContent", "bodyText"] as const).filter(
+      const changedFields = (["name", "description", "subject", "bodyContent"] as const).filter(
         (k) => patch[k] !== undefined && patch[k] !== (existing as any)[k],
       );
 
