@@ -646,22 +646,35 @@ export async function initEmailTemplatesTable(): Promise<void> {
     seeded += result.rowCount ?? 0;
   }
 
-  // Backfill the 6 system rows that predate these columns. body_content from the
-  // constant (their body_html is the pre-wrapped form); content_format='html'
-  // (they are HTML-authored). Idempotent — only fills empties; NEVER touches
-  // body_html (render stays byte-identical) or editor-authored rows.
-  let backfilled = 0;
+  // Backfill body_content for the 6 system rows that predate that column (their
+  // body_html is the pre-wrapped form). Idempotent — only fills empties; never
+  // touches body_html (render stays byte-identical) or editor-authored rows.
+  let backfilledContent = 0;
   for (const t of EMAIL_TEMPLATES) {
     const r = await pool.query(
-      `UPDATE email_templates SET body_content = $2, content_format = 'html'
+      `UPDATE email_templates SET body_content = $2
         WHERE id = $1 AND (body_content IS NULL OR body_content = '')`,
       [t.id, t.bodyContent],
     );
-    backfilled += r.rowCount ?? 0;
+    backfilledContent += r.rowCount ?? 0;
+  }
+
+  // Ensure the 6 system templates are flagged content_format='html'. The column
+  // defaults to 'text', so rows that predate it default wrong — and editing or
+  // previewing them as 'text' would newline-convert (escape) their HTML and
+  // distort them. Force-correct by id, independent of body_content state.
+  // Idempotent; never touches body_html.
+  let fixedFormat = 0;
+  for (const t of EMAIL_TEMPLATES) {
+    const r = await pool.query(
+      `UPDATE email_templates SET content_format = 'html' WHERE id = $1 AND content_format <> 'html'`,
+      [t.id],
+    );
+    fixedFormat += r.rowCount ?? 0;
   }
 
   console.log(
-    `[email-templates-db] Table initialized (${seeded} of ${EMAIL_TEMPLATES.length} newly seeded; ${backfilled} system rows backfilled (content_format=html); body_html untouched)`,
+    `[email-templates-db] Table initialized (${seeded} of ${EMAIL_TEMPLATES.length} newly seeded; ${backfilledContent} body_content backfilled; ${fixedFormat} system rows set content_format=html; body_html untouched)`,
   );
 }
 
