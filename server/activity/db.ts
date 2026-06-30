@@ -26,6 +26,8 @@ export type ActivityType =
   | "provider_reactivated"
   | "provider_availability_submitted"
   | "email_sent"
+  | "email_template_created"
+  | "email_template_updated"
   | "therapy_notes_started"
   | "therapy_notes_created"
   | "therapy_notes_failed"

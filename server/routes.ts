@@ -79,7 +79,7 @@ import {
   getActivityForContact,
   getStatusDurations,
 } from "./activity/db";
-import { isRestrictedUser, canAccessReferralUpload, isTnV2User } from "@shared/access-control";
+import { isRestrictedUser, canAccessReferralUpload, isTnV2User, canEditEmailTemplates } from "@shared/access-control";
 import { normalizeReasonForTherapy } from "@shared/reason-canonicals";
 import { getStatusLabel } from "@shared/status-codes";
 import { extractReferralData } from "./referral/extract";
@@ -4000,6 +4000,18 @@ export async function registerRoutes(
     validateEmailServiceConfig,
   } = await import("./email/service");
 
+  // Import email-template editor (Build 2) DB helpers + variable validation
+  const {
+    getAllTemplatesFull,
+    createTemplate,
+    updateTemplate,
+    deleteTemplate,
+    getTemplateById: getTemplateByIdFull,
+    isSystemTemplate,
+    findUnknownVariables,
+    KNOWN_TEMPLATE_VARIABLES,
+  } = await import("./email/templates");
+
   // Import provider/location config
   const {
     PROVIDER_LIST,
@@ -4268,6 +4280,7 @@ export async function registerRoutes(
   });
 
   // GET /api/email-templates - List available templates for dropdown
+  // UNGATED: all staff consume templates read-only via the send-email dropdown.
   app.get("/api/email-templates", async (_req, res) => {
     try {
       const templates = await getTemplateList();
@@ -4276,6 +4289,164 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[email-api] Error fetching templates:", error);
       return res.status(500).json({ error: "Failed to fetch email templates" });
+    }
+  });
+
+  // ==========================================================================
+  // Email-template EDITOR endpoints (Build 2).
+  // Write paths (full list / create / update / delete) are gated server-side to
+  // the 5 management editors — a 403 here is the REAL enforcement (UI hiding is
+  // cosmetic). The GET above stays ungated for all staff.
+  // ==========================================================================
+
+  // Shared editor gate (mirrors the referral-upload inline 403 pattern).
+  const requireTemplateEditor = (req: any, res: any): string | null => {
+    const email = (req.user?.email ?? "").toLowerCase().trim();
+    if (!canEditEmailTemplates(email)) {
+      res.status(403).json({ error: "Access denied" });
+      return null;
+    }
+    return email;
+  };
+
+  // Validate that content references only known {{variables}} (unknown tokens
+  // would silently fail to substitute at send time). Returns true if it handled
+  // (sent) an error response.
+  const rejectUnknownVariables = (res: any, subject: string, bodyHtml: string, bodyText: string): boolean => {
+    const unknown = findUnknownVariables(subject, bodyHtml, bodyText);
+    if (unknown.length > 0) {
+      res.status(422).json({
+        error: `Unknown variable(s): ${unknown.map((v: string) => `{{${v}}}`).join(", ")}. Allowed: ${KNOWN_TEMPLATE_VARIABLES.map((v: string) => `{{${v}}}`).join(", ")}`,
+        unknownVariables: unknown,
+        allowedVariables: KNOWN_TEMPLATE_VARIABLES,
+      });
+      return true;
+    }
+    return false;
+  };
+
+  // GET /api/email-templates/full - full template rows for the editor (gated).
+  app.get("/api/email-templates/full", async (req, res) => {
+    if (!requireTemplateEditor(req, res)) return;
+    try {
+      const templates = await getAllTemplatesFull();
+      return res.json({
+        templates,
+        systemIds: templates.filter((t) => isSystemTemplate(t.id)).map((t) => t.id),
+        allowedVariables: KNOWN_TEMPLATE_VARIABLES,
+      });
+    } catch (error) {
+      console.error("[email-templates] full list failed:", error);
+      return res.status(500).json({ error: "Failed to load templates" });
+    }
+  });
+
+  // POST /api/email-templates - create a new editor-authored template (gated).
+  app.post("/api/email-templates", async (req, res) => {
+    const editor = requireTemplateEditor(req, res);
+    if (!editor) return;
+    try {
+      const name = String(req.body?.name ?? "").trim();
+      const description = String(req.body?.description ?? "").trim();
+      const subject = String(req.body?.subject ?? "").trim();
+      const bodyHtml = String(req.body?.bodyHtml ?? "");
+      const bodyText = String(req.body?.bodyText ?? "");
+
+      if (!name || !subject || (!bodyHtml.trim() && !bodyText.trim())) {
+        return res.status(400).json({ error: "name, subject, and body are required" });
+      }
+      if (rejectUnknownVariables(res, subject, bodyHtml, bodyText)) return;
+
+      const created = await createTemplate({ name, description, subject, bodyHtml, bodyText });
+
+      await logActivity({
+        type: "email_template_created",
+        actorEmail: editor,
+        entityType: "email_template",
+        entityId: created.id,
+        entityName: created.name,
+        metadata: { fields: ["name", "description", "subject", "bodyHtml", "bodyText"] },
+      });
+
+      console.log(`[email-templates] CREATE id=${created.id} by ${editor}`);
+      return res.status(201).json({ template: created });
+    } catch (error) {
+      console.error("[email-templates] create failed:", error);
+      return res.status(500).json({ error: "Failed to create template" });
+    }
+  });
+
+  // PUT /api/email-templates/:id - update editable fields (gated). id immutable.
+  app.put("/api/email-templates/:id", async (req, res) => {
+    const editor = requireTemplateEditor(req, res);
+    if (!editor) return;
+    try {
+      const id = req.params.id;
+      const existing = await getTemplateByIdFull(id);
+      if (!existing) {
+        return res.status(404).json({ error: "Template not found" });
+      }
+
+      const patch: Record<string, string> = {};
+      for (const key of ["name", "description", "subject", "bodyHtml", "bodyText"] as const) {
+        if (req.body?.[key] !== undefined) patch[key] = String(req.body[key]);
+      }
+      if (patch.name !== undefined && !patch.name.trim()) {
+        return res.status(400).json({ error: "name cannot be empty" });
+      }
+      if (patch.subject !== undefined && !patch.subject.trim()) {
+        return res.status(400).json({ error: "subject cannot be empty" });
+      }
+
+      // Validate variables against the merged (post-edit) content.
+      const mergedSubject = patch.subject ?? existing.subject;
+      const mergedHtml = patch.bodyHtml ?? existing.bodyHtml;
+      const mergedText = patch.bodyText ?? existing.bodyText;
+      if (rejectUnknownVariables(res, mergedSubject, mergedHtml, mergedText)) return;
+
+      // Changed-field names for the activity log (no body content).
+      const changedFields = (["name", "description", "subject", "bodyHtml", "bodyText"] as const).filter(
+        (k) => patch[k] !== undefined && patch[k] !== (existing as any)[k],
+      );
+
+      const updated = await updateTemplate(id, patch);
+
+      await logActivity({
+        type: "email_template_updated",
+        actorEmail: editor,
+        entityType: "email_template",
+        entityId: id,
+        entityName: updated?.name ?? existing.name,
+        metadata: { changedFields, isSystemTemplate: isSystemTemplate(id) },
+      });
+
+      console.log(`[email-templates] UPDATE id=${id} by ${editor} fields=[${changedFields.join(",")}]`);
+      return res.json({ template: updated });
+    } catch (error) {
+      console.error("[email-templates] update failed:", error);
+      return res.status(500).json({ error: "Failed to update template" });
+    }
+  });
+
+  // DELETE /api/email-templates/:id - delete an editor-authored template (gated).
+  // The 6 system templates have id-coupled behavior and CANNOT be deleted.
+  app.delete("/api/email-templates/:id", async (req, res) => {
+    const editor = requireTemplateEditor(req, res);
+    if (!editor) return;
+    try {
+      const id = req.params.id;
+      if (isSystemTemplate(id)) {
+        return res.status(403).json({ error: "System templates cannot be deleted." });
+      }
+      const ok = await deleteTemplate(id);
+      if (!ok) {
+        return res.status(404).json({ error: "Template not found" });
+      }
+      console.log(`[email-templates] DELETE id=${id} by ${editor}`);
+      return res.json({ success: true });
+    } catch (error) {
+      console.error("[email-templates] delete failed:", error);
+      return res.status(500).json({ error: "Failed to delete template" });
     }
   });
 

@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Home, Users, BarChart3, UserCheck, FileText, FileUp, Activity, MessageCircleQuestion } from "lucide-react";
+import { Home, Users, BarChart3, UserCheck, FileText, FileUp, Activity, MessageCircleQuestion, Mail } from "lucide-react";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -8,7 +8,7 @@ import { UniversalSearch } from "./universal-search";
 import { useAuth } from "@/lib/auth-context";
 import { getWaitlistBoard } from "@/lib/api";
 import { FeedbackModal } from "@/components/ui/feedback-modal";
-import { isRestrictedUser, canAccessReferralUpload } from "@shared/access-control";
+import { isRestrictedUser, canAccessReferralUpload, canEditEmailTemplates } from "@shared/access-control";
 
 const allNavItems = [
   { href: "/", label: "Today", icon: Home },
@@ -17,6 +17,7 @@ const allNavItems = [
   { href: "/providers", label: "Providers", icon: UserCheck, beta: true },
   { href: "/submissions", label: "Submissions", icon: FileText },
   { href: "/referral", label: "Referrals", icon: FileUp },
+  { href: "/email-templates", label: "Email Templates", icon: Mail },
   { href: "/activity", label: "Activity", icon: Activity },
 ];
 
@@ -26,6 +27,7 @@ const GATED_HREFS = ["/", "/insights", "/providers"];
 // allowlists in shared/access-control.ts.
 const FEATURE_GATED_HREFS: Record<string, (email: string | null | undefined) => boolean> = {
   "/referral": canAccessReferralUpload,
+  "/email-templates": canEditEmailTemplates,
 };
 
 export function TopNav() {
