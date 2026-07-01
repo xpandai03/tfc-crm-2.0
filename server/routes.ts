@@ -6003,34 +6003,39 @@ export async function registerRoutes(
         metadata: { contactId: pathContactId, runId: body.runId, phase: body.phase, status: body.status, message, ...meta },
       });
 
-      // On the terminal phase, also write the matching terminal entry the UI keys off.
-      if (body.phase === "workflow_complete") {
-        if (body.status === "ok") {
-          await logActivity({
-            type: "tn_schedule_completed",
-            actorEmail: "tn-agent",
-            entityType: "contact",
-            entityId: String(pathContactId),
-            entityName: contactName,
-            metadata: {
-              contactId: pathContactId, runId: body.runId,
-              tnPatientUrl: meta.tnPatientUrl, tnPatientId: meta.tnPatientId,
-              appointmentDatetime: meta.appointmentDatetime,
-            },
-          });
-        } else if (body.status === "failed") {
-          await logActivity({
-            type: "tn_schedule_failed",
-            actorEmail: "tn-agent",
-            entityType: "contact",
-            entityId: String(pathContactId),
-            entityName: contactName,
-            metadata: {
-              contactId: pathContactId, runId: body.runId,
-              failureReason: meta.failureReason || message,
-            },
-          });
-        }
+      // Write the runId-tagged TERMINAL entry the UI keys off (computeTnRun):
+      //  - success ONLY on workflow_complete/ok
+      //  - failure on ANY failed phase (mid-run overlay error, abort, etc.), not
+      //    just workflow_complete. Previously only workflow_complete/failed wrote
+      //    a terminal, so an intermediate-phase failure left the contact stuck
+      //    "Adding to Schedule in TN…" forever. Emitting the terminal here clears
+      //    the loading state and records the reason for the failure indicator.
+      if (body.phase === "workflow_complete" && body.status === "ok") {
+        await logActivity({
+          type: "tn_schedule_completed",
+          actorEmail: "tn-agent",
+          entityType: "contact",
+          entityId: String(pathContactId),
+          entityName: contactName,
+          metadata: {
+            contactId: pathContactId, runId: body.runId,
+            tnPatientUrl: meta.tnPatientUrl, tnPatientId: meta.tnPatientId,
+            appointmentDatetime: meta.appointmentDatetime,
+          },
+        });
+      } else if (body.status === "failed") {
+        await logActivity({
+          type: "tn_schedule_failed",
+          actorEmail: "tn-agent",
+          entityType: "contact",
+          entityId: String(pathContactId),
+          entityName: contactName,
+          metadata: {
+            contactId: pathContactId, runId: body.runId,
+            phase: body.phase,
+            failureReason: meta.failureReason || message,
+          },
+        });
       }
 
       return res.status(200).json({ ok: true });
