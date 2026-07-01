@@ -250,15 +250,25 @@ function IntakeHistoryEntry({ sub, label, isLatest, defaultExpanded }: {
   );
 }
 
+// A V2 run older than this with no terminal is treated as stale (failed/timed
+// out with no completion callback). Runs take ~100s, so 10 min never trips a
+// live run — it only auto-unsticks contacts whose completion callback never
+// arrived (the stuck-loading bug's safety net; also clears existing hangs).
+const TN_STALE_MS = 10 * 60 * 1000;
+
 // Derive the current TN V2 run state from a contact's activity log (newest-first).
 // A run is "in flight" if its tn_schedule_started entry (which carries a runId)
-// has no matching terminal entry (tn_schedule_completed/failed) for the same runId.
+// has no matching terminal entry (tn_schedule_completed/failed) for the same
+// runId AND is younger than TN_STALE_MS. A terminal failure — or an aged-out run
+// with no terminal — clears the loading state and surfaces a reason.
 type TnActivity = { type: string; metadata: Record<string, unknown>; summary: string; createdAt: string };
 function computeTnRun(activities: TnActivity[] | undefined): {
   inFlight: boolean;
   runId?: string;
   latestPhaseMessage?: string;
   latestPhaseStatus?: string;
+  failedReason?: string; // set when the newest run failed or went stale (for the indicator)
+  stale?: boolean;       // aged out with no terminal callback
 } {
   if (!activities || activities.length === 0) return { inFlight: false };
   const started = activities.find((a) => a.type === "tn_schedule_started");
@@ -267,13 +277,35 @@ function computeTnRun(activities: TnActivity[] | undefined): {
   const terminal = activities.find(
     (a) => (a.type === "tn_schedule_completed" || a.type === "tn_schedule_failed") && a.metadata?.runId === runId
   );
-  if (terminal) return { inFlight: false, runId };
+  if (terminal) {
+    // Success clears silently; an explicit terminal failure surfaces its reason.
+    if (terminal.type === "tn_schedule_failed") {
+      const reason = (terminal.metadata?.failureReason as string) || terminal.summary || "unknown error";
+      return { inFlight: false, runId, failedReason: reason };
+    }
+    return { inFlight: false, runId };
+  }
+  // No terminal yet — apply the staleness TTL so a missing callback can't hang forever.
+  const startedAtMs = Date.parse(String(started.createdAt).replace(" ", "T"));
+  const isStale = Number.isFinite(startedAtMs) && Date.now() - startedAtMs > TN_STALE_MS;
   const latestPhase = activities.find((a) => a.type === "tn_schedule_phase" && a.metadata?.runId === runId);
+  const latestPhaseMessage = (latestPhase?.metadata?.message as string) || latestPhase?.summary;
+  const latestPhaseStatus = latestPhase?.metadata?.status as string | undefined;
+  if (isStale) {
+    return {
+      inFlight: false,
+      runId,
+      stale: true,
+      failedReason: latestPhaseMessage
+        ? `No completion received — last step: ${latestPhaseMessage}`
+        : "No response from TN (the run may have failed or timed out)",
+    };
+  }
   return {
     inFlight: true,
     runId,
-    latestPhaseMessage: (latestPhase?.metadata?.message as string) || latestPhase?.summary,
-    latestPhaseStatus: latestPhase?.metadata?.status as string | undefined,
+    latestPhaseMessage,
+    latestPhaseStatus,
   };
 }
 
@@ -2224,6 +2256,35 @@ export default function ContactDetail() {
                     <p className="text-[11px] text-muted-foreground mt-1">
                       Takes ~100s. You can leave this page — progress is recorded in the activity log.
                     </p>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Last TN run failed / stale — surface the reason + offer retry.
+                  Hidden while a fresh run is in flight or being submitted. */}
+              {canUseTnV2 && !tnRun.inFlight && tnRun.failedReason && !createWithScheduleMutation.isPending && (
+                <Card className="border-red-300 bg-red-50/60 dark:bg-red-950/20" data-testid="card-tn-failed">
+                  <CardContent className="py-3">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-red-800 dark:text-red-300">
+                          Last TN run {tnRun.stale ? "did not complete" : "failed"}
+                        </p>
+                        <p className="text-xs text-red-700 dark:text-red-400 mt-0.5 break-words">
+                          {tnRun.failedReason}
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0 border-red-300 text-red-700 hover:bg-red-100 dark:text-red-300"
+                        onClick={() => setShowScheduleTnModal(true)}
+                        data-testid="button-tn-retry"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
               )}
