@@ -256,6 +256,19 @@ function IntakeHistoryEntry({ sub, label, isLatest, defaultExpanded }: {
 // arrived (the stuck-loading bug's safety net; also clears existing hangs).
 const TN_STALE_MS = 10 * 60 * 1000;
 
+// Parse an activity `createdAt` to epoch ms. The API serves Postgres
+// `created_at::text`, e.g. "2026-07-01 20:21:15.549361+00" — a space separator
+// and a BARE 2-digit offset ("+00") that Date.parse() rejects (→ NaN). Normalize
+// to ISO ("T" separator, "+00"→"+00:00"); fall back to treating it as UTC. Using
+// raw Date.parse here silently returned NaN, which disabled the staleness TTL and
+// left runs stuck in-flight forever.
+function parseActivityTs(s: string | undefined | null): number {
+  if (!s) return NaN;
+  const iso = String(s).trim().replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00");
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : Date.parse(iso.replace(/[+-]\d{2}(:?\d{2})?$/, "") + "Z");
+}
+
 // Derive the current TN V2 run state from a contact's activity log (newest-first).
 // A run is "in flight" if its tn_schedule_started entry (which carries a runId)
 // has no matching terminal entry (tn_schedule_completed/failed) for the same
@@ -286,7 +299,7 @@ function computeTnRun(activities: TnActivity[] | undefined): {
     return { inFlight: false, runId };
   }
   // No terminal yet — apply the staleness TTL so a missing callback can't hang forever.
-  const startedAtMs = Date.parse(String(started.createdAt).replace(" ", "T"));
+  const startedAtMs = parseActivityTs(started.createdAt);
   const isStale = Number.isFinite(startedAtMs) && Date.now() - startedAtMs > TN_STALE_MS;
   const latestPhase = activities.find((a) => a.type === "tn_schedule_phase" && a.metadata?.runId === runId);
   const latestPhaseMessage = (latestPhase?.metadata?.message as string) || latestPhase?.summary;
