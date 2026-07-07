@@ -124,6 +124,25 @@ export default function EmailTemplates() {
     return tokensIn(form.subject, form.bodyContent).filter((t) => !known.has(t));
   }, [form, allowedVariables]);
 
+  // Live mirror of the server's deriveRequiredFields — the quick-fill inputs the
+  // Send Email modal will show the sender, auto-detected from the fill-me
+  // variables in the body. Read-only transparency; auto-derive owns the actual
+  // required_fields on save.
+  const derivedQuickFill = useMemo(() => {
+    const FILL_ME_LABELS: Record<string, string> = {
+      therapistName: "Provider Name",
+      appointmentDatetime: "Appointment Date & Time",
+      locationBlock: "Location",
+      locationBlockText: "Location",
+    };
+    const used = new Set(tokensIn(form.subject, form.bodyContent));
+    const labels: string[] = [];
+    for (const [v, label] of Object.entries(FILL_ME_LABELS)) {
+      if (used.has(v) && !labels.includes(label)) labels.push(label);
+    }
+    return labels;
+  }, [form.subject, form.bodyContent]);
+
   const inForm = editor.mode === "create" || editor.mode === "edit";
 
   // Debounced live preview while editing — server renders the branded shell with
@@ -418,18 +437,19 @@ export default function EmailTemplates() {
               />
             </div>
 
-            {editing && editing.requiredFields.length > 0 && (
+            {derivedQuickFill.length > 0 && (
               <div className="rounded-lg border p-3 bg-muted/20">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-                  Required fields (structural — read-only)
+                  At send time, the sender will be asked for
                 </p>
-                <div className="space-y-1">
-                  {editing.requiredFields.map((f) => (
-                    <div key={f.key} className="text-xs text-muted-foreground">
-                      <code className="text-foreground">{f.key}</code> — {f.label} ({f.type})
-                    </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {derivedQuickFill.map((label) => (
+                    <Badge key={label} variant="secondary" className="text-[11px]">{label}</Badge>
                   ))}
                 </div>
+                <p className="text-[11px] text-muted-foreground mt-2">
+                  Auto-detected from the variables in your body — the Send Email quick-fill form appears automatically. Not editable.
+                </p>
               </div>
             )}
 
