@@ -272,11 +272,17 @@ export async function sendTemplatedEmail(params: {
   try {
     const sender = `${FROM_NAME} <${FROM_EMAIL}>`;
 
-    // Build CC list — qualifying templates also CC the selected provider
-    const QUALIFYING_TEMPLATES = ["appointment-confirmation", "post-appointment-survey", "intake-form-reminder"];
+    // Build CC list — CC the selected provider whenever one was filled in.
+    // Generalized beyond the original system-template id list: a provider is only
+    // ever set via a provider-select quick-fill, so its presence means the sender
+    // explicitly chose a provider — CC them, regardless of template id. Strict
+    // superset of the old behavior: appointment-confirmation (the only system
+    // template with a provider fill) still CCs; the other former "qualifying" ids
+    // never set therapistName so they don't newly CC; custom templates with a
+    // provider fill now CC correctly.
     const ccList: string[] = [REPLY_TO_EMAIL];
 
-    if (QUALIFYING_TEMPLATES.includes(templateId) && dynamicFields?.therapistName) {
+    if (dynamicFields?.therapistName) {
       const providerEmail = getProviderEmail(dynamicFields.therapistName);
       if (providerEmail) {
         ccList.push(providerEmail);

@@ -784,6 +784,42 @@ export function findUnknownVariables(...texts: Array<string | null | undefined>)
   return extractVariables(...texts).filter((v) => !known.has(v));
 }
 
+// Fill-me variables → the quick-fill RequiredField they need at send time. Keys
+// are CANONICAL: the Send modal hardcodes provider-select→therapistName and
+// location-select→locationId, and datetime feeds field.key (a known variable) —
+// so these exact keys are required for fill + substitute to line up. Only
+// fill-me variables appear here; auto-populated ones (firstName, name, city,
+// modality, serviceRequested, appointmentLocationOrModality, surveyLink) never
+// produce a field.
+const FILL_ME_FIELD_BY_VARIABLE: Record<string, RequiredField> = {
+  therapistName: { key: "therapistName", label: "Provider Name", type: "provider-select", defaultText: "[Provider Name]" },
+  appointmentDatetime: { key: "appointmentDatetime", label: "Appointment Date & Time", type: "datetime", defaultText: "[Appointment Date & Time]" },
+  // Both locationBlock and locationBlockText resolve from the single locationId
+  // location-select input (dedup below).
+  locationBlock: { key: "locationId", label: "Appointment Location", type: "location-select", defaultText: "[Location]" },
+  locationBlockText: { key: "locationId", label: "Appointment Location", type: "location-select", defaultText: "[Location]" },
+};
+
+/**
+ * Auto-derive the quick-fill RequiredField[] a template needs from the fill-me
+ * variables it references in its subject/body. Canonical keys, deduped by key
+ * (so locationBlock + locationBlockText → one location field). Order follows the
+ * modal's natural flow: provider, datetime, location. Editor-owned: re-run on
+ * every save so required_fields always matches the current body.
+ */
+export function deriveRequiredFields(subject: string, bodyContent: string): RequiredField[] {
+  const used = new Set(extractVariables(subject, bodyContent));
+  const byKey = new Map<string, RequiredField>();
+  for (const variable of Object.keys(FILL_ME_FIELD_BY_VARIABLE)) {
+    if (used.has(variable)) {
+      const field = FILL_ME_FIELD_BY_VARIABLE[variable];
+      if (!byKey.has(field.key)) byKey.set(field.key, field);
+    }
+  }
+  const ORDER = ["therapistName", "appointmentDatetime", "locationId"];
+  return Array.from(byKey.values()).sort((a, b) => ORDER.indexOf(a.key) - ORDER.indexOf(b.key));
+}
+
 /** All templates with full fields (for the editor list/edit forms), table-sourced
  *  with constant fallback. */
 export async function getAllTemplatesFull(): Promise<EmailTemplate[]> {
@@ -858,13 +894,17 @@ export async function createTemplate(input: CreateTemplateInput): Promise<EmailT
   const bodyHtml = wrapEmailContent(renderBodyContentToHtml(input.bodyContent, format));
   const bodyText = deriveBodyText(input.bodyContent, format);
   const variables = extractVariables(input.subject, input.bodyContent);
+  // Auto-derive the quick-fill fields from the fill-me variables the body uses,
+  // so the Send modal shows the same provider/date-time/location inputs as the
+  // system templates. Editor-owned — never hand-entered.
+  const requiredFields = deriveRequiredFields(input.subject, input.bodyContent);
   const orderRes = await pool.query(`SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM email_templates`);
   const sortOrder = orderRes.rows[0].next;
 
   await pool.query(
     `INSERT INTO email_templates
        (id, name, description, subject, content_format, body_content, body_html, body_text, variables, required_fields, sort_order)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, '[]'::jsonb, $10)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11)`,
     [
       id,
       input.name,
@@ -875,6 +915,7 @@ export async function createTemplate(input: CreateTemplateInput): Promise<EmailT
       bodyHtml,
       bodyText,
       JSON.stringify(variables),
+      JSON.stringify(requiredFields),
       sortOrder,
     ],
   );
@@ -885,11 +926,14 @@ export async function createTemplate(input: CreateTemplateInput): Promise<EmailT
 }
 
 /** Update an existing template's editable fields (name/description/subject/body).
- *  Never changes id, required_fields, or content_format. body_html is re-derived
- *  from the merged bodyContent honoring the row's content_format (text → newline
- *  conversion; html → as-is, so system templates aren't distorted). body_text is
- *  re-derived for text templates; preserved as-authored for html (system) ones.
- *  Returns null if the id doesn't exist. */
+ *  Never changes id or content_format. body_html is re-derived from the merged
+ *  bodyContent honoring the row's content_format (text → newline conversion; html
+ *  → as-is, so system templates aren't distorted). body_text is re-derived for
+ *  text templates; preserved as-authored for html (system) ones. required_fields
+ *  is re-derived from the body for editor (text) templates so the quick-fill form
+ *  tracks the fill-me variables in use; for html (system) templates it is
+ *  preserved verbatim (their requiredFields are HTML-authored in the constant —
+ *  never re-derived). Returns null if the id doesn't exist. */
 export async function updateTemplate(id: string, patch: UpdateTemplateInput): Promise<EmailTemplate | null> {
   const existing = await getTemplateById(id);
   if (!existing) return null;
@@ -906,14 +950,19 @@ export async function updateTemplate(id: string, patch: UpdateTemplateInput): Pr
   // (its {{locationBlockText}} etc. must not be lost to tag-stripping).
   const bodyText = format === "text" ? deriveBodyText(merged.bodyContent, format) : existing.bodyText;
   const variables = extractVariables(merged.subject, merged.bodyContent);
+  // Editor (text) templates re-derive their quick-fill fields from the new body;
+  // system (html) templates keep their hand-authored requiredFields untouched.
+  const requiredFields = format === "text"
+    ? deriveRequiredFields(merged.subject, merged.bodyContent)
+    : existing.requiredFields;
 
   const pool = getPool();
   await pool.query(
     `UPDATE email_templates
         SET name = $2, description = $3, subject = $4, body_content = $5, body_html = $6,
-            body_text = $7, variables = $8::jsonb, updated_at = NOW()
+            body_text = $7, variables = $8::jsonb, required_fields = $9::jsonb, updated_at = NOW()
       WHERE id = $1`,
-    [id, merged.name, merged.description, merged.subject, merged.bodyContent, bodyHtml, bodyText, JSON.stringify(variables)],
+    [id, merged.name, merged.description, merged.subject, merged.bodyContent, bodyHtml, bodyText, JSON.stringify(variables), JSON.stringify(requiredFields)],
   );
 
   return (await getTemplateById(id)) ?? null;
