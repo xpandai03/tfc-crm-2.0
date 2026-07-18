@@ -20,6 +20,7 @@ import { getWaitlistSummary, getWaitlistContacts, type WithSource } from "@/lib/
 import { computeDaysWaiting } from "@/lib/days-waiting";
 import { useDataSource, type DataSource } from "@/lib/data-source-context";
 import { normalizeInsurance } from "@/lib/insurance-utils";
+import { normalizeModality } from "@shared/modality-utils";
 import { useAuth } from "@/lib/auth-context";
 import { isRestrictedUser } from "@shared/access-control";
 import { Link, Redirect } from "wouter";
@@ -54,80 +55,6 @@ function buildInsightWaitlistHref(
   params.set(filterType, value);
   params.set("status", statusList);
   return `/waitlist?${params.toString()}`;
-}
-
-/**
- * Modality normalization mapping (raw values → canonical categories)
- * Maps form options and historical values to display categories
- *
- * TODO: consolidate this map with waitlist-list-view.tsx — the two copies
- * have drifted independently in the past. See follow-up PR (D-C2 from
- * insights cleanup audit).
- */
-const MODALITY_NORMALIZATION_MAP: Record<string, string> = {
-  // Hybrid
-  "hybrid": "Hybrid",
-  "hybrid - ll": "Hybrid",
-
-  // In Person - Albuquerque (ABQ)
-  "in person - albuquerque": "In Person ABQ",
-  "in person-abq": "In Person ABQ",
-  "in person abq": "In Person ABQ",
-  "in person- albuquerque": "In Person ABQ",
-  "in person - abq": "In Person ABQ",
-  "abq": "In Person ABQ",
-  "albuquerque": "In Person ABQ",
-
-  // In Person - Rio Rancho (RR)
-  "in person - rio rancho": "In Person RR",
-  "in person-rio rancho": "In Person RR",
-  "in person- rio rancho": "In Person RR",
-  "in person - rr": "In Person RR",
-  "in person rr": "In Person RR",
-  "rio rancho": "In Person RR",
-
-  // In Person - Los Lunas (LL) — split out from generic "In Person" per
-  // Insights cleanup Bucket C. Previously rolled into the generic bucket
-  // which hid ~118 LL contacts from Amanda's modality breakdown.
-  "in person - los lunas": "In Person LL",
-  "in person- los lunas": "In Person LL",
-  "in person los lunas": "In Person LL",
-  "in-person los lunas": "In Person LL",
-  "in person ll": "In Person LL",
-  "los lunas": "In Person LL",
-  "ll": "In Person LL",
-
-  // In Person (generic - combined options, and old values without location)
-  "in person": "In Person",
-  "in person - albuquerque or rio rancho": "In Person",
-  "in person- albuquerque or rio rancho": "In Person",
-  "in-person": "In Person",
-
-  // Telehealth
-  "telehealth": "Telehealth",
-  "th": "Telehealth",
-  "tele-health": "Telehealth",
-  "tele health": "Telehealth",
-
-  // Flexible/Flex
-  "flexible (open to any option)": "Flex",
-  "flexible (open to any option).": "Flex",
-  "flexible": "Flex",
-  "flex": "Flex",
-  "open to any option": "Flex",
-};
-
-/**
- * Normalize modality to canonical category
- * Pure function: no side effects, deterministic
- * Returns "Unknown" for unmapped values
- */
-function normalizeModality(rawValue: string | null | undefined): string {
-  if (!rawValue) return "Unknown";
-  const trimmed = rawValue.trim();
-  if (!trimmed) return "Unknown";
-  const normalized = trimmed.toLowerCase();
-  return MODALITY_NORMALIZATION_MAP[normalized] || "Unknown";
 }
 
 /**

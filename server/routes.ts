@@ -68,6 +68,7 @@ import {
   deleteSyncContact,
   getWaitlistExportData,
   WAITLIST_EXPORT_COLUMNS,
+  getReferralReportData,
   type SyncPayloadContact,
   type MigrationContact,
 } from "./sync/db";
@@ -79,7 +80,7 @@ import {
   getActivityForContact,
   getStatusDurations,
 } from "./activity/db";
-import { isRestrictedUser, canAccessReferralUpload, isTnV2User, canEditEmailTemplates } from "@shared/access-control";
+import { isRestrictedUser, canAccessReferralUpload, isTnV2User, canEditEmailTemplates, canBuildReports } from "@shared/access-control";
 import { normalizeReasonForTherapy } from "@shared/reason-canonicals";
 import { getStatusLabel } from "@shared/status-codes";
 import { extractReferralData } from "./referral/extract";
@@ -6833,6 +6834,193 @@ export async function registerRoutes(
     } catch (error) {
       const message = error instanceof Error ? error.message : "XLSX export failed";
       console.error("[export] XLSX Error:", message);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // ==========================================================================
+  // Export: Custom Referral Report (manager-only)
+  //
+  // Clones the waitlist export trio (escape helper + SheetJS buffer pattern) but
+  // is gated to REPORT_BUILDER_EMAILS via requireReportBuilder — NOT the shared
+  // checkExportAuth (no X-Sync-Key path; reports may contain PHI). Data comes
+  // from getReferralReportData (server/sync/db.ts). Status-transition filtering
+  // is intentionally NOT here — it's a documented fast-follow.
+  // ==========================================================================
+
+  // Manager gate: session-authenticated CRM users on the report allow-list only.
+  // Returns the actor email on success, or null after writing 401/403.
+  const requireReportBuilder = (req: any, res: any): string | null => {
+    if (!(req.isAuthenticated && req.isAuthenticated())) {
+      res.status(401).json({ error: "Authentication required" });
+      return null;
+    }
+    const email = (req.user?.email ?? "").toLowerCase().trim();
+    if (!canBuildReports(email)) {
+      res.status(403).json({ error: "Access denied" });
+      return null;
+    }
+    return email;
+  };
+
+  // Strict YYYY-MM-DD validation (rejects junk that normalizeDateValue would
+  // otherwise coerce). Returns the string if valid, else null.
+  const validReportDate = (s: unknown): string | null => {
+    if (typeof s !== "string") return null;
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return null;
+    const y = +m[1], mo = +m[2], d = +m[3];
+    const dt = new Date(Date.UTC(y, mo - 1, d));
+    if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+    return s;
+  };
+
+  // Parse + validate all query params. On any problem, writes a 400 and returns
+  // null. Otherwise returns the ReferralReportParams.
+  const parseReferralReportParams = (req: any, res: any):
+    | { from: string; to: string; serviceType: string | null; modality: string | null;
+        insurance: string | null; statusCode: number | null; includeIdentifiers: boolean }
+    | null => {
+    const from = validReportDate(req.query.from);
+    const to = validReportDate(req.query.to);
+    if (!from || !to) {
+      res.status(400).json({ error: "Query params 'from' and 'to' are required and must be YYYY-MM-DD." });
+      return null;
+    }
+    if (from > to) {
+      res.status(400).json({ error: "'from' must be on or before 'to'." });
+      return null;
+    }
+    let statusCode: number | null = null;
+    if (req.query.status_code !== undefined && String(req.query.status_code) !== "") {
+      const n = Number(req.query.status_code);
+      if (!Number.isInteger(n)) {
+        res.status(400).json({ error: "'status_code' must be an integer." });
+        return null;
+      }
+      statusCode = n;
+    }
+    const str = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v.trim() : null);
+    return {
+      from, to,
+      serviceType: str(req.query.service_type),
+      modality: str(req.query.modality),
+      insurance: str(req.query.insurance),
+      statusCode,
+      includeIdentifiers: String(req.query.include_identifiers) === "true",
+    };
+  };
+
+  // Write the PHI audit entry when identifiers are included in an export.
+  const logIdentifiedExport = async (
+    email: string, format: string, params: { from: string; to: string }, rowCount: number,
+  ): Promise<void> => {
+    await logActivity({
+      type: "report_exported",
+      actorEmail: email,
+      entityType: "report",
+      entityName: "referral_report",
+      metadata: { format, range: `${params.from}..${params.to}`, rowCount, includeIdentifiers: true },
+    });
+  };
+
+  // JSON (for the future modal preview + reconciliation testing)
+  app.get("/api/export/referrals.json", async (req, res) => {
+    try {
+      const email = requireReportBuilder(req, res);
+      if (!email) return;
+      const params = parseReferralReportParams(req, res);
+      if (!params) return;
+      const result = await getReferralReportData(params);
+      if (params.includeIdentifiers) {
+        await logIdentifiedExport(email, "json", params, result.rows.length);
+      }
+      console.log(`[export] referrals JSON: ${result.summary.totalSubmissions} rows`);
+      return res.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Referral report failed";
+      console.error("[export] referrals JSON Error:", message);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // CSV (pure tabular data — one row per referral, for pivoting in Excel; the
+  // summary lives in the JSON/XLSX variants so it never pollutes a pivot source)
+  app.get("/api/export/referrals.csv", async (req, res) => {
+    try {
+      const email = requireReportBuilder(req, res);
+      if (!email) return;
+      const params = parseReferralReportParams(req, res);
+      if (!params) return;
+      const { columns, rows } = await getReferralReportData(params);
+
+      // Same RFC-4180 escape as the waitlist CSV export.
+      const escape = (v: unknown): string => {
+        const s = String(v ?? "");
+        if (s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r")) {
+          return '"' + s.replace(/"/g, '""') + '"';
+        }
+        return s;
+      };
+      const header = columns.map(escape).join(",");
+      const lines = rows.map((row) => columns.map((col) => escape(row[col])).join(","));
+      const csv = header + "\r\n" + lines.join("\r\n") + "\r\n";
+
+      if (params.includeIdentifiers) {
+        await logIdentifiedExport(email, "csv", params, rows.length);
+      }
+      console.log(`[export] referrals CSV: ${rows.length} rows`);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="referrals-${params.from}_to_${params.to}.csv"`);
+      return res.send(csv);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Referral CSV export failed";
+      console.error("[export] referrals CSV Error:", message);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // XLSX (data sheet + a clearly-separated trailing summary block — the waitlist
+  // xlsx export has no summary, so we append one below the data per spec)
+  app.get("/api/export/referrals.xlsx", async (req, res) => {
+    try {
+      const email = requireReportBuilder(req, res);
+      if (!email) return;
+      const params = parseReferralReportParams(req, res);
+      if (!params) return;
+      const { columns, rows, summary } = await getReferralReportData(params);
+
+      // Build as AOA so the summary rows can trail the data, clearly separated.
+      const aoa: (string | number)[][] = [];
+      aoa.push([...columns]);
+      for (const row of rows) aoa.push(columns.map((col) => row[col] ?? ""));
+      aoa.push([]);
+      aoa.push(["— SUMMARY —"]);
+      aoa.push(["Total Submissions", summary.totalSubmissions]);
+      aoa.push(["Distinct Contacts", summary.distinctContacts]);
+      aoa.push(["Date Range (MT, inclusive)", `${params.from} .. ${params.to}`]);
+      aoa.push(["Generated At (UTC)", summary.generatedAt]);
+      aoa.push(["Service Type filter", summary.appliedFilters.serviceType == null ? "(all)" : String(summary.appliedFilters.serviceType)]);
+      aoa.push(["Modality filter", summary.appliedFilters.modality == null ? "(all)" : String(summary.appliedFilters.modality)]);
+      aoa.push(["Insurance filter", summary.appliedFilters.insurance == null ? "(all)" : String(summary.appliedFilters.insurance)]);
+      aoa.push(["Status filter", summary.appliedFilters.statusCode == null ? "(all)" : String(summary.appliedFilters.statusCode)]);
+      aoa.push(["Identifiers included", params.includeIdentifiers ? "YES (PHI)" : "no"]);
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Referrals");
+      const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+
+      if (params.includeIdentifiers) {
+        await logIdentifiedExport(email, "xlsx", params, rows.length);
+      }
+      console.log(`[export] referrals XLSX: ${rows.length} rows`);
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="referrals-${params.from}_to_${params.to}.xlsx"`);
+      return res.send(buf);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Referral XLSX export failed";
+      console.error("[export] referrals XLSX Error:", message);
       return res.status(500).json({ error: message });
     }
   });

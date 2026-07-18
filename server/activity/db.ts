@@ -28,6 +28,7 @@ export type ActivityType =
   | "email_sent"
   | "email_template_created"
   | "email_template_updated"
+  | "report_exported"
   | "therapy_notes_started"
   | "therapy_notes_created"
   | "therapy_notes_failed"
@@ -561,6 +562,16 @@ function formatActivitySummary(
       const reason = String(metadata.failureReason || "unknown error");
       const short = reason.length > 80 ? reason.slice(0, 80) + "…" : reason;
       return `Add to Schedule in TN failed for ${name}: ${short}`;
+    }
+
+    case "report_exported": {
+      // Referral report builder — PHI-identified export audit entry. No PHI in
+      // the summary itself (only counts + range). See getReferralReportData.
+      const fmt = String(metadata.format || "export");
+      const range = String(metadata.range || "");
+      const n = metadata.rowCount;
+      const rows = typeof n === "number" ? ` (${n} rows)` : "";
+      return `Exported identified referral report [${fmt}]${range ? " " + range : ""}${rows}`;
     }
 
     default:

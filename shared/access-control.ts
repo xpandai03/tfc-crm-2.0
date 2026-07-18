@@ -95,3 +95,31 @@ export function canEditEmailTemplates(email: string | null | undefined): boolean
   if (!email) return false;
   return EMAIL_TEMPLATE_EDITOR_EMAILS.includes(email.toLowerCase().trim());
 }
+
+// ============================================================================
+// Custom Report Builder access (referral report exports)
+//
+// Manager-only gate for the referral report export endpoints
+// (GET /api/export/referrals.{json,csv,xlsx}). Seeded as an exact copy of the
+// 5 management editors above (Lane, Amanda, Chantelle, Sandra, Erica) + raunek
+// dev access, per the locked build decision. Kept as its OWN list (not an alias
+// of EMAIL_TEMPLATE_EDITOR_EMAILS) so the report roster can diverge later
+// without side-effecting template-editor access.
+//
+// Enforcement is server-side (a 403 in server/routes.ts requireReportBuilder);
+// any future UI hiding is cosmetic. Reports may contain PHI, so this list is
+// the real access boundary.
+// ============================================================================
+export const REPORT_BUILDER_EMAILS = [
+  "lsego@tfc.health",      // Lane
+  "amanda@tfc.health",     // Amanda
+  "chantel@tfc.health",    // Chantelle
+  "sandra@tfc.health",     // Sandra
+  "ebenavidez@tfc.health", // Erica Benavidez
+  "raunek@tfc.health",     // dev/testing access
+];
+
+export function canBuildReports(email: string | null | undefined): boolean {
+  if (!email) return false;
+  return REPORT_BUILDER_EMAILS.includes(email.toLowerCase().trim());
+}
