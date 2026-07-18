@@ -14,6 +14,8 @@ import crypto from "crypto";
 import { getPool } from "../db/pool";
 import { logStatusChange } from "../activity/db";
 import { getStatusLabel } from "@shared/status-codes";
+import { normalizeInsurance } from "@shared/insurance-utils";
+import { normalizeModality } from "@shared/modality-utils";
 
 const MONTH_NAMES: Record<string, number> = {
   january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
@@ -822,6 +824,296 @@ export async function getWaitlistExportData(): Promise<{ total: number; generate
   });
 
   return { total: exportRows.length, generatedAt, columns: WAITLIST_EXPORT_COLUMNS, rows: exportRows };
+}
+
+// ============================================================================
+// Referral Report Builder (Custom Report Builder — server side)
+// ============================================================================
+//
+// Row grain: ONE row per intake submission — form_submissions where
+// form_type='intake' and name NOT LIKE 'ZZ_%' — LEFT JOIN sync_contacts on
+// contact_id for dimension columns. Re-submitters therefore produce multiple
+// rows; this intentionally matches the COUNT(*) semantics of getReferralsCount
+// (the live "Referrals in [month]" card). Submissions with no matching
+// sync_contacts row emit a row with "Unknown" dimensions — never dropped.
+//
+// Date basis: form_submissions.created_at::timestamptz, America/Denver-bounded.
+// The bound predicate is copied VERBATIM from getReferralsCount — no new
+// timezone handling is invented. `to` is treated as an INCLUSIVE calendar day:
+// internally the exclusive upper bound is (to + 1 day) at MT midnight, so
+// from=2026-07-01 & to=2026-07-31 covers all of July and reconciles exactly
+// with getReferralsCount('2026-07-01','2026-08-01') / the Insights July card.
+//
+// Dimension filtering happens in JS AFTER normalization, so a filter matches
+// exactly what lands in the exported normalized column (including "Unknown").
+//
+// PHI: Name + DOB are appended as trailing columns ONLY when
+// includeIdentifiers=true. The default export carries contact_id + age bucket +
+// normalized dimensions only. The route writes an activity_log entry whenever
+// identifiers are included (actor + the fact of an identified export).
+
+// Server-side status DISPLAY labels. Replicated here on purpose — we do NOT
+// import the client-only STATUS_LABELS map from client/src/lib/status-config.ts
+// (that file is UI-coupled: umbrella grouping, legend descriptions, legacy
+// string conversion). Keep this in sync with status-config.ts:STATUS_LABELS if
+// the spreadsheet labels change. The canonical slug map lives in
+// shared/status-codes.ts (getStatusLabel) and is unaffected.
+const REFERRAL_REPORT_STATUS_LABELS: Record<number, string> = {
+  100: "New -- No Outreach",
+  101: "Left Voicemail",
+  102: "Response Received",
+  103: "Declined Services",
+  104: "Inactive -- No Response",
+  200: "Ready to Schedule",
+  201: "Left Voicemail",
+  202: "Scheduled",
+  203: "No Response",
+  204: "Declined",
+  205: "Initial Appt Completed",
+  206: "Rescheduling Initial Appointment",
+  300: "Submitted for Review",
+  400: "Insurance Not Accepted",
+  402: "Referred Out",
+  403: "Deferred Services",
+  500: "Resources Need to be Sent",
+};
+
+export const REFERRAL_REPORT_BASE_COLUMNS = [
+  "Referral Date",
+  "Contact ID",
+  "Service Type",
+  "Age",
+  "Age Bucket",
+  "Modality (raw)",
+  "Modality (normalized)",
+  "Insurance (raw)",
+  "Insurance (normalized)",
+  "Current Status",
+] as const;
+
+// Appended (trailing) only when includeIdentifiers=true. Kept trailing so the
+// base column indices never shift between identified / de-identified exports.
+export const REFERRAL_REPORT_IDENTIFIER_COLUMNS = ["Name", "DOB"] as const;
+
+export interface ReferralReportParams {
+  from: string;                 // YYYY-MM-DD (inclusive, MT)
+  to: string;                   // YYYY-MM-DD (inclusive calendar day, MT)
+  serviceType?: string | null;  // filter on NORMALIZED service type
+  modality?: string | null;     // filter on NORMALIZED modality
+  insurance?: string | null;    // filter on NORMALIZED insurance category
+  statusCode?: number | null;   // filter on numeric status_code (exact)
+  includeIdentifiers?: boolean; // add Name + DOB columns (PHI)
+}
+
+export interface ReferralReportResult {
+  columns: string[];
+  rows: Record<string, string | number>[];
+  summary: {
+    totalSubmissions: number;
+    distinctContacts: number;
+    generatedAt: string;
+    appliedFilters: Record<string, unknown>;
+  };
+}
+
+/** Add one calendar day to a YYYY-MM-DD string (TZ-independent, UTC math). */
+function addOneDayIso(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map((n) => parseInt(n, 10));
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + 1);
+  return dt.toISOString().slice(0, 10);
+}
+
+/** Format a timestamp in America/Denver as "YYYY-MM-DD HH:mm" (24h, MT). */
+function formatMtDateTime(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "";
+  const d = value instanceof Date ? value : new Date(String(value));
+  if (isNaN(d.getTime())) return String(value);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Denver",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}`;
+}
+
+/**
+ * Normalize service type to a canonical category, mirroring the couples/family
+ * mapping in computeAppointmentAlertText (server/routes.ts ~400-410): reads
+ * requesting_for with a fallback to service_requested, and folds the historical
+ * spellings ("Couples", "My Partner") into the canonical "My Partner & Myself".
+ * Unmapped non-empty values are preserved verbatim (managers can still pivot);
+ * empty → "Unknown".
+ */
+function normalizeServiceType(
+  requestingFor: string | null | undefined,
+  serviceRequested: string | null | undefined,
+): string {
+  const req = (requestingFor ?? "").trim().toLowerCase();
+  const svc = (serviceRequested ?? "").trim().toLowerCase();
+  if (svc === "family" || req === "my family" || req === "family") return "My Family";
+  if (
+    svc === "my partner & myself" || svc === "couples" ||
+    req === "my partner & myself" || req === "couples" || req === "my partner"
+  ) return "My Partner & Myself";
+  if (req === "myself" || svc === "myself") return "Myself";
+  if (req === "my child" || svc === "my child") return "My Child";
+  if (req === "other" || svc === "other") return "Other";
+  const raw = (requestingFor ?? "").trim() || (serviceRequested ?? "").trim();
+  return raw || "Unknown";
+}
+
+/**
+ * Resolve age: prefer the stored `age` column, fall back to computing from
+ * patient_dob (as of now), else null (→ "Age Unknown" bucket). Reuses
+ * normalizeDateValue so mixed DOB formats coerce to YYYY-MM-DD first.
+ */
+function resolveAge(ageCol: unknown, dob: unknown): number | null {
+  const a = Number(ageCol);
+  if (ageCol !== null && ageCol !== undefined && ageCol !== "" && Number.isFinite(a) && a >= 0 && a < 130) {
+    return Math.floor(a);
+  }
+  const iso = dob ? normalizeDateValue(String(dob)) : null;
+  if (!iso) return null;
+  const [y, m, d] = iso.split("-").map((n) => parseInt(n, 10));
+  if (!y || !m || !d) return null;
+  const now = new Date();
+  let age = now.getFullYear() - y;
+  const beforeBirthday =
+    now.getMonth() + 1 < m || (now.getMonth() + 1 === m && now.getDate() < d);
+  if (beforeBirthday) age -= 1;
+  if (age < 0 || age > 130) return null;
+  return age;
+}
+
+function ageBucket(age: number | null): string {
+  if (age === null) return "Age Unknown";
+  if (age < 14) return "Child (<14)";
+  if (age <= 17) return "Adolescent (14-17)";
+  return "Adult (18+)";
+}
+
+/**
+ * Build the referral report dataset. See the header comment above for row
+ * grain, date semantics, filtering, and PHI rules.
+ */
+export async function getReferralReportData(params: ReferralReportParams): Promise<ReferralReportResult> {
+  const pool = getPool();
+  const from = params.from;
+  const toExclusive = addOneDayIso(params.to); // `to` inclusive → exclusive upper bound at to+1 day
+
+  // Date predicate copied VERBATIM from getReferralsCount (do not re-invent TZ).
+  const result = await pool.query(
+    `
+    SELECT
+      f.id                    AS submission_id,
+      f.created_at::timestamptz AS created_at,
+      f.contact_id            AS contact_id,
+      c.name                  AS contact_name,
+      c.requesting_for        AS requesting_for,
+      c.service_requested     AS service_requested,
+      c.modality              AS modality,
+      c.insurance_payer       AS insurance_payer,
+      c.patient_dob           AS patient_dob,
+      c.age                   AS age,
+      c.status_code           AS status_code
+    FROM form_submissions f
+    LEFT JOIN sync_contacts c ON c.contact_id = f.contact_id
+    WHERE f.form_type = 'intake'
+      AND f.created_at::timestamptz >= ($1::timestamp AT TIME ZONE 'America/Denver')
+      AND f.created_at::timestamptz <  ($2::timestamp AT TIME ZONE 'America/Denver')
+      AND f.name NOT LIKE 'ZZ_%'
+    ORDER BY f.created_at::timestamptz ASC, f.id ASC
+    `,
+    [from, toExclusive],
+  );
+
+  const includeIdentifiers = params.includeIdentifiers === true;
+  const columns: string[] = [
+    ...REFERRAL_REPORT_BASE_COLUMNS,
+    ...(includeIdentifiers ? REFERRAL_REPORT_IDENTIFIER_COLUMNS : []),
+  ];
+
+  // Canonicalize filter values through the SAME normalizers so a filter matches
+  // the exported normalized column (e.g. insurance "Blue Cross Blue Shield
+  // Turquoise Care" → "BlueCross BlueShield Turquoise Care").
+  const wantService = params.serviceType ? normalizeServiceType(params.serviceType, null) : null;
+  const wantModality = params.modality ? normalizeModality(params.modality) : null;
+  const wantInsurance = params.insurance ? normalizeInsurance(params.insurance) : null;
+  const wantStatus =
+    params.statusCode === null || params.statusCode === undefined ? null : Number(params.statusCode);
+
+  const rows: Record<string, string | number>[] = [];
+  const contactIds = new Set<string>();
+
+  for (const r of result.rows as Record<string, unknown>[]) {
+    const serviceType = normalizeServiceType(
+      r.requesting_for as string | null,
+      r.service_requested as string | null,
+    );
+    const modalityRaw = r.modality == null ? "" : String(r.modality);
+    const modalityNorm = normalizeModality(modalityRaw);
+    const insuranceRaw = r.insurance_payer == null ? "" : String(r.insurance_payer);
+    const insuranceNorm = normalizeInsurance(insuranceRaw);
+    const statusCode =
+      r.status_code === null || r.status_code === undefined ? null : Number(r.status_code);
+    const age = resolveAge(r.age, r.patient_dob);
+
+    // Filters (post-normalization). Missing filter = no constraint.
+    if (wantService && serviceType.toLowerCase() !== wantService.toLowerCase()) continue;
+    if (wantModality && modalityNorm.toLowerCase() !== wantModality.toLowerCase()) continue;
+    if (wantInsurance && insuranceNorm.toLowerCase() !== wantInsurance.toLowerCase()) continue;
+    if (wantStatus !== null && statusCode !== wantStatus) continue;
+
+    const contactId = r.contact_id == null ? "" : String(r.contact_id);
+    if (contactId) contactIds.add(contactId);
+
+    const statusLabel =
+      statusCode !== null && REFERRAL_REPORT_STATUS_LABELS[statusCode]
+        ? `${statusCode} — ${REFERRAL_REPORT_STATUS_LABELS[statusCode]}`
+        : statusCode !== null
+          ? String(statusCode)
+          : "Unknown";
+
+    const row: Record<string, string | number> = {
+      "Referral Date": formatMtDateTime(r.created_at),
+      "Contact ID": contactId,
+      "Service Type": serviceType,
+      "Age": age === null ? "" : age,
+      "Age Bucket": ageBucket(age),
+      "Modality (raw)": modalityRaw,
+      "Modality (normalized)": modalityNorm,
+      "Insurance (raw)": insuranceRaw,
+      "Insurance (normalized)": insuranceNorm,
+      "Current Status": statusLabel,
+    };
+    if (includeIdentifiers) {
+      // PHI — only when explicitly requested.
+      row["Name"] = r.contact_name == null ? "" : String(r.contact_name);
+      row["DOB"] = r.patient_dob == null ? "" : String(r.patient_dob);
+    }
+    rows.push(row);
+  }
+
+  return {
+    columns,
+    rows,
+    summary: {
+      totalSubmissions: rows.length,
+      distinctContacts: contactIds.size,
+      generatedAt: new Date().toISOString(),
+      appliedFilters: {
+        from: params.from,
+        to: params.to,
+        serviceType: wantService,
+        modality: wantModality,
+        insurance: wantInsurance,
+        statusCode: wantStatus,
+        includeIdentifiers,
+      },
+    },
+  };
 }
 
 /**
