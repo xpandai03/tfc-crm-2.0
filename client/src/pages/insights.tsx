@@ -14,7 +14,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/page-loader";
 import { FallbackBanner } from "@/components/ui/fallback-banner";
-import { Download, AlertCircle, ChevronRight, Users, Hourglass } from "lucide-react";
+import { Download, AlertCircle, ChevronRight, Users, Hourglass, FileSpreadsheet } from "lucide-react";
 import { useLocation } from "wouter";
 import { getWaitlistSummary, getWaitlistContacts, type WithSource } from "@/lib/api";
 import { computeDaysWaiting } from "@/lib/days-waiting";
@@ -22,7 +22,8 @@ import { useDataSource, type DataSource } from "@/lib/data-source-context";
 import { normalizeInsurance } from "@/lib/insurance-utils";
 import { normalizeModality } from "@shared/modality-utils";
 import { useAuth } from "@/lib/auth-context";
-import { isRestrictedUser } from "@shared/access-control";
+import { isRestrictedUser, canBuildReports } from "@shared/access-control";
+import { ReportBuilderModal } from "@/components/report-builder-modal";
 import { Link, Redirect } from "wouter";
 import {
   isActiveStatus,
@@ -68,7 +69,10 @@ function buildInsightWaitlistHref(
  */
 export default function Insights() {
   const { user } = useAuth();
+  const [reportOpen, setReportOpen] = useState(false);
   if (isRestrictedUser(user?.email)) return <Redirect to="/" />;
+  // Cosmetic gate — the server 403 (requireReportBuilder) is the real enforcement.
+  const canReport = canBuildReports(user?.email);
 
   const { updateSummarySource, updateContactsSource, updateSyncTime, summarySource, isFullyLive } = useDataSource();
   // Drill-down navigation handler - navigates to Waitlist List View with filter applied
@@ -544,6 +548,9 @@ export default function Insights() {
         variant="warning"
       />
       <div className="space-y-8">
+        {canReport && (
+          <ReportBuilderModal open={reportOpen} onOpenChange={setReportOpen} />
+        )}
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-2xl font-semibold text-foreground" data-testid="text-page-title">Insights</h1>
@@ -552,6 +559,16 @@ export default function Insights() {
             </p>
           </div>
           <div className="flex gap-2">
+            {canReport && (
+              <Button
+                size="sm"
+                data-testid="button-generate-report"
+                onClick={() => setReportOpen(true)}
+              >
+                <FileSpreadsheet className="h-4 w-4 mr-2" />
+                Generate report
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"
