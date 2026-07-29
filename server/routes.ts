@@ -4777,7 +4777,15 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Contact not found" });
       }
       const members = await getHouseholdMembers(contactId, contact.email, contact.phone);
-      return res.json({ members });
+      // Enrich each member with their latest assigned provider name, reusing the
+      // SAME bulk assignment map as the board enrichment (enrichContactsWithProvider
+      // / routes.ts). One bulk query for all contacts — never a per-member N+1.
+      const providerMap = await getLatestAssignmentsByAllContacts();
+      const enrichedMembers = members.map((m) => ({
+        ...m,
+        assignedProviderName: providerMap.get(m.contactId) ?? null,
+      }));
+      return res.json({ members: enrichedMembers });
     } catch (error) {
       console.error("[household] Error:", error);
       return res.status(500).json({ error: "Failed to fetch household members" });
