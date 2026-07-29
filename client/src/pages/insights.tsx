@@ -14,7 +14,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/page-loader";
 import { FallbackBanner } from "@/components/ui/fallback-banner";
-import { Download, AlertCircle, ChevronRight, Users, Hourglass, FileSpreadsheet } from "lucide-react";
+import { Download, AlertCircle, ChevronRight, Users, Hourglass, FileSpreadsheet, Sparkles } from "lucide-react";
 import { useLocation } from "wouter";
 import { getWaitlistSummary, getWaitlistContacts, type WithSource } from "@/lib/api";
 import { computeDaysWaiting } from "@/lib/days-waiting";
@@ -22,8 +22,9 @@ import { useDataSource, type DataSource } from "@/lib/data-source-context";
 import { normalizeInsurance } from "@/lib/insurance-utils";
 import { normalizeModality } from "@shared/modality-utils";
 import { useAuth } from "@/lib/auth-context";
-import { isRestrictedUser, canBuildReports } from "@shared/access-control";
+import { isRestrictedUser, canBuildReports, canUseReportAgent } from "@shared/access-control";
 import { ReportBuilderModal } from "@/components/report-builder-modal";
+import { AgentChat } from "@/components/insights/agent-chat";
 import { Link, Redirect } from "wouter";
 import {
   isActiveStatus,
@@ -70,9 +71,12 @@ function buildInsightWaitlistHref(
 export default function Insights() {
   const { user } = useAuth();
   const [reportOpen, setReportOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   if (isRestrictedUser(user?.email)) return <Redirect to="/" />;
-  // Cosmetic gate — the server 403 (requireReportBuilder) is the real enforcement.
+  // Cosmetic gates — the server 403s (requireReportBuilder / requireReportAgent)
+  // are the real enforcement.
   const canReport = canBuildReports(user?.email);
+  const canAgent = canUseReportAgent(user?.email);
 
   const { updateSummarySource, updateContactsSource, updateSyncTime, summarySource, isFullyLive } = useDataSource();
   // Drill-down navigation handler - navigates to Waitlist List View with filter applied
@@ -547,6 +551,9 @@ export default function Insights() {
         message="Live data temporarily unavailable — please refresh in a moment"
         variant="warning"
       />
+      {canAgent && chatOpen ? (
+        <AgentChat onBack={() => setChatOpen(false)} />
+      ) : (
       <div className="space-y-8">
         {canReport && (
           <ReportBuilderModal open={reportOpen} onOpenChange={setReportOpen} />
@@ -559,6 +566,17 @@ export default function Insights() {
             </p>
           </div>
           <div className="flex gap-2">
+            {canAgent && (
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="button-ask-agent"
+                onClick={() => setChatOpen(true)}
+              >
+                <Sparkles className="h-4 w-4 mr-2" />
+                Ask Agent
+              </Button>
+            )}
             {canReport && (
               <Button
                 size="sm"
@@ -1097,6 +1115,7 @@ export default function Insights() {
           </Card>
         </div>
       </div>
+      )}
     </PageLayout>
   );
 }
