@@ -80,7 +80,9 @@ import {
   getActivityForContact,
   getStatusDurations,
 } from "./activity/db";
-import { isRestrictedUser, canAccessReferralUpload, isTnV2User, canEditEmailTemplates, canBuildReports } from "@shared/access-control";
+import { isRestrictedUser, canAccessReferralUpload, isTnV2User, canEditEmailTemplates, canBuildReports, canUseReportAgent } from "@shared/access-control";
+import { ACCEPTED_INSURANCES } from "@shared/insurance-utils";
+import { invokeMessages } from "./ai/bedrock";
 import { normalizeReasonForTherapy } from "@shared/reason-canonicals";
 import { getStatusLabel } from "@shared/status-codes";
 import { extractReferralData } from "./referral/extract";
@@ -7030,6 +7032,205 @@ export async function registerRoutes(
       const message = error instanceof Error ? error.message : "Referral XLSX export failed";
       console.error("[export] referrals XLSX Error:", message);
       return res.status(500).json({ error: message });
+    }
+  });
+
+  // ==========================================================================
+  // Insights AI Reporting Agent (manager-only) — POST /api/insights/agent
+  //
+  // NL question → Bedrock (forced single tool-use) → structured report-request
+  // → zod validation (the hard wall) → getReferralReportData() run LOCALLY →
+  // SERVER-composed answer + validated params. The client downloads Excel via
+  // the EXISTING /api/export/referrals.xlsx route with those params.
+  //
+  // NO PHI to the model, ever: Bedrock receives only the schema/date-rules
+  // system prompt and the chat text (questions + prior server-composed
+  // answers). Result rows are never sent to or composed by the model.
+  // includeIdentifiers is HARD-FORCED false on this path.
+  // ==========================================================================
+  const requireReportAgent = (req: any, res: any): string | null => {
+    if (!(req.isAuthenticated && req.isAuthenticated())) {
+      res.status(401).json({ error: "Authentication required" });
+      return null;
+    }
+    const email = (req.user?.email ?? "").toLowerCase().trim();
+    if (!canUseReportAgent(email)) {
+      res.status(403).json({ error: "Access denied" });
+      return null;
+    }
+    return email;
+  };
+
+  // Legal filter values (insurance sourced from code, not hardcoded here).
+  const AGENT_SERVICE_TYPES = ["Myself", "My Child", "My Partner & Myself", "My Family", "Other"] as const;
+  const AGENT_MODALITIES = ["Telehealth", "In Person ABQ", "In Person RR", "In Person LL", "In Person", "Hybrid", "Flex", "Unknown"] as const;
+  const AGENT_INSURANCES = [...ACCEPTED_INSURANCES, "Unknown"];
+  const AGENT_STATUS_CODES = [100, 101, 102, 103, 104, 200, 201, 202, 203, 204, 205, 206, 300, 400, 402, 403, 500];
+
+  const isRealAgentDate = (s: string): boolean => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    if (!m) return false;
+    const y = +m[1], mo = +m[2], d = +m[3];
+    const dt = new Date(Date.UTC(y, mo - 1, d));
+    return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+  };
+  const agentParamsSchema = z
+    .object({
+      from: z.string().refine(isRealAgentDate, "from must be a real YYYY-MM-DD date"),
+      to: z.string().refine(isRealAgentDate, "to must be a real YYYY-MM-DD date"),
+      serviceType: z.enum(AGENT_SERVICE_TYPES).optional().nullable(),
+      modality: z.enum(AGENT_MODALITIES).optional().nullable(),
+      insurance: z.enum(AGENT_INSURANCES as [string, ...string[]]).optional().nullable(),
+      statusCode: z.number().int().refine((n) => AGENT_STATUS_CODES.includes(n), "unknown status code").optional().nullable(),
+    })
+    .refine((p) => p.from <= p.to, { message: "from must be on or before to" });
+
+  const CANT_FILTER_MSG =
+    "I can't filter by that yet — I can build referral reports filtered by date range, service type, modality, insurance, or status code.";
+
+  const buildAgentSystemPrompt = (): string => {
+    const todayMT = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Denver", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+    return [
+      `You are the referral-reporting assistant for a mental-health clinic CRM. Today's date is ${todayMT} (Mountain Time). You ONLY help build referral reports — nothing else.`,
+      ``,
+      `You MUST respond by calling the "respond" tool every time. Never write a normal text reply.`,
+      `- action "report": when the user asks for a referral count/report you can build from the filters below. Fill "params".`,
+      `- action "reply": for greetings, clarifying questions, out-of-scope requests (weather, editing/deleting data, anything that is not a referral report), or filters not available yet. Put a SHORT message in "message". You NEVER see the actual data and the server computes all numbers, so never invent counts or data.`,
+      ``,
+      `Report filters (params). Emit ONLY these, using the EXACT canonical values:`,
+      `- from, to: REQUIRED, "YYYY-MM-DD", Mountain Time, inclusive, from <= to. Resolve relative phrases against today: "this month" = 1st..today; "Q1" = Jan 1..Mar 31, "Q2" = Apr 1..Jun 30, "Q3" = Jul 1..Sep 30, "Q4" = Oct 1..Dec 31 of the CURRENT year; "last quarter" = the immediately-preceding calendar quarter; "last 30 days" = today-29..today; "this year" = Jan 1..today.`,
+      `- serviceType (optional): ${AGENT_SERVICE_TYPES.join(" | ")}`,
+      `- modality (optional): ${AGENT_MODALITIES.join(" | ")}`,
+      `- insurance (optional): ${AGENT_INSURANCES.join(" | ")}`,
+      `- statusCode (optional): one of ${AGENT_STATUS_CODES.join(", ")}`,
+      ``,
+      `NOT available yet — if asked for these, use action "reply" with a brief version of the capabilities message; do NOT put them in params: filtering by age group / child-vs-adult, the "Fax Referral" modality, and status-movement / transitions (moved from one status to another).`,
+      `Never guess a filter value that isn't in the lists above. If a value is ambiguous (e.g. "BCBS" — Commercial vs Turquoise Care), ask a brief clarifying question via "reply". Keep replies to one or two sentences.`,
+    ].join("\n");
+  };
+
+  const RESPOND_TOOL = {
+    name: "respond",
+    description:
+      "Respond to the manager: build a referral report (action=report with params) or send a short text reply/clarification/refusal (action=reply with message).",
+    input_schema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["report", "reply"] },
+        message: { type: "string", description: "For action=reply: a short message to the user." },
+        params: {
+          type: "object",
+          properties: {
+            from: { type: "string", description: "YYYY-MM-DD inclusive start (Mountain Time)" },
+            to: { type: "string", description: "YYYY-MM-DD inclusive end (Mountain Time)" },
+            serviceType: { type: "string", enum: AGENT_SERVICE_TYPES },
+            modality: { type: "string", enum: AGENT_MODALITIES },
+            insurance: { type: "string", enum: AGENT_INSURANCES },
+            statusCode: { type: "integer", enum: AGENT_STATUS_CODES },
+          },
+          required: ["from", "to"],
+        },
+      },
+      required: ["action"],
+    },
+  };
+
+  // Answer text is composed HERE (server-side), never by the model.
+  const composeReportAnswer = (params: any, summary: any): string => {
+    const bits: string[] = [];
+    if (params.serviceType) bits.push(`service type "${params.serviceType}"`);
+    if (params.modality) bits.push(`modality "${params.modality}"`);
+    if (params.insurance) bits.push(`insurance "${params.insurance}"`);
+    if (params.statusCode != null) bits.push(`status ${params.statusCode}`);
+    const clause = bits.length ? ` filtered by ${bits.join(", ")}` : "";
+    const n = summary.totalSubmissions;
+    if (n === 0) {
+      return `0 referrals matched ${params.from} to ${params.to}${clause}. (An empty Excel with headers is still available to download.)`;
+    }
+    return `Found ${n} referral submission${n === 1 ? "" : "s"} (${summary.distinctContacts} distinct contact${summary.distinctContacts === 1 ? "" : "s"}) from ${params.from} to ${params.to}${clause}. Download the Excel for the full row-level breakdown.`;
+  };
+
+  app.post("/api/insights/agent", async (req, res) => {
+    try {
+      const email = requireReportAgent(req, res);
+      if (!email) return;
+
+      const rawMessages = req.body?.messages;
+      if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
+        return res.status(400).json({ error: "messages array required" });
+      }
+      if (rawMessages.length > 12) {
+        return res.status(400).json({ error: "Too many messages (max 12)." });
+      }
+      const messages: { role: "user" | "assistant"; content: string }[] = [];
+      for (const m of rawMessages) {
+        if (!m || (m.role !== "user" && m.role !== "assistant") || typeof m.content !== "string") {
+          return res.status(400).json({ error: "Each message needs role user|assistant and string content." });
+        }
+        if (m.content.length > 2000) {
+          return res.status(400).json({ error: "Message too long (max 2000 chars)." });
+        }
+        messages.push({ role: m.role, content: m.content });
+      }
+
+      let response;
+      try {
+        response = await invokeMessages(buildAgentSystemPrompt(), messages, {
+          tools: [RESPOND_TOOL],
+          toolChoice: { type: "tool", name: "respond" },
+          maxTokens: 1024,
+          timeoutMs: 30000,
+        });
+      } catch (err) {
+        console.error("[insights/agent] Bedrock error:", (err as Error).message);
+        return res.json({ type: "reply", text: "The assistant is having trouble right now — please try again in a moment." });
+      }
+
+      const toolBlock = Array.isArray(response?.content)
+        ? (response.content.find((b: any) => b?.type === "tool_use" && b?.name === "respond") as any)
+        : undefined;
+      if (!toolBlock) {
+        console.warn("[insights/agent] No tool_use block in model response");
+        return res.json({ type: "reply", text: CANT_FILTER_MSG });
+      }
+      const out: any = toolBlock.input ?? {};
+
+      if (out.action === "reply") {
+        const text = typeof out.message === "string" && out.message.trim() ? out.message.trim() : CANT_FILTER_MSG;
+        console.log(`[insights/agent] ${email} action=reply`);
+        return res.json({ type: "reply", text });
+      }
+      if (out.action !== "report") {
+        return res.json({ type: "reply", text: CANT_FILTER_MSG });
+      }
+
+      const parsed = agentParamsSchema.safeParse(out.params ?? {});
+      if (!parsed.success) {
+        console.log(`[insights/agent] ${email} invalid params: ${parsed.error.issues.map((i) => i.path.join(".")).join(",")}`);
+        return res.json({ type: "reply", text: CANT_FILTER_MSG });
+      }
+      const v = parsed.data;
+      // includeIdentifiers HARD-FORCED false — agent path stays de-identified.
+      const params = {
+        from: v.from,
+        to: v.to,
+        serviceType: v.serviceType ?? null,
+        modality: v.modality ?? null,
+        insurance: v.insurance ?? null,
+        statusCode: v.statusCode ?? null,
+        includeIdentifiers: false,
+      };
+      const result = await getReferralReportData(params);
+      const text = composeReportAnswer(params, result.summary);
+      console.log(
+        `[insights/agent] ${email} action=report ${params.from}..${params.to} rows=${result.summary.totalSubmissions} filters=${JSON.stringify({ serviceType: params.serviceType, modality: params.modality, insurance: params.insurance, statusCode: params.statusCode })}`,
+      );
+      return res.json({ type: "report", text, params });
+    } catch (error) {
+      console.error("[insights/agent] Error:", error instanceof Error ? error.message : error);
+      return res.status(500).json({ error: "Agent request failed" });
     }
   });
 
