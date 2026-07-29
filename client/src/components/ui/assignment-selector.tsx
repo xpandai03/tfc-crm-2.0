@@ -44,7 +44,7 @@ function getInitialsFromEmail(email: string): string {
  * e.g., "raunek@tfc.help" -> "Raunek"
  * e.g., "jessica.smith@tfc.help" -> "Jessica Smith"
  */
-function getNameFromEmail(email: string): string {
+export function getNameFromEmail(email: string): string {
   const localPart = email.split("@")[0];
   if (!localPart) return email;
 

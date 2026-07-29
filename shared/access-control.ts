@@ -123,3 +123,27 @@ export function canBuildReports(email: string | null | undefined): boolean {
   if (!email) return false;
   return REPORT_BUILDER_EMAILS.includes(email.toLowerCase().trim());
 }
+
+// ============================================================================
+// Waitlist staff-filter dropdown gate (managers).
+//
+// Managers see a staff-filter <Select> on the waitlist board (filter by any
+// staff member); everyone else keeps the plain "Assigned to Me" switch.
+// Deliberately its OWN list — do not merge with, alias, or import
+// REPORT_BUILDER_EMAILS/other gates, so this can diverge independently.
+// Same six people as the canonical manager set; lowercase, compared with
+// user.email.toLowerCase() per the existing pattern.
+// ============================================================================
+export const WAITLIST_STAFF_FILTER_EMAILS = [
+  "lsego@tfc.health",      // Lane
+  "amanda@tfc.health",     // Amanda
+  "chantel@tfc.health",    // Chantelle
+  "sandra@tfc.health",     // Sandra
+  "ebenavidez@tfc.health", // Erica Benavidez
+  "raunek@tfc.health",     // dev/testing access
+];
+
+export function canUseWaitlistStaffFilter(email: string | null | undefined): boolean {
+  if (!email) return false;
+  return WAITLIST_STAFF_FILTER_EMAILS.includes(email.toLowerCase().trim());
+}

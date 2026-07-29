@@ -33,7 +33,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { StatusLegendModal } from "@/components/ui/status-legend-modal";
-import { getWaitlistBoard, updateContactStatus, addNoteToContact, getAttentionFlags } from "@/lib/api";
+import { getWaitlistBoard, updateContactStatus, addNoteToContact, getAttentionFlags, getStaffList } from "@/lib/api";
+import { getNameFromEmail } from "@/components/ui/assignment-selector";
+import { canUseWaitlistStaffFilter } from "@shared/access-control";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
 import { useDataSource, type DataSource } from "@/lib/data-source-context";
 import { computeDaysWaiting } from "@/lib/days-waiting";
 import { useAuth } from "@/lib/auth-context";
@@ -156,8 +165,22 @@ export default function Waitlist() {
       setLocation("/waitlist");
     }
   };
-  // Task ownership filter state
-  const [showOnlyMine, setShowOnlyMine] = useState(false);
+  // Task ownership filter state.
+  // "all" = unfiltered (matches the previous default: "Assigned to Me" switch OFF),
+  // "me" = current user's assignments, or a specific staff email (managers only).
+  const [staffFilter, setStaffFilter] = useState<string>("all");
+
+  // Managers get a staff-member <Select> instead of the plain switch (own gate list).
+  const canStaffFilter = canUseWaitlistStaffFilter(user?.email);
+
+  // Staff roster for the manager dropdown — reuses the assign-contact source.
+  // Only fetched for managers; on loading/error the Select still renders Me/All.
+  const { data: staffData } = useQuery({
+    queryKey: ["/api/staff-list"],
+    queryFn: getStaffList,
+    enabled: canStaffFilter,
+  });
+  const staffEmails = staffData?.staff ?? [];
 
   // PM Review column is visible to PM users
   const PM_EMAILS = ["chantel@tfc.health", "sandra@tfc.health", "raunek@tfc.health", "lsego@tfc.health", "amanda@tfc.health"];
@@ -201,13 +224,16 @@ export default function Waitlist() {
   // Normalize both sides: trim whitespace, lowercase, treat empty string as unassigned
   const contacts = useMemo(() => {
     if (!allContacts || allContacts.length === 0) return allContacts;
-    if (!showOnlyMine || !user?.email) return allContacts;
-    const normalizedUserEmail = user.email.trim().toLowerCase();
+    if (staffFilter === "all") return allContacts;
+    // "me" resolves to the current user; any other value is a specific staff email.
+    const target = staffFilter === "me" ? user?.email : staffFilter;
+    if (!target) return allContacts;
+    const normalizedTarget = target.trim().toLowerCase();
     return allContacts.filter(c => {
       const assigned = c.assignedTo?.trim().toLowerCase();
-      return assigned && assigned === normalizedUserEmail;
+      return assigned && assigned === normalizedTarget;
     });
-  }, [allContacts, showOnlyMine, user?.email]);
+  }, [allContacts, staffFilter, user?.email]);
 
   // Waitlist page is authoritative over its own data source
   // Use board response _source directly - ignore context state
@@ -548,17 +574,40 @@ export default function Waitlist() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {/* Assigned to Me filter toggle */}
+            {/* Assignment filter — managers get a staff-member dropdown; everyone
+                else keeps the original "Assigned to Me" switch (unchanged). */}
             <div className="flex items-center gap-2 bg-white dark:bg-gray-900/80 rounded-lg px-3 py-2 border border-gray-200/60 dark:border-gray-700/40 shadow-sm">
               <User className="h-4 w-4 text-muted-foreground" />
-              <Switch
-                id="waitlist-show-only-mine"
-                checked={showOnlyMine}
-                onCheckedChange={setShowOnlyMine}
-              />
-              <Label htmlFor="waitlist-show-only-mine" className="text-sm cursor-pointer">
-                Assigned to Me
-              </Label>
+              {canStaffFilter ? (
+                <Select value={staffFilter} onValueChange={setStaffFilter}>
+                  <SelectTrigger
+                    className="h-7 w-[190px] border-0 shadow-none px-1 focus:ring-0"
+                    data-testid="select-staff-filter"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[320px]">
+                    <SelectItem value="me">Assigned to Me</SelectItem>
+                    <SelectItem value="all">All</SelectItem>
+                    {staffEmails.map((email) => (
+                      <SelectItem key={email} value={email}>
+                        {getNameFromEmail(email)} ({email})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <>
+                  <Switch
+                    id="waitlist-show-only-mine"
+                    checked={staffFilter === "me"}
+                    onCheckedChange={(checked) => setStaffFilter(checked ? "me" : "all")}
+                  />
+                  <Label htmlFor="waitlist-show-only-mine" className="text-sm cursor-pointer">
+                    Assigned to Me
+                  </Label>
+                </>
+              )}
             </div>
 
             {/* View Toggle */}
