@@ -147,3 +147,26 @@ export function canUseWaitlistStaffFilter(email: string | null | undefined): boo
   if (!email) return false;
   return WAITLIST_STAFF_FILTER_EMAILS.includes(email.toLowerCase().trim());
 }
+
+// ============================================================================
+// Insights AI reporting agent gate (managers).
+//
+// Manager-only access to the natural-language reporting agent on the Insights
+// page (POST /api/insights/agent). Its OWN standalone list — do not import,
+// alias, or spread REPORT_BUILDER_EMAILS — so agent access can diverge later.
+// Same six people as the report-builder set today; lowercase, compared with
+// user.email.toLowerCase(). Server 403 (requireReportAgent) is the real gate.
+// ============================================================================
+export const REPORT_AGENT_EMAILS = [
+  "lsego@tfc.health",      // Lane
+  "amanda@tfc.health",     // Amanda
+  "chantel@tfc.health",    // Chantelle
+  "sandra@tfc.health",     // Sandra
+  "ebenavidez@tfc.health", // Erica Benavidez
+  "raunek@tfc.health",     // dev/testing access
+];
+
+export function canUseReportAgent(email: string | null | undefined): boolean {
+  if (!email) return false;
+  return REPORT_AGENT_EMAILS.includes(email.toLowerCase().trim());
+}
