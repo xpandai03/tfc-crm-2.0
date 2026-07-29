@@ -985,6 +985,7 @@ export default function ContactDetail() {
     requestingFor: string | null;
     patientDob: string | null;
     assignedTo: string | null;
+    assignedProviderName?: string | null;
     statusCode: string | null;
   }> }>({
     queryKey: ["/api/household", contactId],
@@ -2128,7 +2129,10 @@ export default function ContactDetail() {
                           <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
                             {m.requestingFor && <span>{m.requestingFor}</span>}
                             {m.patientDob && <span>DOB: {m.patientDob}</span>}
-                            {m.assignedTo && <span>Assigned: {m.assignedTo}</span>}
+                            {/* Show the assigned PROVIDER (not assigned-to staff). Fallback
+                                copy matches the board card (draggable-card.tsx). assignedTo
+                                remains in the payload/state, just no longer rendered here. */}
+                            <span>Provider: {m.assignedProviderName ?? "no provider assigned yet"}</span>
                           </div>
                         </div>
                       </Link>
