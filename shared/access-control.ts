@@ -64,6 +64,8 @@ export const REFERRAL_UPLOAD_EMAILS = [
   "raunek@tfc.health",
   "lsego@tfc.health",
   "dawn@tfc.health",
+  "ebenavidez@tfc.health", // Erica
+  "chantel@tfc.health",    // Chantelle
 ];
 
 export function canAccessReferralUpload(email: string | null | undefined): boolean {
