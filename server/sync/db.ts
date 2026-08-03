@@ -405,12 +405,13 @@ export async function syncContacts(contacts: SyncPayloadContact[]): Promise<{
         name = EXCLUDED.name,
         email = EXCLUDED.email,
         phone = EXCLUDED.phone,
-        status = EXCLUDED.status,
-        status_code = EXCLUDED.status_code,
+        -- status/status_code CRM-owned (COALESCE): the Sheet only fills them when the CRM has none.
+        status = COALESCE(sync_contacts.status, EXCLUDED.status),
+        status_code = COALESCE(sync_contacts.status_code, EXCLUDED.status_code),
         service_requested = EXCLUDED.service_requested,
         days_on_waitlist = EXCLUDED.days_on_waitlist,
         date_added = EXCLUDED.date_added,
-        assigned_to = EXCLUDED.assigned_to,
+        -- assigned_to intentionally omitted: CRM fully owns it (incl. unassign=null); the INSERT still seeds new contacts.
         requesting_for = EXCLUDED.requesting_for,
         reason_for_seeking = EXCLUDED.reason_for_seeking,
         reason_for_therapy = EXCLUDED.reason_for_therapy,
@@ -1804,12 +1805,13 @@ export async function upsertSingleContact(
       name = EXCLUDED.name,
       email = EXCLUDED.email,
       phone = EXCLUDED.phone,
-      status = EXCLUDED.status,
-      status_code = EXCLUDED.status_code,
+      -- status/status_code CRM-owned (COALESCE): the Sheet only fills them when the CRM has none.
+      status = COALESCE(sync_contacts.status, EXCLUDED.status),
+      status_code = COALESCE(sync_contacts.status_code, EXCLUDED.status_code),
       service_requested = EXCLUDED.service_requested,
       days_on_waitlist = EXCLUDED.days_on_waitlist,
       date_added = EXCLUDED.date_added,
-      assigned_to = EXCLUDED.assigned_to,
+      -- assigned_to intentionally omitted: CRM fully owns it (incl. unassign=null); the INSERT still seeds new contacts.
       requesting_for = EXCLUDED.requesting_for,
       reason_for_seeking = EXCLUDED.reason_for_seeking,
       reason_for_therapy = EXCLUDED.reason_for_therapy,
@@ -2383,12 +2385,13 @@ export async function fullSyncMigrationContacts(
       name = EXCLUDED.name,
       email = EXCLUDED.email,
       phone = EXCLUDED.phone,
-      status = EXCLUDED.status,
-      status_code = EXCLUDED.status_code,
+      -- status/status_code CRM-owned (COALESCE): the Sheet only fills them when the CRM has none.
+      status = COALESCE(sync_contacts.status, EXCLUDED.status),
+      status_code = COALESCE(sync_contacts.status_code, EXCLUDED.status_code),
       service_requested = EXCLUDED.service_requested,
       days_on_waitlist = EXCLUDED.days_on_waitlist,
       date_added = EXCLUDED.date_added,
-      assigned_to = EXCLUDED.assigned_to,
+      -- assigned_to intentionally omitted: CRM fully owns it (incl. unassign=null); the INSERT still seeds new contacts.
       requesting_for = EXCLUDED.requesting_for,
       reason_for_seeking = EXCLUDED.reason_for_seeking,
       reason_for_therapy = EXCLUDED.reason_for_therapy,
@@ -2409,7 +2412,8 @@ export async function fullSyncMigrationContacts(
       state = EXCLUDED.state,
       zip_code = EXCLUDED.zip_code,
       rfs_link = EXCLUDED.rfs_link,
-      last_note = EXCLUDED.last_note,
+      -- last_note CRM-owned: keep the CRM's note log if present (never clobber staff notes); take the Sheet's only when the CRM has none. Mirrors syncContacts.
+      last_note = CASE WHEN sync_contacts.last_note IS NOT NULL AND sync_contacts.last_note != '' THEN sync_contacts.last_note ELSE EXCLUDED.last_note END,
       synced_at = NOW(),
       sync_hash = EXCLUDED.sync_hash
   `;
