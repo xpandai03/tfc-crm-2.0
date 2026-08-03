@@ -2326,7 +2326,8 @@ export async function registerRoutes(
 
           if (!response.ok) {
             console.error(`[update-status] n8n returned ${response.status}: ${responseText}`);
-            // Still return success since sync cache was updated — n8n sync will reconcile
+            console.error(`[webhook-fail] path=update-status contactId=${contactId} target=${N8N_ENDPOINTS.updateStatus} status=${response.status} body=${responseText.substring(0, 120)} ts=${new Date().toISOString()}`);
+            // Still return success since sync cache was updated — status_code is now CRM-owned (COALESCE), so it survives the next sync.
             return res.json({ success: true, contactId, newStatus: statusCode, n8nError: true });
           }
 
@@ -2343,7 +2344,8 @@ export async function registerRoutes(
         } catch (liveError) {
           const errorMessage = liveError instanceof Error ? liveError.message : "Unknown error";
           console.error(`[update-status] n8n write failed for contactId ${contactId}:`, errorMessage);
-          // Still return success — sync cache was already updated, n8n sync will reconcile
+          console.error(`[webhook-fail] path=update-status contactId=${contactId} target=${N8N_ENDPOINTS.updateStatus} error="${errorMessage}" ts=${new Date().toISOString()}`);
+          // Still return success — sync cache was already updated; status_code is CRM-owned (COALESCE) so it survives sync.
           return res.json({ success: true, contactId, newStatus: statusCode, n8nError: true });
         }
       } else {
@@ -2429,10 +2431,14 @@ export async function registerRoutes(
               body: JSON.stringify(payload),
             });
             if (!response.ok) {
+              const body = await response.text().catch(() => "");
               console.warn(`[add-note] n8n returned ${response.status} (non-blocking)`);
+              console.error(`[webhook-fail] path=add-note contactId=${contactId} target=${N8N_ENDPOINTS.addNote} status=${response.status} body=${body.substring(0, 120)} ts=${new Date().toISOString()}`);
             }
           } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
             console.warn(`[add-note] n8n fire-and-forget failed (non-blocking):`, e);
+            console.error(`[webhook-fail] path=add-note contactId=${contactId} target=${N8N_ENDPOINTS.addNote} error="${msg}" ts=${new Date().toISOString()}`);
           }
         })();
 
@@ -2805,67 +2811,40 @@ export async function registerRoutes(
           console.warn(`[assign-contact] Failed to update sync cache:`, e);
         }
 
+        // assigned_to is now CRM-owned (sync no longer overwrites it), and the local
+        // write above already succeeded — so the assignment is durable regardless of n8n.
+        // Invalidate caches so the board reflects it immediately, then propagate to the
+        // Sheet BEST-EFFORT: a webhook failure is logged (structured, auditable) but
+        // NEVER blocks the assignment. n8n workflows stay Active; this only removes the
+        // hard dependency that turned an n8n outage/inactive-workflow into a 500/502.
+        staffListCache = null;
+        boardCache = null; // CRITICAL: clear board cache so next fetch gets fresh data
+
+        const payload = { contactId, assignedTo: assignedTo || null };
+        const webhookUrl = assignedTo === null
+          ? N8N_ENDPOINTS.unassignContact
+          : N8N_ENDPOINTS.assignContact;
+        let n8nDelivered = false;
         try {
-          const payload = {
-            contactId,
-            assignedTo: assignedTo || null,
-          };
-
-          // Use dedicated unassign webhook when clearing assignment
-          const webhookUrl = assignedTo === null
-            ? N8N_ENDPOINTS.unassignContact
-            : N8N_ENDPOINTS.assignContact;
-
-          console.log(`[assign-contact] Calling n8n ${assignedTo === null ? "unassign" : "assign"} with payload:`, payload);
-
           const response = await fetch(webhookUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
           });
-
           const responseText = await response.text();
-          console.log(`[assign-contact] n8n response:`, {
-            status: response.status,
-            body: responseText.substring(0, 200),
-          });
-
-          if (!response.ok) {
-            console.error(`[assign-contact] n8n returned ${response.status}: ${responseText}`);
-            return res.status(502).json({
-              error: "Assignment failed",
-              message: `n8n returned ${response.status}: ${response.statusText}`,
-              details: responseText.substring(0, 200),
-            });
+          if (response.ok) {
+            n8nDelivered = true;
+            console.log(`[assign-contact] n8n delivered for contactId ${contactId} (status ${response.status})`);
+          } else {
+            console.error(`[webhook-fail] path=assign-contact contactId=${contactId} target=${webhookUrl} status=${response.status} body=${responseText.substring(0, 120)} ts=${new Date().toISOString()}`);
           }
-
-          // Parse response if JSON
-          let data = {};
-          try {
-            data = JSON.parse(responseText);
-          } catch {
-            // Response might not be JSON - that's OK
-          }
-
-          // Invalidate caches since assignments changed
-          staffListCache = null;
-          boardCache = null; // CRITICAL: Clear board cache so next fetch gets fresh data
-
-          console.log(`[assign-contact] Success for contactId ${contactId}`);
-          return res.json({
-            success: true,
-            contactId,
-            assignedTo: assignedTo || null,
-            ...data,
-          });
-        } catch (liveError) {
-          const errorMessage = liveError instanceof Error ? liveError.message : "Unknown error";
-          console.error(`[assign-contact] Live update failed for contactId ${contactId}:`, errorMessage);
-          return res.status(500).json({
-            error: "Assignment failed",
-            message: errorMessage,
-          });
+        } catch (webhookErr) {
+          const msg = webhookErr instanceof Error ? webhookErr.message : String(webhookErr);
+          console.error(`[webhook-fail] path=assign-contact contactId=${contactId} target=${webhookUrl} error="${msg}" ts=${new Date().toISOString()}`);
         }
+
+        // Fail-open: local (CRM) write is the source of truth for assigned_to.
+        return res.json({ success: true, contactId, assignedTo: assignedTo || null, n8nDelivered });
       } else {
         // Mock mode - update by index
         const contact = mockContacts[contactId - 1];
