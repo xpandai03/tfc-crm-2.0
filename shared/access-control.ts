@@ -42,6 +42,8 @@ export const TN_V2_BETA_EMAILS = [
   "chantel@tfc.health",
   "ebenavidez@tfc.health", // Erica Benavidez
   "raunek@tfc.health",     // dev/testing access
+  "praley@tfc.health",     // new staff (Sandra-equivalent)
+  "angelicac@tfc.health",  // new staff (Sandra-equivalent)
 ];
 
 /**
@@ -91,6 +93,8 @@ export const EMAIL_TEMPLATE_EDITOR_EMAILS = [
   "sandra@tfc.health",     // Sandra
   "ebenavidez@tfc.health", // Erica Benavidez
   "raunek@tfc.health",     // dev/testing access (same precedent as REFERRAL_UPLOAD_EMAILS / TN_V2_BETA_EMAILS) — remove for strict 5-only
+  "praley@tfc.health",     // new staff (Sandra-equivalent)
+  "angelicac@tfc.health",  // new staff (Sandra-equivalent)
 ];
 
 export function canEditEmailTemplates(email: string | null | undefined): boolean {
@@ -119,6 +123,8 @@ export const REPORT_BUILDER_EMAILS = [
   "sandra@tfc.health",     // Sandra
   "ebenavidez@tfc.health", // Erica Benavidez
   "raunek@tfc.health",     // dev/testing access
+  "praley@tfc.health",     // new staff (Sandra-equivalent)
+  "angelicac@tfc.health",  // new staff (Sandra-equivalent)
 ];
 
 export function canBuildReports(email: string | null | undefined): boolean {
@@ -143,6 +149,8 @@ export const WAITLIST_STAFF_FILTER_EMAILS = [
   "sandra@tfc.health",     // Sandra
   "ebenavidez@tfc.health", // Erica Benavidez
   "raunek@tfc.health",     // dev/testing access
+  "praley@tfc.health",     // new staff (Sandra-equivalent)
+  "angelicac@tfc.health",  // new staff (Sandra-equivalent)
 ];
 
 export function canUseWaitlistStaffFilter(email: string | null | undefined): boolean {
@@ -166,6 +174,8 @@ export const REPORT_AGENT_EMAILS = [
   "sandra@tfc.health",     // Sandra
   "ebenavidez@tfc.health", // Erica Benavidez
   "raunek@tfc.health",     // dev/testing access
+  "praley@tfc.health",     // new staff (Sandra-equivalent)
+  "angelicac@tfc.health",  // new staff (Sandra-equivalent)
 ];
 
 export function canUseReportAgent(email: string | null | undefined): boolean {

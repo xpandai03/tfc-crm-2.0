@@ -588,7 +588,7 @@ export default function ContactDetail() {
   };
 
   // TherapyNotes integration
-  const TN_ALLOWED_EMAILS = ["raunek@tfc.health", "dawn@tfc.health", "amanda@tfc.health", "chantel@tfc.health", "jmontano@tfc.health", "lsego@tfc.health", "sandra@tfc.health", "amayac@tfc.health", "nbockius@tfc.health", "ebenavidez@tfc.health", "victoria@tfc.health"];
+  const TN_ALLOWED_EMAILS = ["raunek@tfc.health", "dawn@tfc.health", "amanda@tfc.health", "chantel@tfc.health", "jmontano@tfc.health", "lsego@tfc.health", "sandra@tfc.health", "amayac@tfc.health", "nbockius@tfc.health", "ebenavidez@tfc.health", "victoria@tfc.health", "praley@tfc.health", "angelicac@tfc.health"];
   const canUseTn = !!user?.email && TN_ALLOWED_EMAILS.includes(user.email.toLowerCase());
 
   const { data: tnData, refetch: refetchTn } = useQuery({
