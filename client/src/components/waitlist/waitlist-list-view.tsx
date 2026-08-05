@@ -34,7 +34,11 @@ import {
   type UmbrellaId,
 } from "@/lib/status-config";
 import { normalizeInsurance } from "@/lib/insurance-utils";
-import { normalizeModalityTokens } from "@shared/modality-utils";
+import {
+  getModalityPriorities,
+  matchesModality,
+  MODALITY_SHORT_LABELS,
+} from "@shared/modality-utils";
 import { getAttentionFlags } from "@/lib/api";
 import type { WaitlistContact } from "@shared/schema";
 
@@ -74,51 +78,8 @@ interface WaitlistListViewProps {
 // consolidating it also picks up the comma-token split, so multi-modality
 // contacts stop collapsing into "Unknown".
 
-// Format date for display: converts YYYY-MM-DD or Excel serial to MM/DD/YYYY
-function formatDateForDisplay(dateValue: string | number | null | undefined): string {
-  if (!dateValue) return "—";
-  
-  let dateStr: string | null = null;
-  
-  // Handle Excel serial numbers (like 45917, 45945)
-  if (typeof dateValue === "number" && dateValue > 15000 && dateValue < 80000) {
-    // Excel epoch is Dec 30, 1899
-    const excelEpoch = new Date(1899, 11, 30);
-    const date = new Date(excelEpoch.getTime() + dateValue * 24 * 60 * 60 * 1000);
-    dateStr = date.toISOString().split("T")[0]; // Convert to YYYY-MM-DD
-  } else if (typeof dateValue === "string") {
-    dateStr = dateValue;
-  } else {
-    return String(dateValue);
-  }
-  
-  // Parse YYYY-MM-DD format and convert to MM/DD/YYYY
-  const parts = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (parts) {
-    const [, year, month, day] = parts;
-    return `${month}/${day}/${year}`;
-  }
-  
-  // If already in MM/DD/YYYY format, return as-is
-  if (dateStr.match(/^\d{1,2}\/\d{1,2}\/\d{2,4}$/)) {
-    return dateStr;
-  }
-  
-  // Fallback: try to parse and format
-  try {
-    const date = new Date(dateStr);
-    if (!isNaN(date.getTime())) {
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      const year = date.getFullYear();
-      return `${month}/${day}/${year}`;
-    }
-  } catch {
-    // If parsing fails, return original
-  }
-  
-  return dateStr || "—";
-}
+// (formatDateForDisplay removed: the Date Added column it served was replaced
+// by the Modality badge column. dateAdded is still a sort field.)
 
 type SortField = "daysOnWaitlist" | "dateAdded" | "name";
 type SortDirection = "asc" | "desc";
@@ -261,9 +222,9 @@ export function WaitlistListView({
   const availableModalities = useMemo(() => {
     const modalitySet = new Set<string>();
     for (const contact of contacts) {
-      const tokens = normalizeModalityTokens(contact.modality);
-      if (tokens.length === 0) modalitySet.add("Unknown");
-      else for (const t of tokens) modalitySet.add(t);
+      const list = getModalityPriorities(contact);
+      if (list.length === 0) modalitySet.add("Unknown");
+      else for (const t of list) modalitySet.add(t);
     }
     return Array.from(modalitySet).sort();
   }, [contacts]);
@@ -297,17 +258,13 @@ export function WaitlistListView({
         }
       }
 
-      // Modality filter — multi-value. A contact appears under EVERY modality it
-      // selected, so filtering by "In Person RR" matches a contact whose value is
-      // "In Person - Albuquerque, In Person - Rio Rancho, Telehealth". Rows where
-      // nothing resolves match only the explicit "Unknown" selection.
-      if (modalityFilter !== "all") {
-        const tokens = normalizeModalityTokens(contact.modality);
-        const matches =
-          tokens.length === 0 ? modalityFilter === "Unknown" : tokens.includes(modalityFilter);
-        if (!matches) {
-          return false;
-        }
+      // Modality filter — match-ANY across the contact's priorities, so a
+      // contact appears under EVERY location they're willing to attend. Reports
+      // and Insights deliberately differ: they count priority-1 only. Rows with
+      // no priorities fall back to the legacy string; rows that resolve to
+      // nothing match only an explicit "Unknown".
+      if (modalityFilter !== "all" && !matchesModality(contact, modalityFilter)) {
+        return false;
       }
 
       // Language filter — exact match on stored "English"/"Spanish" (dropdown-constrained,
@@ -577,17 +534,11 @@ export function WaitlistListView({
                 </Button>
               </TableHead>
               <TableHead>Service</TableHead>
-              <TableHead>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="-ml-3 h-8"
-                  onClick={() => toggleSort("dateAdded")}
-                >
-                  Date Added
-                  <SortIcon field="dateAdded" />
-                </Button>
-              </TableHead>
+              {/* Replaced the Date Added column: Days Waiting already covers
+                  recency, and staff need to see at a glance which locations a
+                  contact will attend. dateAdded remains the default sort field
+                  (see SortField) — only its header button is gone. */}
+              <TableHead>Modality</TableHead>
               <TableHead>Assigned To</TableHead>
               <TableHead>Assigned Provider</TableHead>
               <TableHead>Household</TableHead>
@@ -671,8 +622,34 @@ export function WaitlistListView({
                     <TableCell className="text-sm text-muted-foreground">
                       {contact.requestingFor ?? contact.serviceRequested ?? "—"}
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {formatDateForDisplay(contact.dateAdded)}
+                    <TableCell>
+                      {(() => {
+                        const list = getModalityPriorities(contact);
+                        if (list.length === 0) {
+                          return <span className="text-xs text-muted-foreground italic">Unknown</span>;
+                        }
+                        return (
+                          <div className="flex flex-wrap items-center gap-1">
+                            {list.map((m, i) => (
+                              <Badge
+                                key={m}
+                                variant="outline"
+                                className={cn(
+                                  "text-[10px] px-1.5 py-0 h-4 font-normal",
+                                  // P1 is the choice reports and Insights count,
+                                  // so it reads as primary; the rest are muted.
+                                  i === 0
+                                    ? "border-primary/40 bg-primary/10 text-primary font-medium"
+                                    : "text-muted-foreground border-muted-foreground/30"
+                                )}
+                                title={i === 0 ? `${m} (first priority)` : `${m} (priority ${i + 1})`}
+                              >
+                                {MODALITY_SHORT_LABELS[m] ?? m}
+                              </Badge>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell>
                       <OwnerBadge

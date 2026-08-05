@@ -7152,7 +7152,8 @@ export async function registerRoutes(
       `- insurance (optional): ${AGENT_INSURANCES.join(" | ")}`,
       `- statusCode (optional): one of ${AGENT_STATUS_CODES.join(", ")}`,
       ``,
-      `NOT available yet — if asked for these, use action "reply" with a brief version of the capabilities message; do NOT put them in params: filtering by age group / child-vs-adult, the "Fax Referral" modality, and status-movement / transitions (moved from one status to another).`,
+      `Modality counting: a contact may select several modalities in priority order. Reports count each contact ONCE, under their FIRST-priority modality — so modality counts always sum to the number of contacts. (The waitlist screen differs: it shows a contact under every modality they chose. If a manager asks why a screen count is higher than a report count, that is why.)`,
+      `NOT available yet — if asked for these, use action "reply" with a brief version of the capabilities message; do NOT put them in params: filtering by age group / child-vs-adult, and status-movement / transitions (moved from one status to another).`,
       `Never guess a filter value that isn't in the lists above. If a value is ambiguous (e.g. "BCBS" — Commercial vs Turquoise Care), ask a brief clarifying question via "reply". Keep replies to one or two sentences.`,
     ].join("\n");
   };

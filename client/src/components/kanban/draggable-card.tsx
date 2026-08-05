@@ -8,7 +8,11 @@ import { Button } from "@/components/ui/button";
 import { OwnerBadge } from "@/components/ui/owner-badge";
 import { cn, formatDob } from "@/lib/utils";
 import { normalizeInsurance } from "@/lib/insurance-utils";
-import { normalizeModalityTokens, MODALITY_SHORT_LABELS } from "@shared/modality-utils";
+import {
+  getModalityPriorities,
+  MODALITY_SHORT_LABELS,
+  type ModalityPriorityFields,
+} from "@shared/modality-utils";
 import { getAttentionFlags } from "@/lib/api";
 import { Plus, Clock, Shield, Video, FileText, Brain, AlertTriangle, Cake, UserCheck, Users } from "lucide-react";
 import type { WaitlistContact } from "@shared/schema";
@@ -22,10 +26,11 @@ import { computeDaysWaiting } from "@/lib/days-waiting";
  * Replaces a local substring-matching formatter whose labels ("In Person - ABQ",
  * "Flexible") diverged from the canonical buckets used everywhere else.
  */
-function formatModality(rawModality: string | null | undefined): string {
-  const tokens = normalizeModalityTokens(rawModality);
-  if (tokens.length === 0) return "Unknown";
-  return tokens.map((t) => MODALITY_SHORT_LABELS[t] ?? t).join(" · ");
+function formatModality(contact: ModalityPriorityFields | null | undefined): string {
+  if (!contact) return "Unknown";
+  const list = getModalityPriorities(contact);
+  if (list.length === 0) return "Unknown";
+  return list.map((m) => MODALITY_SHORT_LABELS[m] ?? m).join(" · ");
 }
 
 interface DraggableCardProps {
@@ -64,7 +69,7 @@ export function DraggableCard({ contact, onAddNote, isDragging = false, currentU
 
   // Hover expansion data
   const insurance = normalizeInsurance(contact?.insurancePayer);
-  const modality = formatModality(contact?.modality);
+  const modality = formatModality(contact);
   const service = (contact as any)?.requestingFor?.trim() || contact?.serviceRequested?.trim() || "Unknown";
 
   // Reason display — always show, with explicit legacy fallback

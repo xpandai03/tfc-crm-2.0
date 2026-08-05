@@ -5,6 +5,11 @@ import { OwnerBadge } from "@/components/ui/owner-badge";
 import { Link } from "wouter";
 import { Check, Shield, FileText, Video, Brain, Cake, UserCheck } from "lucide-react";
 import { normalizeInsurance } from "@/lib/insurance-utils";
+import {
+  getModalityPriorities,
+  MODALITY_SHORT_LABELS,
+  type ModalityPriorityFields,
+} from "@shared/modality-utils";
 import type { WaitlistContact } from "@shared/schema";
 import { computeDaysWaiting } from "@/lib/days-waiting";
 
@@ -42,28 +47,19 @@ const urgencyBadgeStyles = {
 };
 
 /**
- * Normalize modality/location for display
- * Maps raw modality values to cleaner display labels
+ * Format a contact's modality selections for the card.
+ *
+ * Backed by the shared normalizer + priority accessors, so a contact with more
+ * than one selection shows all of them compactly ("ABQ · TH") in priority
+ * order. Replaces a local substring-matching formatter whose labels
+ * ("In Person - ABQ", "Flexible") diverged from the canonical buckets used
+ * everywhere else — the last of the five duplicate copies.
  */
-function formatModality(rawModality: string | null | undefined): string {
-  if (!rawModality) return "Unknown";
-  const trimmed = rawModality.trim();
-  if (!trimmed) return "Unknown";
-  
-  // Clean up common patterns
-  const lower = trimmed.toLowerCase();
-  if (lower.includes("telehealth") || lower === "th") return "Telehealth";
-  if (lower.includes("hybrid")) return "Hybrid";
-  if (lower.includes("in person") || lower.includes("in-person")) {
-    // Extract location if present
-    if (lower.includes("abq") || lower.includes("albuquerque")) return "In Person - ABQ";
-    if (lower.includes("rr") || lower.includes("rio rancho")) return "In Person - Rio Rancho";
-    if (lower.includes("los lunas")) return "In Person - Los Lunas";
-    return "In Person";
-  }
-  if (lower.includes("flex")) return "Flexible";
-  
-  return trimmed;
+function formatModality(contact: ModalityPriorityFields | null | undefined): string {
+  if (!contact) return "Unknown";
+  const list = getModalityPriorities(contact);
+  if (list.length === 0) return "Unknown";
+  return list.map((m) => MODALITY_SHORT_LABELS[m] ?? m).join(" · ");
 }
 
 export function PriorityCard({
@@ -92,7 +88,7 @@ export function PriorityCard({
 
   // Intake decision data for hover display
   const insurance = normalizeInsurance(contact?.insurancePayer);
-  const modality = formatModality(contact?.modality);
+  const modality = formatModality(contact);
   const service = (contact as any)?.requestingFor?.trim() || contact?.serviceRequested?.trim() || "Unknown";
 
   // Format reasonForTherapy MCQ for hover display (may be array or comma-separated string)

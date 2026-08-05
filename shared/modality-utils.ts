@@ -198,3 +198,74 @@ export function normalizeModality(rawValue: string | null | undefined): string {
   if (tokens.length === 0) return "Unknown";
   return tokens.find(isInPersonModality) ?? tokens[0];
 }
+
+// ============================================================================
+// Modality priorities (modality_p1..p4)
+// ============================================================================
+//
+// A contact's modality selections as an ORDERED list, p1 = top choice. These
+// drive the dual semantics the clinic asked for:
+//
+//   - Pipeline / list filter -> match ANY of p1..p4, so a contact shows up
+//     under every location they are willing to attend.
+//   - Referral reports + Insights -> count p1 ONLY, so each contact counts
+//     once, under their top choice, and totals still sum to contact count.
+//
+// FALLBACK: rows the backfill left alone (Flex, Fax Referral, out-of-area
+// multi-office) and any row created before the priority columns existed have a
+// NULL p1. Every accessor below falls back to parsing the legacy `modality`
+// string, so those rows behave exactly as they did before priorities shipped.
+// Never read modality_p1 directly — go through these.
+//
+// PRIORITY ORDER IS AUTHORITATIVE AND IS NEVER REORDERED. The zip-distance
+// heuristic that produced the initial ordering was a ONE-TIME BACKFILL device
+// for historical rows that never stated a preference. Once a contact states an
+// order (RFS form, or staff entry), that order is what we store and what we
+// show — no proximity rule, no re-ranking, ever.
+
+/** The shape any priority accessor needs. Both DB rows and API contacts fit. */
+export interface ModalityPriorityFields {
+  modalityP1?: string | null;
+  modalityP2?: string | null;
+  modalityP3?: string | null;
+  modalityP4?: string | null;
+  modality?: string | null;
+}
+
+/**
+ * A contact's modality selections in priority order.
+ * Falls back to normalizing the legacy `modality` string when no priority is
+ * set. Returns [] only when nothing resolves at all (e.g. Fax Referral).
+ */
+export function getModalityPriorities(c: ModalityPriorityFields): string[] {
+  const explicit = [c.modalityP1, c.modalityP2, c.modalityP3, c.modalityP4]
+    .map((v) => (typeof v === "string" ? v.trim() : ""))
+    .filter(Boolean);
+  if (explicit.length > 0) return explicit;
+  return normalizeModalityTokens(c.modality);
+}
+
+/**
+ * The single bucket a contact counts under for reports and Insights.
+ * p1 when set, else the primary bucket of the legacy string, else "Unknown".
+ */
+export function getPrimaryModality(c: ModalityPriorityFields): string {
+  const p1 = typeof c.modalityP1 === "string" ? c.modalityP1.trim() : "";
+  if (p1) return p1;
+  return normalizeModality(c.modality);
+}
+
+/**
+ * Does this contact belong under `bucket` in a match-ANY context (the pipeline
+ * filter)? Rows that resolve to nothing match only an explicit "Unknown".
+ */
+export function matchesModality(c: ModalityPriorityFields, bucket: string): boolean {
+  const list = getModalityPriorities(c);
+  return list.length === 0 ? bucket === "Unknown" : list.includes(bucket);
+}
+
+/** Comma-joined priority list, matching the legacy `modality` raw format. */
+export function joinModalityPriorities(values: (string | null | undefined)[]): string | null {
+  const clean = values.map((v) => (typeof v === "string" ? v.trim() : "")).filter(Boolean);
+  return clean.length ? clean.join(", ") : null;
+}
