@@ -19,7 +19,13 @@ import {
   getUmbrellaForStatusCode,
 } from "@shared/status-codes";
 import { normalizeInsurance } from "@shared/insurance-utils";
-import { normalizeModality, normalizeModalityTokens } from "@shared/modality-utils";
+import {
+  normalizeModality,
+  normalizeModalityTokens,
+  getPrimaryModality,
+  getModalityPriorities,
+  matchesModality,
+} from "@shared/modality-utils";
 
 const MONTH_NAMES: Record<string, number> = {
   january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
@@ -121,6 +127,13 @@ export interface SyncContact {
   detailedReason: string | null;
   formCompletedBy: string | null;
   modality: string | null;
+  // Ordered modality priorities (p1 = top choice). NULL when never prioritized;
+  // readers fall back to parsing `modality`. Use the accessors in
+  // @shared/modality-utils rather than reading these directly.
+  modalityP1: string | null;
+  modalityP2: string | null;
+  modalityP3: string | null;
+  modalityP4: string | null;
   referralSource: string | null;
   priorServices: string | null;
   priorProvider: string | null;
@@ -250,6 +263,18 @@ export async function initSyncTables(): Promise<void> {
       scheduled_appointment_date TEXT,
       scheduled_appointment_time TEXT,
 
+      -- Modality priorities: the contact's modality selections as an ORDERED
+      -- list (p1 = top choice). Canonical buckets from shared/modality-utils
+      -- MODALITIES, NOT raw form strings — the raw text stays in modality.
+      -- Reports/Insights count by p1 only; the pipeline filter matches ANY of
+      -- p1..p4. NULL p1 means "not prioritized yet" and readers fall back to
+      -- normalizing the modality string. CRM-owned; never written by the n8n
+      -- sync upserts (excluded from every DO UPDATE SET below).
+      modality_p1 TEXT,
+      modality_p2 TEXT,
+      modality_p3 TEXT,
+      modality_p4 TEXT,
+
       synced_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       sync_hash          TEXT
     )
@@ -333,6 +358,25 @@ export async function initSyncTables(): Promise<void> {
     try {
       await pool.query(`ALTER TABLE sync_contacts ADD COLUMN IF NOT EXISTS language TEXT`);
     } catch (_) { /* column already exists */ }
+    // Modality priority columns. Prod adds these manually via
+    // migrations/add-modality-priorities.sql (schema-before-code, C16); this
+    // block keeps fresh/non-prod DBs in sync without a manual step. CRM-owned —
+    // excluded from every sync upsert's DO UPDATE SET.
+    try {
+      await pool.query(
+        `ALTER TABLE sync_contacts
+           ADD COLUMN IF NOT EXISTS modality_p1 TEXT,
+           ADD COLUMN IF NOT EXISTS modality_p2 TEXT,
+           ADD COLUMN IF NOT EXISTS modality_p3 TEXT,
+           ADD COLUMN IF NOT EXISTS modality_p4 TEXT`
+      );
+    } catch (_) { /* columns already exist */ }
+    try {
+      await pool.query(
+        `CREATE INDEX IF NOT EXISTS idx_sync_contacts_modality_p1
+           ON sync_contacts(modality_p1)`
+      );
+    } catch (_) { /* index already exists */ }
   }
 
   console.log("[sync-db] Sync tables initialized");
@@ -421,7 +465,11 @@ export async function syncContacts(contacts: SyncPayloadContact[]): Promise<{
         reason_for_therapy = EXCLUDED.reason_for_therapy,
         detailed_reason = EXCLUDED.detailed_reason,
         form_completed_by = EXCLUDED.form_completed_by,
-        modality = EXCLUDED.modality,
+        -- modality CRM-owned (COALESCE): the Sheet only fills it when the CRM
+        -- has none. Staff edits and the priority columns derived from it must
+        -- survive a sync. modality_p1..p4 are omitted entirely — unenumerated
+        -- columns are never touched by this upsert.
+        modality = COALESCE(sync_contacts.modality, EXCLUDED.modality),
         referral_source = EXCLUDED.referral_source,
         prior_services = EXCLUDED.prior_services,
         prior_provider = EXCLUDED.prior_provider,
@@ -606,6 +654,10 @@ export async function getAllSyncContacts(): Promise<SyncContact[]> {
       detailed_reason AS "detailedReason",
       form_completed_by AS "formCompletedBy",
       modality,
+      modality_p1 AS "modalityP1",
+      modality_p2 AS "modalityP2",
+      modality_p3 AS "modalityP3",
+      modality_p4 AS "modalityP4",
       referral_source AS "referralSource",
       prior_services AS "priorServices",
       prior_provider AS "priorProvider",
@@ -774,10 +826,19 @@ export function matchesWaitlistExportFilters(
     if (normalizeInsurance(r.insurance_payer as string | null) !== f.insurance) return false;
   }
 
-  // Multi-value: a contact matches if the bucket is ANY of its selections.
+  // Match-ANY across priorities, identical to the list view's filter (the
+  // export exists to reproduce what's on screen).
   if (f.modality && f.modality !== "all") {
-    const tokens = normalizeModalityTokens(r.modality as string | null);
-    const ok = tokens.length === 0 ? f.modality === "Unknown" : tokens.includes(f.modality);
+    const ok = matchesModality(
+      {
+        modalityP1: r.modality_p1 as string | null,
+        modalityP2: r.modality_p2 as string | null,
+        modalityP3: r.modality_p3 as string | null,
+        modalityP4: r.modality_p4 as string | null,
+        modality: r.modality as string | null,
+      },
+      f.modality,
+    );
     if (!ok) return false;
   }
 
@@ -846,7 +907,8 @@ export async function getWaitlistExportData(
       rfs_link, document_link,
       last_contact, last_note,
       synced_at,
-      language
+      language,
+      modality_p1, modality_p2, modality_p3, modality_p4
     FROM sync_contacts
     ORDER BY date_added ASC, contact_id ASC
   `);
@@ -1003,7 +1065,12 @@ export const REFERRAL_REPORT_BASE_COLUMNS = [
   "Age",
   "Age Bucket",
   "Modality (raw)",
+  // "Modality (normalized)" is the COUNTED bucket: first priority when set,
+  // else the normalized legacy string. Kept under its original name so existing
+  // saved reports and downstream sheets don't break. "Modality (all)" carries
+  // every selection in priority order for context.
   "Modality (normalized)",
+  "Modality (all)",
   "Insurance (raw)",
   "Insurance (normalized)",
   "Current Status",
@@ -1132,6 +1199,10 @@ export async function getReferralReportData(params: ReferralReportParams): Promi
       c.requesting_for        AS requesting_for,
       c.service_requested     AS service_requested,
       c.modality              AS modality,
+      c.modality_p1           AS modality_p1,
+      c.modality_p2           AS modality_p2,
+      c.modality_p3           AS modality_p3,
+      c.modality_p4           AS modality_p4,
       c.insurance_payer       AS insurance_payer,
       c.patient_dob           AS patient_dob,
       c.age                   AS age,
@@ -1171,7 +1242,18 @@ export async function getReferralReportData(params: ReferralReportParams): Promi
       r.service_requested as string | null,
     );
     const modalityRaw = r.modality == null ? "" : String(r.modality);
-    const modalityNorm = normalizeModality(modalityRaw);
+    // Reports count each contact ONCE, under their first priority. The waitlist
+    // filter deliberately differs (match-any) — a contact open to two offices
+    // appears under both there, but is counted only under their top choice here.
+    const priorityFields = {
+      modalityP1: r.modality_p1 as string | null,
+      modalityP2: r.modality_p2 as string | null,
+      modalityP3: r.modality_p3 as string | null,
+      modalityP4: r.modality_p4 as string | null,
+      modality: modalityRaw,
+    };
+    const modalityNorm = getPrimaryModality(priorityFields);
+    const modalityAll = getModalityPriorities(priorityFields).join(", ");
     const insuranceRaw = r.insurance_payer == null ? "" : String(r.insurance_payer);
     const insuranceNorm = normalizeInsurance(insuranceRaw);
     const statusCode =
@@ -1202,6 +1284,7 @@ export async function getReferralReportData(params: ReferralReportParams): Promi
       "Age Bucket": ageBucket(age),
       "Modality (raw)": modalityRaw,
       "Modality (normalized)": modalityNorm,
+      "Modality (all)": modalityAll,
       "Insurance (raw)": insuranceRaw,
       "Insurance (normalized)": insuranceNorm,
       "Current Status": statusLabel,
@@ -1254,6 +1337,10 @@ export async function getSyncContactById(contactId: number): Promise<SyncContact
       detailed_reason AS "detailedReason",
       form_completed_by AS "formCompletedBy",
       modality,
+      modality_p1 AS "modalityP1",
+      modality_p2 AS "modalityP2",
+      modality_p3 AS "modalityP3",
+      modality_p4 AS "modalityP4",
       referral_source AS "referralSource",
       prior_services AS "priorServices",
       prior_provider AS "priorProvider",
@@ -1803,7 +1890,11 @@ export async function enrichSyncContact(contactId: number, detailed: Record<stri
     ["reason_for_therapy", str(detailed.reasonForTherapy ?? detailed["Reason for Therapy MCQ"] ?? detailed["reasonForTherapyMCQ"])],
     ["detailed_reason", str(detailed.detailedReason ?? detailed["DetailedReason"])],
     ["form_completed_by", str(detailed.formCompletedBy)],
-    ["modality", str(detailed.modality ?? detailed["Desired Modality"])],
+    // IMPORTANT: modality is NOT re-enriched from n8n/Excel. It is CRM-owned.
+    // This was the live clobber path: opening a contact whose cache was >5min
+    // old fired a background enrich that overwrote the staff-entered modality
+    // with the Sheet's value, and would now also desync modality_p1..p4 from
+    // the string they were derived from.
     ["referral_source", str(detailed.referralSource)],
     ["prior_services", str(detailed.priorServices)],
     ["prior_provider", str(detailed.priorProvider)],
@@ -1934,7 +2025,8 @@ export async function upsertSingleContact(
       reason_for_therapy = EXCLUDED.reason_for_therapy,
       detailed_reason = EXCLUDED.detailed_reason,
       form_completed_by = EXCLUDED.form_completed_by,
-      modality = EXCLUDED.modality,
+      -- modality CRM-owned (COALESCE) — see the note in syncContacts above.
+      modality = COALESCE(sync_contacts.modality, EXCLUDED.modality),
       referral_source = EXCLUDED.referral_source,
       prior_services = EXCLUDED.prior_services,
       prior_provider = EXCLUDED.prior_provider,
@@ -2514,7 +2606,8 @@ export async function fullSyncMigrationContacts(
       reason_for_therapy = EXCLUDED.reason_for_therapy,
       detailed_reason = EXCLUDED.detailed_reason,
       form_completed_by = EXCLUDED.form_completed_by,
-      modality = EXCLUDED.modality,
+      -- modality CRM-owned (COALESCE) — see the note in syncContacts above.
+      modality = COALESCE(sync_contacts.modality, EXCLUDED.modality),
       prior_services = EXCLUDED.prior_services,
       prior_provider = EXCLUDED.prior_provider,
       flags = EXCLUDED.flags,
