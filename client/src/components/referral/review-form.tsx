@@ -18,6 +18,8 @@ import {
 import { ChevronDown } from "lucide-react";
 import { REASON_CANONICALS } from "@shared/reason-canonicals";
 import { MODALITY_OPTIONS as CANONICAL_MODALITY_OPTIONS } from "@shared/modality-utils";
+import { ACCEPTED_INSURANCES } from "@shared/insurance-utils";
+import { SERVICE_TYPES } from "@shared/service-types";
 
 export interface ReferralFormState {
   firstName: string;
@@ -50,31 +52,21 @@ interface ReviewFormProps {
   isSubmitting: boolean;
 }
 
-const REQUESTING_FOR_OPTIONS = [
-  "Myself",
-  "My Child",
-  "My Partner & Myself",
-  "My Family",
-  "Other",
-];
+// Canonical list now lives in shared/ — it was maintained by hand here AND in
+// the reporting agent's filter enum with nothing keeping them in step.
+const REQUESTING_FOR_OPTIONS = SERVICE_TYPES;
 
 /**
- * Modality options for the staff review form.
+ * Modality options for the staff review form — the canonical buckets, nothing
+ * else. "Fax Referral (For staff use only)" has been RETIRED: it described the
+ * intake channel, not where the client wants to be seen, so every faxed
+ * referral landed in the "Unknown" modality bucket and was invisible to
+ * location planning. Staff now pick the real modality; the fax origin is
+ * already captured by intake_source.
  *
- * The canonical buckets come from @shared/modality-utils — the same list the
- * reporting agent, Insights and the waitlist filter use. The previous
- * hand-maintained list offered "Virtual" and "Either", neither of which is in
- * the normalization map, so anything saved with them landed in the "Unknown"
- * bucket (0 rows in production — nobody had picked them yet).
- *
- * "Fax Referral (For staff use only)" is intentionally kept FIRST: it is this
- * form's default (referral.tsx DEFAULT_MODALITY) and the fallback for the
- * Select below. Its retirement is a separate, later change.
+ * There is no default — see referral.tsx. An explicit choice is required.
  */
-const MODALITY_OPTIONS = [
-  "Fax Referral (For staff use only)",
-  ...CANONICAL_MODALITY_OPTIONS,
-];
+const MODALITY_OPTIONS = CANONICAL_MODALITY_OPTIONS;
 
 const GENDER_OPTIONS = [
   { value: "Male", label: "Male" },
@@ -249,9 +241,16 @@ export function ReviewForm({ value, onChange, onSubmit, onStartOver, isSubmittin
     [value, onChange],
   );
 
+  // Modality is required now that "Fax Referral" is gone: without it a faxed
+  // referral would land with no modality at all and be invisible to location
+  // planning, which is the exact problem this change is fixing.
   const isValid = useMemo(() => {
-    return value.firstName.trim().length > 0 && value.lastName.trim().length > 0;
-  }, [value.firstName, value.lastName]);
+    return (
+      value.firstName.trim().length > 0 &&
+      value.lastName.trim().length > 0 &&
+      value.modality.trim().length > 0
+    );
+  }, [value.firstName, value.lastName, value.modality]);
 
   return (
     <form
@@ -385,11 +384,25 @@ export function ReviewForm({ value, onChange, onSubmit, onStartOver, isSubmittin
       <Section title="Referral">
         <div className="grid grid-cols-2 gap-3">
           <Field label={labelFor("insurancePayer")}>
-            <Input
-              value={value.insurancePayer}
-              onChange={(e) => set("insurancePayer", e.target.value)}
-              data-testid="input-insurancePayer"
-            />
+            {/* Dropdown-only (shared ACCEPTED_INSURANCES + Unknown). Free text
+                here is what produced "BCBS", "BCBS Comm", "Blue cross" etc. as
+                separate buckets in every report. */}
+            <Select
+              value={value.insurancePayer || undefined}
+              onValueChange={(v) => set("insurancePayer", v)}
+            >
+              <SelectTrigger data-testid="select-insurancePayer">
+                <SelectValue placeholder="Select a payer…" />
+              </SelectTrigger>
+              <SelectContent>
+                {ACCEPTED_INSURANCES.map((i) => (
+                  <SelectItem key={i} value={i}>
+                    {i}
+                  </SelectItem>
+                ))}
+                <SelectItem value="Unknown">Unknown</SelectItem>
+              </SelectContent>
+            </Select>
           </Field>
           <Field label={labelFor("referralSource")}>
             <Input
@@ -437,12 +450,18 @@ export function ReviewForm({ value, onChange, onSubmit, onStartOver, isSubmittin
             </Select>
           </Field>
           <Field label={labelFor("modality")}>
+            {/* Required, and no default — a faxed referral used to be filed
+                under "Fax Referral", which told us nothing about where the
+                client wants to be seen. Submit is blocked until this is set. */}
             <Select
-              value={value.modality || MODALITY_OPTIONS[0]}
+              value={value.modality || undefined}
               onValueChange={(v) => set("modality", v)}
             >
-              <SelectTrigger data-testid="select-modality">
-                <SelectValue />
+              <SelectTrigger
+                data-testid="select-modality"
+                className={!value.modality ? "border-destructive/60" : undefined}
+              >
+                <SelectValue placeholder="Select a modality…" />
               </SelectTrigger>
               <SelectContent>
                 {MODALITY_OPTIONS.map((opt) => (
@@ -452,6 +471,9 @@ export function ReviewForm({ value, onChange, onSubmit, onStartOver, isSubmittin
                 ))}
               </SelectContent>
             </Select>
+            {!value.modality && (
+              <p className="text-[11px] text-destructive mt-1">Required</p>
+            )}
           </Field>
         </div>
         <Field label={labelFor("formCompletedBy")}>
@@ -483,7 +505,7 @@ export function ReviewForm({ value, onChange, onSubmit, onStartOver, isSubmittin
       </div>
       {!isValid && (
         <p className="text-xs text-muted-foreground text-right">
-          First and last name are required.
+          First name, last name, and modality are required.
         </p>
       )}
     </form>

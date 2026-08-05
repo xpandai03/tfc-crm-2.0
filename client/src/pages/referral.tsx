@@ -39,7 +39,12 @@ interface ExtractedData {
   referralAuth: string | null;
 }
 
-const DEFAULT_MODALITY = "Fax Referral (For staff use only)";
+// No default modality. "Fax Referral (For staff use only)" used to be prefilled
+// here, which meant every faxed referral was recorded with the intake CHANNEL
+// in place of a modality and vanished from location planning. Staff must now
+// pick where the client wants to be seen; the review form blocks submit until
+// they do. The fax origin is still captured via intake_source.
+const DEFAULT_MODALITY = "";
 const DEFAULT_REQUESTING_FOR = "Myself";
 
 function emptyForm(): ReferralFormState {
@@ -179,7 +184,12 @@ export default function Referral() {
         priorProvider: formState.referringProvider.trim() || null,
         referralAuth: formState.referralAuth.trim() || null,
         requestingFor: formState.requestingFor || DEFAULT_REQUESTING_FOR,
-        modality: formState.modality || DEFAULT_MODALITY,
+        // This surface is single-select (one fax, one modality), so the chosen
+        // value IS the first priority. Sent as both so the legacy string and the
+        // priority columns stay coherent; the endpoint would derive p1 anyway,
+        // but sending it explicitly keeps the intent obvious.
+        modality: formState.modality || null,
+        modalityP1: formState.modality || null,
         formCompletedBy: formState.formCompletedBy.trim() || user?.name || "",
       };
 
