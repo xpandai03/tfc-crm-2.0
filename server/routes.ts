@@ -87,6 +87,7 @@ import { SERVICE_TYPES } from "@shared/service-types";
 import {
   MODALITIES,
   normalizeModality,
+  normalizeModalityTokens,
   joinModalityPriorities,
 } from "@shared/modality-utils";
 import { invokeMessages } from "./ai/bedrock";
@@ -4970,18 +4971,35 @@ export async function registerRoutes(
       }
 
       const legacyModality = s(b.modality);
-      if (priorities.length === 0 && legacyModality) {
-        // Legacy single-value shape: derive p1 so the contact is countable now.
-        // Unresolvable values (e.g. a fax referral) leave p1 NULL and fall back
-        // at read time, exactly like the rows the backfill skipped.
-        const derived = normalizeModality(legacyModality);
-        if (derived !== "Unknown") priorities.push(derived);
+      const usedLegacyShape = priorities.length === 0 && !!legacyModality;
+      if (usedLegacyShape) {
+        // Legacy shape — and note it is frequently MULTI-valued: the Jotform
+        // comma-joins its modality checkboxes, which is how ~130 existing
+        // contacts ended up with several. So derive the whole list, not just a
+        // single value, or the extra selections are silently lost.
+        //
+        // p1 is the same bucket the read-time fallback would have produced
+        // (in-person first), so a contact counts identically whether or not
+        // this derivation ran. The remaining selections follow in submitted
+        // order. Unresolvable values (a fax referral) leave the p-columns NULL
+        // and fall back at read time, exactly like the rows the backfill
+        // skipped.
+        const tokens = normalizeModalityTokens(legacyModality);
+        if (tokens.length > 0) {
+          const primary = normalizeModality(legacyModality);
+          priorities.push(primary, ...tokens.filter((t) => t !== primary));
+        }
       }
 
-      // Keep the legacy string coherent with the priorities so pre-priority
+      // Keep the legacy string coherent with the priorities, so pre-priority
       // consumers (exports, the Sheet's "Desired Modality") stay correct.
-      const modalityString =
-        joinModalityPriorities(priorities) ?? legacyModality ?? null;
+      //
+      // A legacy submission keeps its string EXACTLY as sent — rewriting it to
+      // canonical bucket names would discard the submitter's own wording for no
+      // benefit, since the priorities already carry the structured version.
+      const modalityString = usedLegacyShape
+        ? legacyModality
+        : joinModalityPriorities(priorities) ?? legacyModality ?? null;
 
       // Build readable last_note for timeline display
       const lines: string[] = [`Intake ${now}`];
