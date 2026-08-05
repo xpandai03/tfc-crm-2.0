@@ -16,7 +16,7 @@ import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { PageLayout } from "@/components/layout/page-layout";
 import { DroppableColumn } from "@/components/kanban/droppable-column";
 import { DraggableCard } from "@/components/kanban/draggable-card";
-import { WaitlistListView } from "@/components/waitlist/waitlist-list-view";
+import { WaitlistListView, type WaitlistFilterState } from "@/components/waitlist/waitlist-list-view";
 import { QuickNoteModal } from "@/components/ui/quick-note-modal";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { PageLoader } from "@/components/ui/page-loader";
@@ -492,10 +492,37 @@ export default function Waitlist() {
 
   const [exporting, setExporting] = useState(false);
 
+  // Live filter state from the list view. The export must match what the user is
+  // looking at, so we POST this snapshot rather than exporting the whole table.
+  // Null until the list view reports in (board view, or before first render) —
+  // in that case we fall back to the list view's own defaults so a board-mode
+  // export still matches what switching to the list would show.
+  const [listFilters, setListFilters] = useState<WaitlistFilterState | null>(null);
+
   const handleExport = useCallback(async (format: "csv" | "xlsx") => {
     setExporting(true);
     try {
+      const viewFilters: WaitlistFilterState = listFilters ?? {
+        hideInactive: true, // matches WaitlistListView's default
+        umbrella: null,
+        statusCodes: null,
+        insurance: null,
+        modality: null,
+        language: null,
+        reason: null,
+        serviceType: null,
+        search: null,
+      };
+      // The assignment filter is applied by THIS page before the list view sees
+      // the contacts, so it has to be merged in here. "all" = no constraint;
+      // "me" resolves to the signed-in user.
+      const assignedTo =
+        staffFilter === "all" ? null : staffFilter === "me" ? user?.email ?? null : staffFilter;
+      const filters = { ...viewFilters, assignedTo };
       const res = await fetch(`/api/export/waitlist.${format}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(filters),
         credentials: "include",
         cache: "no-store",
       });
@@ -525,7 +552,7 @@ export default function Waitlist() {
     } finally {
       setExporting(false);
     }
-  }, [toast]);
+  }, [toast, listFilters, staffFilter, user?.email]);
 
   if (isLoading) {
     return (
@@ -701,6 +728,7 @@ export default function Waitlist() {
           <WaitlistListView
             contacts={contacts}
             currentUserEmail={user?.email}
+            onFiltersChange={setListFilters}
             initialInsuranceFilter={urlParams.insurance}
             initialModalityFilter={urlParams.modality}
             initialStatusFilter={urlParams.status}

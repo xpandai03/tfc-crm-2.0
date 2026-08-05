@@ -67,6 +67,7 @@ import {
   updateScheduledAppointment,
   deleteSyncContact,
   getWaitlistExportData,
+  type WaitlistExportFilters,
   WAITLIST_EXPORT_COLUMNS,
   getReferralReportData,
   type SyncPayloadContact,
@@ -6751,12 +6752,53 @@ export async function registerRoutes(
     return false;
   }
 
+  // --------------------------------------------------------------------------
+  // Waitlist export filters
+  //
+  // The CRM's export button posts the list view's CURRENT filter state so the
+  // file matches what the user is looking at. Previously every export ran
+  // unfiltered, so a default view showing ~271 active contacts downloaded as
+  // all ~1135 rows.
+  //
+  // The GET forms are kept, unfiltered, for backwards compatibility: these
+  // endpoints are documented as n8n/programmatic consumers, authenticate via
+  // X-Sync-Key, and their external callers can't be enumerated from here.
+  // New callers should use POST.
+  //
+  // BACKLOG (approved, Deploy 1): confirm which n8n workflows — if any — still
+  // call GET /api/export/waitlist{,.csv,.xlsx}, then deprecate and remove the
+  // unfiltered .csv/.xlsx GETs. The JSON GET is the one most likely to have a
+  // real external consumer; the two file-download GETs were almost certainly
+  // browser-only and should go first. Until that audit happens, do NOT delete
+  // these — an unfiltered export silently 404ing would break a live workflow.
+  // --------------------------------------------------------------------------
+  function parseExportFilters(body: any): WaitlistExportFilters {
+    if (!body || typeof body !== "object") return {};
+    const str = (v: unknown): string | null =>
+      typeof v === "string" && v.trim() && v !== "all" ? v.trim() : null;
+    const codes = Array.isArray(body.statusCodes)
+      ? body.statusCodes.map((n: unknown) => Number(n)).filter((n: number) => !Number.isNaN(n))
+      : null;
+    return {
+      hideInactive: body.hideInactive === true,
+      umbrella: str(body.umbrella),
+      statusCodes: codes && codes.length > 0 ? codes : null,
+      insurance: str(body.insurance),
+      modality: str(body.modality),
+      language: str(body.language),
+      reason: str(body.reason),
+      serviceType: str(body.serviceType),
+      search: str(body.search),
+      assignedTo: str(body.assignedTo),
+    };
+  }
+
   // JSON export (for n8n or programmatic consumers)
   app.get("/api/export/waitlist", async (req, res) => {
     try {
       if (!checkExportAuth(req, res)) return;
       const result = await getWaitlistExportData();
-      console.log(`[export] JSON: ${result.total} rows`);
+      console.log(`[export] JSON (unfiltered GET): ${result.total} rows`);
       return res.json(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Export failed";
@@ -6765,12 +6807,27 @@ export async function registerRoutes(
     }
   });
 
-  // CSV export (file download)
-  app.get("/api/export/waitlist.csv", async (req, res) => {
+  // JSON export, filtered
+  app.post("/api/export/waitlist", async (req, res) => {
     try {
       if (!checkExportAuth(req, res)) return;
-      const { rows, total } = await getWaitlistExportData();
-      console.log(`[export] CSV: ${total} rows`);
+      const filters = parseExportFilters(req.body);
+      const result = await getWaitlistExportData(filters);
+      console.log(`[export] JSON: ${result.total} rows`, filters);
+      return res.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Export failed";
+      console.error("[export] Error:", message);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // CSV export (file download). Body identical for GET (unfiltered) and POST.
+  async function sendWaitlistCsv(req: any, res: any, filters: WaitlistExportFilters) {
+    try {
+      if (!checkExportAuth(req, res)) return;
+      const { rows, total } = await getWaitlistExportData(filters);
+      console.log(`[export] CSV: ${total} rows`, filters);
 
       // Build CSV: header + rows, using canonical column order
       const escape = (v: unknown): string => {
@@ -6796,14 +6853,18 @@ export async function registerRoutes(
       console.error("[export] CSV Error:", message);
       return res.status(500).json({ error: message });
     }
-  });
+  }
 
-  // Excel export (file download)
-  app.get("/api/export/waitlist.xlsx", async (req, res) => {
+  app.get("/api/export/waitlist.csv", (req, res) => sendWaitlistCsv(req, res, {}));
+  app.post("/api/export/waitlist.csv", (req, res) =>
+    sendWaitlistCsv(req, res, parseExportFilters(req.body)));
+
+  // Excel export (file download). Body identical for GET (unfiltered) and POST.
+  async function sendWaitlistXlsx(req: any, res: any, filters: WaitlistExportFilters) {
     try {
       if (!checkExportAuth(req, res)) return;
-      const { rows, total } = await getWaitlistExportData();
-      console.log(`[export] XLSX: ${total} rows`);
+      const { rows, total } = await getWaitlistExportData(filters);
+      console.log(`[export] XLSX: ${total} rows`, filters);
 
       // Build worksheet from rows using canonical column order
       const wsData = rows.map(row =>
@@ -6827,7 +6888,11 @@ export async function registerRoutes(
       console.error("[export] XLSX Error:", message);
       return res.status(500).json({ error: message });
     }
-  });
+  }
+
+  app.get("/api/export/waitlist.xlsx", (req, res) => sendWaitlistXlsx(req, res, {}));
+  app.post("/api/export/waitlist.xlsx", (req, res) =>
+    sendWaitlistXlsx(req, res, parseExportFilters(req.body)));
 
   // ==========================================================================
   // Export: Custom Referral Report (manager-only)

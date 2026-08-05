@@ -15,6 +15,8 @@
  * - INS (Inactive): 103, 104, 203, 204, 205, 400 — Inactive/declined contacts
  */
 
+import { INACTIVE_STATUS_CODES as SHARED_INACTIVE_STATUS_CODES } from "@shared/status-codes";
+
 // Status code to human-readable label mapping
 // Labels match the exact semantics from the TFC spreadsheet
 export const STATUS_LABELS: Record<number, string> = {
@@ -157,7 +159,11 @@ export const ACTIVE_STATUS_CODES = [
  * 2. Add to appropriate umbrella in STATUS_UMBRELLAS
  * 3. If terminal/non-actionable: add to INACTIVE_STATUS_CODES
  */
-export const INACTIVE_STATUS_CODES: number[] = [103, 104, 203, 204, 205, 400, 402, 403];
+// Sourced from @shared/status-codes so the server-side waitlist export filter
+// and this client filter can never disagree about what "inactive" means.
+// Edit the list THERE, not here. Imported (not bare-re-exported) because
+// isActiveStatus below needs the binding in module scope.
+export const INACTIVE_STATUS_CODES = SHARED_INACTIVE_STATUS_CODES;
 
 /**
  * BACKWARD COMPATIBILITY: STATUS_GROUPS
