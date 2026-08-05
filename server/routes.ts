@@ -83,6 +83,12 @@ import {
 } from "./activity/db";
 import { isRestrictedUser, canAccessReferralUpload, isTnV2User, canEditEmailTemplates, canBuildReports, canUseReportAgent } from "@shared/access-control";
 import { ACCEPTED_INSURANCES } from "@shared/insurance-utils";
+import { SERVICE_TYPES } from "@shared/service-types";
+import {
+  MODALITIES,
+  normalizeModality,
+  joinModalityPriorities,
+} from "@shared/modality-utils";
 import { invokeMessages } from "./ai/bedrock";
 import { normalizeReasonForTherapy } from "@shared/reason-canonicals";
 import { getStatusLabel } from "@shared/status-codes";
@@ -4910,12 +4916,79 @@ export async function registerRoutes(
       const reasonForTherapy = reasonForTherapyNormalized || null;
       const referralAuth = s(b.referralAuth) || s(b.referralNumber);
 
+      // ----------------------------------------------------------------------
+      // Modality priorities
+      //
+      // BOTH SHAPES ARE SUPPORTED INDEFINITELY. The public RFS form is an
+      // external Jotform that still posts a single `modality` string; it will
+      // start sending modalityP1..P4 only once that form is updated, and older
+      // integrations may never be. So:
+      //   - new shape (modalityP1..P4) -> stored as given, order preserved
+      //   - legacy shape (modality only) -> p1 derived from the normalized
+      //     string so the contact still counts in reports on day one
+      //
+      // Priority order as submitted is AUTHORITATIVE and is never reordered.
+      // (The zip-distance rule was a one-time backfill device for historical
+      // rows that never stated a preference.)
+      //
+      // Validation mirrors reasonForTherapy above (locked decision D-A6):
+      // website submissions are hard-rejected on a non-canonical value, staff
+      // submissions warn and drop, because an unknown value from the website
+      // form is a real bug worth surfacing loudly.
+      // ----------------------------------------------------------------------
+      const rawPriorities = [b.modalityP1, b.modalityP2, b.modalityP3, b.modalityP4]
+        .map((v) => (typeof v === "string" ? v.trim() : ""))
+        .filter(Boolean);
+
+      const badModalities = rawPriorities.filter(
+        (v) => !(MODALITIES as readonly string[]).includes(v)
+      );
+      if (badModalities.length > 0) {
+        if (isUploadedReferral) {
+          console.warn(
+            `[intake] Staff submission contained ${badModalities.length} non-canonical ` +
+              `modality values that were dropped: ${JSON.stringify(badModalities)}`
+          );
+        } else {
+          return res.status(400).json({
+            error: "validation_error",
+            field: "modalityP1..P4",
+            message: "non-canonical modality values from website submission",
+            unknownValues: badModalities,
+            allowedValues: MODALITIES,
+          });
+        }
+      }
+
+      // De-dupe while preserving the submitted order — a repeated selection is
+      // a form slip, not a second preference.
+      const priorities: string[] = [];
+      for (const v of rawPriorities) {
+        if ((MODALITIES as readonly string[]).includes(v) && !priorities.includes(v)) {
+          priorities.push(v);
+        }
+      }
+
+      const legacyModality = s(b.modality);
+      if (priorities.length === 0 && legacyModality) {
+        // Legacy single-value shape: derive p1 so the contact is countable now.
+        // Unresolvable values (e.g. a fax referral) leave p1 NULL and fall back
+        // at read time, exactly like the rows the backfill skipped.
+        const derived = normalizeModality(legacyModality);
+        if (derived !== "Unknown") priorities.push(derived);
+      }
+
+      // Keep the legacy string coherent with the priorities so pre-priority
+      // consumers (exports, the Sheet's "Desired Modality") stay correct.
+      const modalityString =
+        joinModalityPriorities(priorities) ?? legacyModality ?? null;
+
       // Build readable last_note for timeline display
       const lines: string[] = [`Intake ${now}`];
       if (s(b.requestingFor)) lines.push(`Requesting For: ${s(b.requestingFor)}`);
       if (s(b.reasonForSeeking)) lines.push(`Reason: ${s(b.reasonForSeeking)}`);
       if (reasonForTherapy) lines.push(`Therapy Type: ${reasonForTherapy}`);
-      if (s(b.modality)) lines.push(`Modality: ${s(b.modality)}`);
+      if (modalityString) lines.push(`Modality: ${modalityString}`);
       if (s(b.insurancePayer)) lines.push(`Insurance: ${s(b.insurancePayer)}`);
       if (s(b.referralSource)) lines.push(`Referral: ${s(b.referralSource)}`);
       if (referralAuth) lines.push(`Referral #: ${referralAuth}`);
@@ -4954,7 +5027,11 @@ export async function registerRoutes(
         reasonForTherapy,
         detailedReason: s(b.detailedReason),
         formCompletedBy: s(b.formCompletedBy),
-        modality: s(b.modality),
+        modality: modalityString,
+        modalityP1: priorities[0] ?? null,
+        modalityP2: priorities[1] ?? null,
+        modalityP3: priorities[2] ?? null,
+        modalityP4: priorities[3] ?? null,
         referralSource: s(b.referralSource),
         priorServices: s(b.priorServices),
         priorProvider: s(b.priorProvider),
@@ -7108,7 +7185,7 @@ export async function registerRoutes(
   };
 
   // Legal filter values (insurance sourced from code, not hardcoded here).
-  const AGENT_SERVICE_TYPES = ["Myself", "My Child", "My Partner & Myself", "My Family", "Other"] as const;
+  const AGENT_SERVICE_TYPES = SERVICE_TYPES;
   const AGENT_MODALITIES = ["Telehealth", "In Person ABQ", "In Person RR", "In Person LL", "In Person", "Hybrid", "Flex", "Unknown"] as const;
   const AGENT_INSURANCES = [...ACCEPTED_INSURANCES, "Unknown"];
   const AGENT_STATUS_CODES = [100, 101, 102, 103, 104, 200, 201, 202, 203, 204, 205, 206, 300, 400, 402, 403, 500];
