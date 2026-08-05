@@ -13,9 +13,13 @@
 import crypto from "crypto";
 import { getPool } from "../db/pool";
 import { logStatusChange } from "../activity/db";
-import { getStatusLabel } from "@shared/status-codes";
+import {
+  getStatusLabel,
+  isActiveStatusCode,
+  getUmbrellaForStatusCode,
+} from "@shared/status-codes";
 import { normalizeInsurance } from "@shared/insurance-utils";
-import { normalizeModality } from "@shared/modality-utils";
+import { normalizeModality, normalizeModalityTokens } from "@shared/modality-utils";
 
 const MONTH_NAMES: Record<string, number> = {
   january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
@@ -706,16 +710,125 @@ export const WAITLIST_EXPORT_COLUMNS = [
 export type WaitlistExportRow = Record<(typeof WAITLIST_EXPORT_COLUMNS)[number], string | number>;
 
 /**
- * Returns a complete, flat, deterministic snapshot of all waitlist contacts.
+ * Filter set for the waitlist export.
+ *
+ * Mirrors the waitlist list view's filter state 1:1 (see the filter useMemo in
+ * client/src/components/waitlist/waitlist-list-view.tsx). The export must return
+ * exactly what the user is looking at; before this existed the export ignored
+ * every filter and always returned all rows.
+ *
+ * All fields optional — an absent/null field means "no constraint". An empty
+ * object therefore reproduces the old unfiltered behavior, which is what the
+ * n8n/API-key callers expect.
+ */
+export interface WaitlistExportFilters {
+  hideInactive?: boolean;
+  umbrella?: string | null;          // umbrella id (WL/PS/SCH/REF/PMR/INS)
+  statusCodes?: number[] | null;     // explicit code allow-list (Insights drill-down)
+  insurance?: string | null;         // normalized insurance bucket
+  modality?: string | null;          // canonical modality bucket (matches ANY token)
+  language?: string | null;          // exact "English"/"Spanish"
+  reason?: string | null;            // one reasonForTherapy token
+  serviceType?: string | null;       // exact requestingFor
+  search?: string | null;            // case-insensitive substring of name
+  // Assignment filter. Applied by the waitlist PAGE (not the list view) before
+  // the list ever sees the contacts, so it must be honored here too or an
+  // "Assigned to me" export would silently include everyone else's contacts.
+  assignedTo?: string | null;        // staff email; matched case-insensitively
+}
+
+/** Effective status code for a row — mirrors the client's statusCode ?? stringStatusToCode. */
+function exportStatusCode(r: Record<string, unknown>): number {
+  const raw = r.status_code;
+  if (raw === null || raw === undefined) return 100; // client's stringStatusToCode default
+  const n = Number(raw);
+  return Number.isNaN(n) ? 100 : n;
+}
+
+/**
+ * Apply the list view's filter semantics to a raw sync_contacts row.
+ *
+ * Implemented in JS rather than SQL on purpose: the insurance and modality
+ * predicates run through the SHARED normalizers, which cannot be expressed in
+ * SQL without duplicating them. Reusing the shared functions is what keeps the
+ * export and the on-screen list from drifting. Row counts here are ~1k, so the
+ * in-process filter is not a performance concern.
+ */
+export function matchesWaitlistExportFilters(
+  r: Record<string, unknown>,
+  f: WaitlistExportFilters,
+): boolean {
+  const statusCode = exportStatusCode(r);
+
+  if (f.hideInactive && !isActiveStatusCode(statusCode)) return false;
+
+  if (f.umbrella && f.umbrella !== "all") {
+    if (getUmbrellaForStatusCode(statusCode) !== f.umbrella) return false;
+  }
+
+  if (f.statusCodes && f.statusCodes.length > 0) {
+    if (!f.statusCodes.includes(statusCode)) return false;
+  }
+
+  if (f.insurance && f.insurance !== "all") {
+    if (normalizeInsurance(r.insurance_payer as string | null) !== f.insurance) return false;
+  }
+
+  // Multi-value: a contact matches if the bucket is ANY of its selections.
+  if (f.modality && f.modality !== "all") {
+    const tokens = normalizeModalityTokens(r.modality as string | null);
+    const ok = tokens.length === 0 ? f.modality === "Unknown" : tokens.includes(f.modality);
+    if (!ok) return false;
+  }
+
+  if (f.language && f.language !== "all") {
+    if (((r.language as string | null) ?? "") !== f.language) return false;
+  }
+
+  // reasonForTherapy is stored comma-separated; match one token.
+  if (f.reason && f.reason !== "all") {
+    const raw = r.reason_for_therapy;
+    const tokens = typeof raw === "string" ? raw.split(",").map((s) => s.trim()).filter(Boolean) : [];
+    if (!tokens.includes(f.reason)) return false;
+  }
+
+  if (f.serviceType && f.serviceType !== "all") {
+    if (((r.requesting_for as string | null) ?? "").trim() !== f.serviceType) return false;
+  }
+
+  if (f.search && f.search.trim()) {
+    const q = f.search.toLowerCase().trim();
+    if (!String(r.name ?? "").toLowerCase().includes(q)) return false;
+  }
+
+  // Mirrors the page's ownership memo: empty/absent assigned_to never matches a
+  // specific staff member.
+  if (f.assignedTo && f.assignedTo !== "all") {
+    const assigned = String(r.assigned_to ?? "").trim().toLowerCase();
+    if (!assigned || assigned !== f.assignedTo.trim().toLowerCase()) return false;
+  }
+
+  return true;
+}
+
+/**
+ * Returns a flat, deterministic snapshot of waitlist contacts.
  * Every row has all 57 columns matching the canonical Agent-Master spreadsheet.
+ *
+ * Pass `filters` to restrict the set to what the caller's list view is showing.
+ * Omitting it returns every contact (the historical behavior, still used by the
+ * API-key/n8n callers).
  *
  * Guarantees:
  * - Every row has identical keys in canonical order
  * - No null/undefined values ("" for strings, 0 for numbers)
  * - No nested objects or arrays
  * - Sorted by date_added ASC, contact_id ASC (oldest first, deterministic)
+ * - `total` reflects the rows RETURNED (post-filter), not the table size
  */
-export async function getWaitlistExportData(): Promise<{ total: number; generatedAt: string; columns: readonly string[]; rows: WaitlistExportRow[] }> {
+export async function getWaitlistExportData(
+  filters: WaitlistExportFilters = {},
+): Promise<{ total: number; generatedAt: string; columns: readonly string[]; rows: WaitlistExportRow[] }> {
   const pool = getPool();
   const result = await pool.query(`
     SELECT
@@ -732,12 +845,16 @@ export async function getWaitlistExportData(): Promise<{ total: number; generate
       street_address, city, state, zip_code, county,
       rfs_link, document_link,
       last_contact, last_note,
-      synced_at
+      synced_at,
+      language
     FROM sync_contacts
     ORDER BY date_added ASC, contact_id ASC
   `);
 
-  const rows = result.rows as Record<string, unknown>[];
+  // Apply the caller's list-view filters before shaping the export rows.
+  const rows = (result.rows as Record<string, unknown>[]).filter((r) =>
+    matchesWaitlistExportFilters(r, filters),
+  );
 
   const now = new Date();
   now.setHours(0, 0, 0, 0);

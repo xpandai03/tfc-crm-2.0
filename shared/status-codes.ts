@@ -39,3 +39,47 @@ export const STATUS_CODE_LABELS: Record<number, string> = {
 export function getStatusLabel(code: number): string {
   return STATUS_CODE_LABELS[code] ?? "unknown";
 }
+
+// ============================================================================
+// Active/inactive + umbrella membership (shared client/server)
+//
+// These moved here from client/src/lib/status-config.ts so the SERVER can apply
+// the same predicate the waitlist list view applies — the waitlist export now
+// filters server-side and must agree with the on-screen list exactly. The client
+// status-config re-exports these; do not re-declare the literals there.
+// ============================================================================
+
+/**
+ * Terminal states where no further action is expected. Excluded from "active"
+ * counts and hidden by the list view's default "Hide Inactive" toggle.
+ *   103 Declined Services (WL) · 104 Inactive -- No Response (WL)
+ *   203 No Response (PS)       · 204 Declined (PS)
+ *   205 Initial Appt Completed · 400 Insurance Not Accepted (INS)
+ *   402 Referred Out           · 403 Deferred Services
+ */
+export const INACTIVE_STATUS_CODES: number[] = [103, 104, 203, 204, 205, 400, 402, 403];
+
+/** Mirrors the client's isActiveStatus, including its permissive null default. */
+export function isActiveStatusCode(statusCode: number | undefined | null): boolean {
+  if (statusCode === undefined || statusCode === null) return true; // safe default
+  return !INACTIVE_STATUS_CODES.includes(statusCode);
+}
+
+/** Umbrella id → member status codes. Mirrors STATUS_UMBRELLAS in status-config. */
+export const STATUS_UMBRELLA_CODES: Record<string, readonly number[]> = {
+  WL: [100, 101, 102],
+  PS: [200, 201, 206],
+  SCH: [202],
+  REF: [500],
+  PMR: [300],
+  INS: [103, 104, 203, 204, 205, 400, 402, 403],
+};
+
+/** Returns the umbrella id for a status code, or null when it matches none. */
+export function getUmbrellaForStatusCode(statusCode: number | undefined | null): string | null {
+  if (statusCode === undefined || statusCode === null) return null;
+  for (const [id, codes] of Object.entries(STATUS_UMBRELLA_CODES)) {
+    if (codes.includes(statusCode)) return id;
+  }
+  return null;
+}
