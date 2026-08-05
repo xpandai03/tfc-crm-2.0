@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/popover";
 import { ChevronDown } from "lucide-react";
 import { REASON_CANONICALS } from "@shared/reason-canonicals";
+import { MODALITY_OPTIONS as CANONICAL_MODALITY_OPTIONS } from "@shared/modality-utils";
 
 export interface ReferralFormState {
   firstName: string;
@@ -57,13 +58,22 @@ const REQUESTING_FOR_OPTIONS = [
   "Other",
 ];
 
+/**
+ * Modality options for the staff review form.
+ *
+ * The canonical buckets come from @shared/modality-utils — the same list the
+ * reporting agent, Insights and the waitlist filter use. The previous
+ * hand-maintained list offered "Virtual" and "Either", neither of which is in
+ * the normalization map, so anything saved with them landed in the "Unknown"
+ * bucket (0 rows in production — nobody had picked them yet).
+ *
+ * "Fax Referral (For staff use only)" is intentionally kept FIRST: it is this
+ * form's default (referral.tsx DEFAULT_MODALITY) and the fallback for the
+ * Select below. Its retirement is a separate, later change.
+ */
 const MODALITY_OPTIONS = [
   "Fax Referral (For staff use only)",
-  "In Person - Albuquerque",
-  "In Person - Los Lunas",
-  "In Person - Rio Rancho",
-  "Virtual",
-  "Either",
+  ...CANONICAL_MODALITY_OPTIONS,
 ];
 
 const GENDER_OPTIONS = [
