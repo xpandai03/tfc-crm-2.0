@@ -34,12 +34,32 @@ import {
   type UmbrellaId,
 } from "@/lib/status-config";
 import { normalizeInsurance } from "@/lib/insurance-utils";
+import { normalizeModalityTokens } from "@shared/modality-utils";
 import { getAttentionFlags } from "@/lib/api";
 import type { WaitlistContact } from "@shared/schema";
+
+/**
+ * The list view's live filter state, surfaced to the parent so the Export button
+ * (which lives in waitlist.tsx) can export exactly what's on screen. Field names
+ * match the server's WaitlistExportFilters.
+ */
+export interface WaitlistFilterState {
+  hideInactive: boolean;
+  umbrella: string | null;
+  statusCodes: number[] | null;
+  insurance: string | null;
+  modality: string | null;
+  language: string | null;
+  reason: string | null;
+  serviceType: string | null;
+  search: string | null;
+}
 
 interface WaitlistListViewProps {
   contacts: WaitlistContact[];
   currentUserEmail?: string;
+  /** Fired whenever the filter state changes, so the parent can export the current view. */
+  onFiltersChange?: (filters: WaitlistFilterState) => void;
   // Optional props for URL-driven filtering (drill-down from Insights)
   initialInsuranceFilter?: string | null;
   initialModalityFilter?: string | null;
@@ -49,69 +69,10 @@ interface WaitlistListViewProps {
   initialServiceTypeFilter?: string | null;  // matches requestingFor exactly
 }
 
-/**
- * Modality normalization mapping (copied from insights.tsx for consistency)
- * Maps form options and historical values to display categories
- *
- * TODO: consolidate this map with insights.tsx — the two copies have
- * drifted independently in the past. See follow-up PR (D-C2 from
- * insights cleanup audit).
- */
-const MODALITY_NORMALIZATION_MAP: Record<string, string> = {
-  // Hybrid
-  "hybrid": "Hybrid",
-  "hybrid - ll": "Hybrid",
-  // In Person - Albuquerque (ABQ)
-  "in person - albuquerque": "In Person ABQ",
-  "in person-abq": "In Person ABQ",
-  "in person abq": "In Person ABQ",
-  "in person- albuquerque": "In Person ABQ",
-  "in person - abq": "In Person ABQ",
-  "abq": "In Person ABQ",
-  "albuquerque": "In Person ABQ",
-  // In Person - Rio Rancho (RR)
-  "in person - rio rancho": "In Person RR",
-  "in person-rio rancho": "In Person RR",
-  "in person- rio rancho": "In Person RR",
-  "in person - rr": "In Person RR",
-  "in person rr": "In Person RR",
-  "rio rancho": "In Person RR",
-  // In Person - Los Lunas (LL) — split out from generic per Bucket C
-  "in person - los lunas": "In Person LL",
-  "in person- los lunas": "In Person LL",
-  "in person los lunas": "In Person LL",
-  "in-person los lunas": "In Person LL",
-  "in person ll": "In Person LL",
-  "los lunas": "In Person LL",
-  "ll": "In Person LL",
-  // In Person (generic)
-  "in person": "In Person",
-  "in person - albuquerque or rio rancho": "In Person",
-  "in person- albuquerque or rio rancho": "In Person",
-  "in-person": "In Person",
-  // Telehealth
-  "telehealth": "Telehealth",
-  "th": "Telehealth",
-  "tele-health": "Telehealth",
-  "tele health": "Telehealth",
-  // Flexible/Flex
-  "flexible (open to any option)": "Flex",
-  "flexible (open to any option).": "Flex",
-  "flexible": "Flex",
-  "flex": "Flex",
-  "open to any option": "Flex",
-};
-
-/**
- * Normalize modality to canonical category (consistent with Insights aggregation)
- */
-function normalizeModality(rawValue: string | null | undefined): string {
-  if (!rawValue) return "Unknown";
-  const trimmed = rawValue.trim();
-  if (!trimmed) return "Unknown";
-  const normalized = trimmed.toLowerCase();
-  return MODALITY_NORMALIZATION_MAP[normalized] || "Unknown";
-}
+// Modality normalization now comes from @shared/modality-utils (single source of
+// truth). The local copy that lived here was byte-identical to the shared map;
+// consolidating it also picks up the comma-token split, so multi-modality
+// contacts stop collapsing into "Unknown".
 
 // Format date for display: converts YYYY-MM-DD or Excel serial to MM/DD/YYYY
 function formatDateForDisplay(dateValue: string | number | null | undefined): string {
@@ -182,6 +143,7 @@ function parseStatusCodesFromFilter(raw: string | null | undefined): number[] | 
 export function WaitlistListView({
   contacts,
   currentUserEmail,
+  onFiltersChange,
   initialInsuranceFilter,
   initialModalityFilter,
   initialStatusFilter,
@@ -254,6 +216,34 @@ export function WaitlistListView({
   const isMultiStatusFromUrl =
     statusFilter !== "all" && allowedStatusCodes !== null && allowedStatusCodes.length > 1;
 
+  // Publish the live filter state upward so the parent's Export button can send
+  // it to the server. Keyed on the same values as the filter memo below, so the
+  // two can't disagree about what's currently applied.
+  useEffect(() => {
+    onFiltersChange?.({
+      hideInactive,
+      umbrella: umbrellaFilter === "all" ? null : umbrellaFilter,
+      statusCodes: allowedStatusCodes,
+      insurance: insuranceFilter === "all" ? null : insuranceFilter,
+      modality: modalityFilter === "all" ? null : modalityFilter,
+      language: languageFilter === "all" ? null : languageFilter,
+      reason: reasonFilter === "all" ? null : reasonFilter,
+      serviceType: serviceTypeFilter === "all" ? null : serviceTypeFilter,
+      search: searchQuery.trim() || null,
+    });
+  }, [
+    onFiltersChange,
+    hideInactive,
+    umbrellaFilter,
+    allowedStatusCodes,
+    insuranceFilter,
+    modalityFilter,
+    languageFilter,
+    reasonFilter,
+    serviceTypeFilter,
+    searchQuery,
+  ]);
+
   // Compute unique insurance options from contacts (normalized)
   const availableInsurances = useMemo(() => {
     const insuranceSet = new Set<string>();
@@ -264,12 +254,16 @@ export function WaitlistListView({
     return Array.from(insuranceSet).sort();
   }, [contacts]);
 
-  // Compute unique modality options from contacts (normalized for consistency with Insights)
+  // Compute unique modality options from contacts. Built from the UNION of each
+  // contact's tokens (not just its primary bucket) so a modality only one
+  // multi-select contact asked for is still offered in the dropdown. Contacts
+  // whose value resolves to nothing contribute "Unknown".
   const availableModalities = useMemo(() => {
     const modalitySet = new Set<string>();
     for (const contact of contacts) {
-      const normalized = normalizeModality(contact.modality);
-      modalitySet.add(normalized);
+      const tokens = normalizeModalityTokens(contact.modality);
+      if (tokens.length === 0) modalitySet.add("Unknown");
+      else for (const t of tokens) modalitySet.add(t);
     }
     return Array.from(modalitySet).sort();
   }, [contacts]);
@@ -303,10 +297,15 @@ export function WaitlistListView({
         }
       }
 
-      // Modality filter (use normalized comparison for consistency with Insights)
+      // Modality filter — multi-value. A contact appears under EVERY modality it
+      // selected, so filtering by "In Person RR" matches a contact whose value is
+      // "In Person - Albuquerque, In Person - Rio Rancho, Telehealth". Rows where
+      // nothing resolves match only the explicit "Unknown" selection.
       if (modalityFilter !== "all") {
-        const contactModality = normalizeModality(contact.modality);
-        if (contactModality !== modalityFilter) {
+        const tokens = normalizeModalityTokens(contact.modality);
+        const matches =
+          tokens.length === 0 ? modalityFilter === "Unknown" : tokens.includes(modalityFilter);
+        if (!matches) {
           return false;
         }
       }

@@ -8,27 +8,24 @@ import { Button } from "@/components/ui/button";
 import { OwnerBadge } from "@/components/ui/owner-badge";
 import { cn, formatDob } from "@/lib/utils";
 import { normalizeInsurance } from "@/lib/insurance-utils";
+import { normalizeModalityTokens, MODALITY_SHORT_LABELS } from "@shared/modality-utils";
 import { getAttentionFlags } from "@/lib/api";
 import { Plus, Clock, Shield, Video, FileText, Brain, AlertTriangle, Cake, UserCheck, Users } from "lucide-react";
 import type { WaitlistContact } from "@shared/schema";
 import { computeDaysWaiting } from "@/lib/days-waiting";
 
-/** Normalize modality/location for display (same logic as priority-card) */
+/**
+ * Format modality/location for the card's hover panel.
+ *
+ * Now backed by the shared normalizer, so a multi-modality contact shows ALL of
+ * its selections compactly ("ABQ · RR · TH") instead of a single guessed label.
+ * Replaces a local substring-matching formatter whose labels ("In Person - ABQ",
+ * "Flexible") diverged from the canonical buckets used everywhere else.
+ */
 function formatModality(rawModality: string | null | undefined): string {
-  if (!rawModality) return "Unknown";
-  const trimmed = rawModality.trim();
-  if (!trimmed) return "Unknown";
-  const lower = trimmed.toLowerCase();
-  if (lower.includes("telehealth") || lower === "th") return "Telehealth";
-  if (lower.includes("hybrid")) return "Hybrid";
-  if (lower.includes("in person") || lower.includes("in-person")) {
-    if (lower.includes("abq") || lower.includes("albuquerque")) return "In Person - ABQ";
-    if (lower.includes("rr") || lower.includes("rio rancho")) return "In Person - Rio Rancho";
-    if (lower.includes("los lunas")) return "In Person - Los Lunas";
-    return "In Person";
-  }
-  if (lower.includes("flex")) return "Flexible";
-  return trimmed;
+  const tokens = normalizeModalityTokens(rawModality);
+  if (tokens.length === 0) return "Unknown";
+  return tokens.map((t) => MODALITY_SHORT_LABELS[t] ?? t).join(" · ");
 }
 
 interface DraggableCardProps {
