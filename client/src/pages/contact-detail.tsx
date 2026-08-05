@@ -80,6 +80,13 @@ import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import type { ContactSnapshot, WaitlistContact } from "@shared/schema";
 import { isTnV2User } from "@shared/access-control";
+import {
+  MODALITY_OPTIONS,
+  getModalityPriorities,
+  joinModalityPriorities,
+} from "@shared/modality-utils";
+import { SERVICE_TYPES } from "@shared/service-types";
+import { ACCEPTED_INSURANCES } from "@shared/insurance-utils";
 import { buildTimelineEvents, formatFullDate, matchSnapshotForEmailEvent, type EmailSnapshotMeta, type TimelineEvent } from "@/lib/timeline";
 import { ProviderMatchingModal } from "@/components/ui/provider-matching-modal";
 import { CreateTnModal } from "@/components/ui/create-tn-modal";
@@ -522,7 +529,13 @@ export default function ContactDetail() {
       requestingFor: contact.requestingFor || "",
       reasonForSeeking: contact.reasonForSeeking || "",
       reasonForTherapy: contact.reasonForTherapy || "",
-      modality: contact.modality || "",
+      // Seed the four priority selects from the stored priorities, falling back
+      // to parsing the legacy string so a contact the backfill skipped can be
+      // prioritized in-place rather than re-typed.
+      modalityP1: getModalityPriorities(contact)[0] || "",
+      modalityP2: getModalityPriorities(contact)[1] || "",
+      modalityP3: getModalityPriorities(contact)[2] || "",
+      modalityP4: getModalityPriorities(contact)[3] || "",
       language: contact.language || "",
       formCompletedBy: contact.formCompletedBy || "",
       insurancePayer: contact.insurancePayer || "",
@@ -579,6 +592,20 @@ export default function ContactDetail() {
         changed[key] = value.trim() || null;
       }
     }
+
+    // Keep the legacy `modality` string in step with the priorities whenever a
+    // priority changed, so pre-priority consumers (exports, the Sheet's
+    // "Desired Modality") don't drift away from what staff selected.
+    const touchedPriority = ["modalityP1", "modalityP2", "modalityP3", "modalityP4"]
+      .some((k) => k in changed);
+    if (touchedPriority) {
+      const joined = joinModalityPriorities([
+        intakeEdits.modalityP1, intakeEdits.modalityP2,
+        intakeEdits.modalityP3, intakeEdits.modalityP4,
+      ]);
+      if (joined !== (contact.modality || null)) changed.modality = joined;
+    }
+
     if (Object.keys(changed).length === 0) {
       toast({ title: "No changes", description: "Nothing was modified" });
       setIsEditingIntake(false);
@@ -1774,8 +1801,23 @@ export default function ContactDetail() {
                       {isEditingIntake ? (
                         <div className="space-y-2">
                           <div>
+                            {/* Dropdown-only (shared SERVICE_TYPES) — free text here
+                                produced values that no report could group. */}
                             <label className="text-muted-foreground text-xs">Requesting For</label>
-                            <Input className="h-8 text-sm" value={intakeEdits.requestingFor} onChange={(e) => setIntakeEdits(p => ({ ...p, requestingFor: e.target.value }))} />
+                            <Select
+                              value={intakeEdits.requestingFor || "none"}
+                              onValueChange={(v) => setIntakeEdits(p => ({ ...p, requestingFor: v === "none" ? "" : v }))}
+                            >
+                              <SelectTrigger className="h-8 text-sm" data-testid="select-requestingFor">
+                                <SelectValue placeholder="Unset" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">Unset</SelectItem>
+                                {SERVICE_TYPES.map((t) => (
+                                  <SelectItem key={t} value={t}>{t}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </div>
                           <div>
                             <label className="text-muted-foreground text-xs">Reason</label>
@@ -1785,9 +1827,57 @@ export default function ContactDetail() {
                             <label className="text-muted-foreground text-xs">Reason(s) for Therapy</label>
                             <Input className="h-8 text-sm" value={intakeEdits.reasonForTherapy} onChange={(e) => setIntakeEdits(p => ({ ...p, reasonForTherapy: e.target.value }))} />
                           </div>
-                          <div>
-                            <label className="text-muted-foreground text-xs">Modality</label>
-                            <Input className="h-8 text-sm" value={intakeEdits.modality} onChange={(e) => setIntakeEdits(p => ({ ...p, modality: e.target.value }))} />
+                          <div className="space-y-1">
+                            {/* Four ordered selects. Order IS the priority and is
+                                stored exactly as chosen — never re-ranked. 1st
+                                choice is what reports and Insights count; all of
+                                them make the contact visible on the waitlist. */}
+                            <label className="text-muted-foreground text-xs">
+                              Modality <span className="opacity-70">(in order of preference)</span>
+                            </label>
+                            {([1, 2, 3, 4] as const).map((n) => {
+                              const key = `modalityP${n}` as const;
+                              // No duplicates: a bucket picked at another rank is
+                              // not offered again.
+                              const takenElsewhere = ([1, 2, 3, 4] as const)
+                                .filter((m) => m !== n)
+                                .map((m) => intakeEdits[`modalityP${m}`])
+                                .filter(Boolean);
+                              // Can't set a lower priority before the one above it.
+                              const disabled = n > 1 && !intakeEdits[`modalityP${n - 1}`];
+                              return (
+                                <div key={key} className="flex items-center gap-1.5">
+                                  <span className="text-[10px] w-8 shrink-0 text-muted-foreground">
+                                    {n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : "4th"}
+                                  </span>
+                                  <Select
+                                    value={intakeEdits[key] || "none"}
+                                    disabled={disabled}
+                                    onValueChange={(v) => setIntakeEdits(p => {
+                                      const next = { ...p, [key]: v === "none" ? "" : v };
+                                      // Clearing a rank clears everything below it,
+                                      // so priorities can never have a gap.
+                                      if (v === "none") {
+                                        for (let m = n + 1; m <= 4; m++) next[`modalityP${m}`] = "";
+                                      }
+                                      return next;
+                                    })}
+                                  >
+                                    <SelectTrigger className="h-8 text-sm" data-testid={`select-modality-p${n}`}>
+                                      <SelectValue placeholder={n === 1 ? "Select…" : "Optional"} />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="none">{n === 1 ? "Unset" : "None"}</SelectItem>
+                                      {MODALITY_OPTIONS
+                                        .filter((m) => !takenElsewhere.includes(m))
+                                        .map((m) => (
+                                          <SelectItem key={m} value={m}>{m}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              );
+                            })}
                           </div>
                           <div>
                             {/* Dropdown-only — only "English"/"Spanish"/unset can be stored
@@ -1846,8 +1936,25 @@ export default function ContactDetail() {
                       {isEditingIntake ? (
                         <div className="space-y-2">
                           <div>
+                            {/* Dropdown-only (shared ACCEPTED_INSURANCES + Unknown).
+                                Free text here is what produced "BCBS", "BCBS Comm",
+                                "Blue cross" and friends as separate report buckets. */}
                             <label className="text-muted-foreground text-xs">Payer</label>
-                            <Input className="h-8 text-sm" value={intakeEdits.insurancePayer} onChange={(e) => setIntakeEdits(p => ({ ...p, insurancePayer: e.target.value }))} />
+                            <Select
+                              value={intakeEdits.insurancePayer || "none"}
+                              onValueChange={(v) => setIntakeEdits(p => ({ ...p, insurancePayer: v === "none" ? "" : v }))}
+                            >
+                              <SelectTrigger className="h-8 text-sm" data-testid="select-insurancePayer">
+                                <SelectValue placeholder="Unset" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">Unset</SelectItem>
+                                {ACCEPTED_INSURANCES.map((i) => (
+                                  <SelectItem key={i} value={i}>{i}</SelectItem>
+                                ))}
+                                <SelectItem value="Unknown">Unknown</SelectItem>
+                              </SelectContent>
+                            </Select>
                           </div>
                           <div>
                             <label className="text-muted-foreground text-xs">Plan</label>
