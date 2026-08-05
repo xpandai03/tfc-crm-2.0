@@ -1595,6 +1595,10 @@ export async function insertIntakeContact(fields: {
   detailedReason?: string | null;
   formCompletedBy?: string | null;
   modality?: string | null;
+  modalityP1?: string | null;
+  modalityP2?: string | null;
+  modalityP3?: string | null;
+  modalityP4?: string | null;
   referralSource?: string | null;
   priorServices?: string | null;
   priorProvider?: string | null;
@@ -1632,6 +1636,7 @@ export async function insertIntakeContact(fields: {
       requesting_for, reason_for_seeking, reason_for_therapy, detailed_reason,
       form_completed_by, modality, referral_source, prior_services,
       prior_provider, preferred_contact, custody, flags, priority,
+      modality_p1, modality_p2, modality_p3, modality_p4,
 
       insurance_payer, insurance_plan, insurance_id,
       referral_auth,
@@ -1653,6 +1658,7 @@ export async function insertIntakeContact(fields: {
       $7, $8, $9, $10,
       $11, $12, $13, $14,
       $15, $16, $17, $18, $19,
+      $37, $38, $39, $40,
 
       $20, $21, $22,
       $23,
@@ -1678,6 +1684,10 @@ export async function insertIntakeContact(fields: {
       detailed_reason = COALESCE(EXCLUDED.detailed_reason, sync_contacts.detailed_reason),
       form_completed_by = COALESCE(EXCLUDED.form_completed_by, sync_contacts.form_completed_by),
       modality = COALESCE(EXCLUDED.modality, sync_contacts.modality),
+      modality_p1 = COALESCE(EXCLUDED.modality_p1, sync_contacts.modality_p1),
+      modality_p2 = COALESCE(EXCLUDED.modality_p2, sync_contacts.modality_p2),
+      modality_p3 = COALESCE(EXCLUDED.modality_p3, sync_contacts.modality_p3),
+      modality_p4 = COALESCE(EXCLUDED.modality_p4, sync_contacts.modality_p4),
       referral_source = COALESCE(EXCLUDED.referral_source, sync_contacts.referral_source),
       prior_services = COALESCE(EXCLUDED.prior_services, sync_contacts.prior_services),
       prior_provider = COALESCE(EXCLUDED.prior_provider, sync_contacts.prior_provider),
@@ -1744,6 +1754,13 @@ export async function insertIntakeContact(fields: {
     `intake-${fields.contactId}`,
     fields.sourceSubmissionId ?? null,
     fields.language || null,
+
+    // $37-$40 — modality priorities (appended so the existing positional
+    // params above keep their numbers).
+    fields.modalityP1 || null,
+    fields.modalityP2 || null,
+    fields.modalityP3 || null,
+    fields.modalityP4 || null,
   ]);
 
   console.log(`[sync-db] Intake contact upserted: ${fields.contactId} (${fields.name})`);
@@ -2714,6 +2731,13 @@ const SAFE_INTAKE_FIELDS: Record<string, string> = {
   reasonForSeeking: "reason_for_seeking",
   reasonForTherapy: "reason_for_therapy",
   modality: "modality",
+  // Modality priorities. MUST be listed here — updateContactIntakeFields
+  // silently skips keys it doesn't recognise, so omitting them would make the
+  // staff edit appear to succeed while dropping the priorities.
+  modalityP1: "modality_p1",
+  modalityP2: "modality_p2",
+  modalityP3: "modality_p3",
+  modalityP4: "modality_p4",
   formCompletedBy: "form_completed_by",
   insurancePayer: "insurance_payer",
   insurancePlan: "insurance_plan",
