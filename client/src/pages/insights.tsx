@@ -20,7 +20,7 @@ import { getWaitlistSummary, getWaitlistContacts, type WithSource } from "@/lib/
 import { computeDaysWaiting } from "@/lib/days-waiting";
 import { useDataSource, type DataSource } from "@/lib/data-source-context";
 import { normalizeInsurance } from "@/lib/insurance-utils";
-import { normalizeModality } from "@shared/modality-utils";
+import { getPrimaryModality } from "@shared/modality-utils";
 import { useAuth } from "@/lib/auth-context";
 import { isRestrictedUser, canBuildReports, canUseReportAgent } from "@shared/access-control";
 import { ReportBuilderModal } from "@/components/report-builder-modal";
@@ -311,17 +311,22 @@ export default function Insights() {
       insuranceTypes[normalizedInsurance].pipeline++;
     }
 
-    // Modality type distribution
+    // Modality type distribution — counted by FIRST PRIORITY only, so every
+    // contact contributes exactly once and these totals still sum to the
+    // contact count. The waitlist filter deliberately differs (match-any), so a
+    // contact willing to attend two offices shows under both there but is
+    // counted only under their top choice here. Falls back to the legacy
+    // modality string when a contact has no priorities set.
     const modalityTypes: Record<string, BreakdownDualCounts> = {};
     for (const c of operationsContacts) {
-      const normalizedModality = normalizeModality(c.modality);
-      if (!modalityTypes[normalizedModality]) modalityTypes[normalizedModality] = { operations: 0, pipeline: 0 };
-      modalityTypes[normalizedModality].operations++;
+      const primaryModality = getPrimaryModality(c);
+      if (!modalityTypes[primaryModality]) modalityTypes[primaryModality] = { operations: 0, pipeline: 0 };
+      modalityTypes[primaryModality].operations++;
     }
     for (const c of pipelineContacts) {
-      const normalizedModality = normalizeModality(c.modality);
-      if (!modalityTypes[normalizedModality]) modalityTypes[normalizedModality] = { operations: 0, pipeline: 0 };
-      modalityTypes[normalizedModality].pipeline++;
+      const primaryModality = getPrimaryModality(c);
+      if (!modalityTypes[primaryModality]) modalityTypes[primaryModality] = { operations: 0, pipeline: 0 };
+      modalityTypes[primaryModality].pipeline++;
     }
 
     // Reason for therapy distribution — same bucketing as before, counted twice by status slice
