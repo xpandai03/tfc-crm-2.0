@@ -1,5 +1,7 @@
 import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
+import fs from "fs";
+import path from "path";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
@@ -124,6 +126,65 @@ app.use((req, res, next) => {
   }
 
   configureAuth(app);
+
+  // ==========================================================================
+  // PUBLIC: client-facing roadmap page
+  //
+  // Mounted HERE — before app.use(authMiddleware) — on purpose. That is the
+  // whole reason this page is a standalone HTML file rather than a route in the
+  // React app: authMiddleware runs before serveStatic, so anything the SPA
+  // needs (including /assets/*) 302s to /auth/login for anonymous visitors.
+  // Serving the roadmap through the SPA would have meant allow-listing
+  // /assets/*, publishing the entire client bundle — staff email allow-lists
+  // included — to anyone with the link. Mounting one inert file above the
+  // middleware exposes exactly that file and changes no auth logic: nothing in
+  // server/auth.ts was touched, and every other route keeps its guard.
+  //
+  // The file itself has no JavaScript and makes no requests. See
+  // client/public/roadmap.html.
+  // ==========================================================================
+  const roadmapPath = (() => {
+    // Dev serves the SOURCE file so edits show on reload; production serves the
+    // copy Vite emitted into dist/public. Ordering matters: a developer with a
+    // stale dist/ from an earlier build would otherwise keep seeing the old
+    // page and wonder why their edits did nothing.
+    const source = path.resolve(process.cwd(), "client", "public", "roadmap.html");
+    const built = [
+      // Bundled to dist/index.cjs (CJS, so __dirname exists and is dist/), with
+      // client/public/* copied to dist/public/* by the Vite build. Mirrors how
+      // server/static.ts resolves.
+      // package.json sets "type": "module", so under tsx (dev) this file is ESM
+      // and __dirname is NOT defined — hence the typeof guard rather than a
+      // bare reference, which would throw at startup.
+      typeof __dirname !== "undefined"
+        ? path.resolve(__dirname, "public", "roadmap.html")
+        : null,
+      // Fallback keyed off the working directory (the Dockerfile sets
+      // WORKDIR /app and starts with `node dist/index.cjs`).
+      path.resolve(process.cwd(), "dist", "public", "roadmap.html"),
+    ].filter((p): p is string => !!p);
+
+    const candidates =
+      process.env.NODE_ENV === "production" ? [...built, source] : [source, ...built];
+    return candidates.find((p) => fs.existsSync(p)) ?? null;
+  })();
+
+  if (roadmapPath) {
+    log(`Public roadmap page served from ${roadmapPath}`);
+  } else {
+    log("Warning: roadmap.html not found; /roadmap will 404", "roadmap");
+  }
+
+  app.get("/roadmap", (_req, res) => {
+    // Resolved once at startup, but a missing marketing page must never take
+    // the CRM down — degrade to a 404 rather than throwing.
+    if (!roadmapPath) {
+      res.status(404).type("text/plain").send("Not found");
+      return;
+    }
+    res.type("text/html; charset=utf-8");
+    res.sendFile(roadmapPath);
+  });
 
   // Apply auth middleware to protect all routes except /auth/*
   app.use(authMiddleware);
