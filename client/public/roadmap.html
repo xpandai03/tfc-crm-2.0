@@ -1,0 +1,613 @@
+<!doctype html>
+<!--
+  ============================================================================
+  Client-facing roadmap — STANDALONE STATIC PAGE
+  ============================================================================
+
+  Deliberately NOT part of the React SPA. The app bundle is auth-gated
+  (server/auth.ts authMiddleware runs before serveStatic, so /assets/* 302s to
+  /auth/login for anonymous visitors). Serving this page through the SPA would
+  have required allow-listing /assets/*, which would publish the whole client
+  bundle — including the hardcoded staff email allow-lists in
+  shared/access-control.ts — to anyone with the link. Not worth it for a
+  read-only marketing page, so this file is self-contained instead and is
+  mounted BEFORE the auth middleware in server/index.ts. No auth logic was
+  changed to make this public.
+
+  CONSTRAINTS THIS FILE MUST KEEP:
+    - Zero JavaScript. No script elements of any kind.
+    - Zero network requests beyond the Google Fonts stylesheet below.
+    - No PHI, no client names, no data. Hardcoded copy only.
+
+  TOKEN VALUES BELOW WERE COPIED BY HAND FROM client/src/index.css ON
+  2026-08-05 (the :root / LIGHT MODE block). They are duplicated, not imported
+  — this page has no build step. If the CRM palette ever changes, re-sync them
+  from that file or this page will silently drift out of brand.
+
+  The .dark block is intentionally ignored: this page forces light mode so it
+  renders identically regardless of the visitor's system preference.
+  ============================================================================
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>The Family Connection: What's Next</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /* --- tokens copied from client/src/index.css :root, 2026-08-05 --- */
+      :root {
+        --background: 220 20% 96%;
+        --foreground: 0 0% 9%;
+        --border: 220 10% 88%;
+        --card: 0 0% 98%;
+        --card-foreground: 0 0% 9%;
+        --card-border: 0 0% 94%;
+        --primary: 210 85% 45%;
+        --primary-foreground: 0 0% 98%;
+        --muted: 0 0% 92%;
+        --muted-foreground: 0 0% 35%;
+        --accent: 210 15% 94%;
+        --accent-foreground: 210 15% 15%;
+        --radius: 0.5rem;
+        --font-sans: Inter, system-ui, sans-serif;
+        --shadow-sm: 0 1px 3px 0 hsl(0 0% 0% / 0.06), 0 1px 2px -1px hsl(0 0% 0% / 0.04);
+        --shadow-md: 0 4px 6px -1px hsl(0 0% 0% / 0.07), 0 2px 4px -2px hsl(0 0% 0% / 0.05);
+        /* Force light rendering regardless of the visitor's OS preference. */
+        color-scheme: light;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        /* Explicit, not token-dependent: guarantees a light page even if a
+           browser extension or UA stylesheet tries to invert it. */
+        background-color: hsl(var(--background));
+        color: hsl(var(--foreground));
+        font-family: var(--font-sans);
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        /* Belt and braces against horizontal scroll at narrow widths. */
+        overflow-x: hidden;
+      }
+
+      .page {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 3rem 1.25rem 4rem;
+      }
+
+      /* ---------------- header ---------------- */
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: hsl(var(--primary));
+        margin-bottom: 0.875rem;
+      }
+
+      .eyebrow .dot {
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 9999px;
+        background: hsl(var(--primary));
+      }
+
+      h1 {
+        font-size: clamp(1.75rem, 4.5vw, 2.75rem);
+        line-height: 1.15;
+        letter-spacing: -0.02em;
+        font-weight: 700;
+        margin: 0 0 0.875rem;
+        color: hsl(var(--foreground));
+      }
+
+      .subline {
+        font-size: clamp(1rem, 1.6vw, 1.125rem);
+        line-height: 1.6;
+        color: hsl(var(--muted-foreground));
+        max-width: 60ch;
+        margin: 0;
+      }
+
+      /* ---------------- section headings ---------------- */
+
+      .section-label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: hsl(var(--muted-foreground));
+        margin: 3rem 0 1rem;
+      }
+
+      /* ---------------- "where things stand today" strip ---------------- */
+
+      .today {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.75rem;
+      }
+
+      .today-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.75rem;
+        background: hsl(var(--card));
+        border: 1px solid hsl(var(--card-border));
+        border-radius: var(--radius);
+        padding: 1rem;
+        box-shadow: var(--shadow-sm);
+      }
+
+      .today-item p {
+        margin: 0;
+        font-size: 0.875rem;
+        line-height: 1.55;
+        color: hsl(var(--foreground));
+      }
+
+      .today-icon {
+        flex-shrink: 0;
+        width: 2rem;
+        height: 2rem;
+        border-radius: var(--radius);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: hsl(var(--accent));
+        color: hsl(var(--primary));
+      }
+
+      /* ---------------- three roadmap columns ---------------- */
+
+      .columns {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1.25rem;
+        align-items: start;
+      }
+
+      .column {
+        background: hsl(var(--card));
+        border: 1px solid hsl(var(--card-border));
+        border-radius: var(--radius);
+        padding: 1.25rem;
+        box-shadow: var(--shadow-sm);
+      }
+
+      .column-head {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        padding-bottom: 0.875rem;
+        margin-bottom: 0.25rem;
+        border-bottom: 1px solid hsl(var(--border));
+      }
+
+      .column-head h2 {
+        font-size: 1.0625rem;
+        font-weight: 650;
+        letter-spacing: -0.01em;
+        margin: 0;
+        color: hsl(var(--foreground));
+      }
+
+      .tag {
+        font-size: 0.6875rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        padding: 0.1875rem 0.5rem;
+        border-radius: 9999px;
+        background: hsl(var(--primary));
+        color: hsl(var(--primary-foreground));
+        white-space: nowrap;
+      }
+
+      /* Accent rail so the three columns read as a sequence, near -> far. */
+      .column--now {
+        border-top: 3px solid hsl(var(--primary));
+      }
+      .column--cycle {
+        border-top: 3px solid hsl(var(--primary) / 0.55);
+      }
+      .column--horizon {
+        border-top: 3px solid hsl(var(--border));
+      }
+
+      .item {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.75rem;
+        padding: 1rem 0;
+        border-bottom: 1px solid hsl(var(--border));
+      }
+
+      .item:last-child {
+        border-bottom: none;
+        padding-bottom: 0.25rem;
+      }
+
+      .item-icon {
+        flex-shrink: 0;
+        width: 1.75rem;
+        height: 1.75rem;
+        border-radius: var(--radius);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: hsl(var(--accent));
+        color: hsl(var(--primary));
+        margin-top: 0.0625rem;
+      }
+
+      .item-body {
+        min-width: 0;
+      }
+
+      .item-title {
+        display: block;
+        font-size: 0.875rem;
+        font-weight: 650;
+        line-height: 1.4;
+        color: hsl(var(--foreground));
+        margin-bottom: 0.25rem;
+      }
+
+      .item-text {
+        margin: 0;
+        font-size: 0.875rem;
+        line-height: 1.6;
+        color: hsl(var(--muted-foreground));
+        /* Long words / URLs can't force a horizontal scrollbar. */
+        overflow-wrap: anywhere;
+      }
+
+      footer {
+        margin-top: 3rem;
+        padding-top: 1.25rem;
+        border-top: 1px solid hsl(var(--border));
+        font-size: 0.75rem;
+        color: hsl(var(--muted-foreground));
+      }
+
+      /* ---------------- responsive ---------------- */
+
+      @media (min-width: 640px) {
+        .today {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+
+      @media (min-width: 1024px) {
+        .today {
+          grid-template-columns: repeat(4, 1fr);
+        }
+        .columns {
+          grid-template-columns: repeat(3, 1fr);
+        }
+      }
+
+      @media print {
+        body {
+          background: #fff;
+        }
+        .column,
+        .today-item {
+          box-shadow: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header>
+        <span class="eyebrow"><span class="dot"></span>The Family Connection</span>
+        <h1>The Family Connection: What's Next</h1>
+        <p class="subline">
+          The CRM is built and in daily use. This next cycle is about teaching it to do the
+          work, not just hold the data.
+        </p>
+      </header>
+
+      <h2 class="section-label">Where things stand today</h2>
+      <section class="today">
+        <!-- activity -->
+        <article class="today-item">
+          <span class="today-icon" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                 stroke-linejoin="round">
+              <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+            </svg>
+          </span>
+          <p>The team runs on the CRM every day. Activity is tracked to the minute.</p>
+        </article>
+
+        <!-- upload -->
+        <article class="today-item">
+          <span class="today-icon" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                 stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" x2="12" y1="3" y2="15" />
+            </svg>
+          </span>
+          <p>Referral PDFs upload straight into the CRM.</p>
+        </article>
+
+        <!-- zap -->
+        <article class="today-item">
+          <span class="today-icon" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                 stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            </svg>
+          </span>
+          <p>
+            One click adds a patient in TherapyNotes, uploads their documents, and schedules
+            them with a provider. The agent does it, not a person.
+          </p>
+        </article>
+
+        <!-- message-square -->
+        <article class="today-item">
+          <span class="today-icon" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                 stroke-linejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+          </span>
+          <p>The Insights assistant answers report questions in plain English.</p>
+        </article>
+      </section>
+
+      <h2 class="section-label">What's coming</h2>
+      <section class="columns">
+        <!-- ================= Column 1 — In Motion ================= -->
+        <div class="column column--now">
+          <div class="column-head">
+            <h2>In Motion</h2>
+            <span class="tag">being built now</span>
+          </div>
+
+          <!-- trending-up -->
+          <article class="item">
+            <span class="item-icon" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                   fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                   stroke-linejoin="round">
+                <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
+                <polyline points="16 7 22 7 22 13" />
+              </svg>
+            </span>
+            <div class="item-body">
+              <strong class="item-title">Status movement reporting.</strong>
+              <p class="item-text">
+                See how referrals actually move through your pipeline: from any stage to any
+                stage, over any date range. Where things speed up, where they stall.
+              </p>
+            </div>
+          </article>
+
+          <!-- bot -->
+          <article class="item">
+            <span class="item-icon" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                   fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                   stroke-linejoin="round">
+                <path d="M12 8V4H8" />
+                <rect width="16" height="12" x="4" y="8" rx="2" />
+                <path d="M2 14h2" />
+                <path d="M20 14h2" />
+                <path d="M15 13v2" />
+                <path d="M9 13v2" />
+              </svg>
+            </span>
+            <div class="item-body">
+              <strong class="item-title">The assistant takes its first actions.</strong>
+              <p class="item-text">
+                Today it answers questions. Next it updates statuses from a conversation. Tell
+                it what happened, it handles the record.
+              </p>
+            </div>
+          </article>
+
+          <!-- pie-chart -->
+          <article class="item">
+            <span class="item-icon" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                   fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                   stroke-linejoin="round">
+                <path d="M21.21 15.89A10 10 0 1 1 8 2.83" />
+                <path d="M22 12A10 10 0 0 0 12 2v10z" />
+              </svg>
+            </span>
+            <div class="item-body">
+              <strong class="item-title">Sharper report slices.</strong>
+              <p class="item-text">
+                Age groups, cleaner categories, fewer manual sorting passes.
+              </p>
+            </div>
+          </article>
+        </div>
+
+        <!-- ================= Column 2 — This Cycle ================= -->
+        <div class="column column--cycle">
+          <div class="column-head">
+            <h2>This Cycle</h2>
+          </div>
+
+          <!-- layers -->
+          <article class="item">
+            <span class="item-icon" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                   fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                   stroke-linejoin="round">
+                <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                <polyline points="2 17 12 22 22 17" />
+                <polyline points="2 12 12 17 22 12" />
+              </svg>
+            </span>
+            <div class="item-body">
+              <strong class="item-title">The TherapyNotes agent does more.</strong>
+              <p class="item-text">
+                The add, upload, and schedule flow grows to cover more of the intake work end
+                to end. Fewer tabs, fewer manual steps.
+              </p>
+            </div>
+          </article>
+
+          <!-- mouse-pointer-2 -->
+          <article class="item">
+            <span class="item-icon" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                   fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                   stroke-linejoin="round">
+                <path d="m4 4 7.07 17 2.51-7.39L21 11.07z" />
+              </svg>
+            </span>
+            <div class="item-body">
+              <strong class="item-title">The same one-click actions come to the CRM.</strong>
+              <p class="item-text">
+                What the agent does in TherapyNotes, it starts doing on your side too.
+              </p>
+            </div>
+          </article>
+
+          <!-- mail -->
+          <article class="item">
+            <span class="item-icon" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                   fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                   stroke-linejoin="round">
+                <rect width="20" height="16" x="2" y="4" rx="2" />
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+              </svg>
+            </span>
+            <div class="item-body">
+              <strong class="item-title">Routine communication, handled.</strong>
+              <p class="item-text">
+                The agent drafts and sends the messages that follow a pattern, so the team only
+                touches the ones that don't.
+              </p>
+            </div>
+          </article>
+
+          <!-- clipboard-check -->
+          <article class="item">
+            <span class="item-icon" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                   fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                   stroke-linejoin="round">
+                <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                <path d="m9 14 2 2 4-4" />
+              </svg>
+            </span>
+            <div class="item-body">
+              <strong class="item-title">An assistant that reads and writes.</strong>
+              <p class="item-text">
+                It flags incomplete records, catches missing fields, and keeps the data clean
+                instead of just reporting on it.
+              </p>
+            </div>
+          </article>
+
+          <!-- users -->
+          <article class="item">
+            <span class="item-icon" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                   fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                   stroke-linejoin="round">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+            </span>
+            <div class="item-body">
+              <strong class="item-title">Client survey system (Q4).</strong>
+              <p class="item-text">
+                Hear from families directly, with responses landing in the CRM next to
+                everything else you know about them.
+              </p>
+            </div>
+          </article>
+        </div>
+
+        <!-- ================= Column 3 — On the Horizon ================= -->
+        <div class="column column--horizon">
+          <div class="column-head">
+            <h2>On the Horizon</h2>
+          </div>
+
+          <!-- route -->
+          <article class="item">
+            <span class="item-icon" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                   fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                   stroke-linejoin="round">
+                <circle cx="6" cy="19" r="3" />
+                <path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15" />
+                <circle cx="18" cy="5" r="3" />
+              </svg>
+            </span>
+            <div class="item-body">
+              <strong class="item-title">Referrals processed end to end.</strong>
+              <p class="item-text">
+                The upload flow is live today. The next step is the agent reading the referral,
+                creating the contact, and starting the pipeline on its own.
+              </p>
+            </div>
+          </article>
+
+          <!-- link -->
+          <article class="item">
+            <span class="item-icon" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                   fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                   stroke-linejoin="round">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+              </svg>
+            </span>
+            <div class="item-body">
+              <strong class="item-title">One agent across both systems.</strong>
+              <p class="item-text">
+                CRM and TherapyNotes working as a single surface, with the agent moving between
+                them.
+              </p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <footer>The Family Connection &middot; CRM roadmap</footer>
+    </main>
+  </body>
+</html>
