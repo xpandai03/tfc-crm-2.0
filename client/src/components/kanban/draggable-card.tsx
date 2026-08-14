@@ -190,7 +190,9 @@ export function DraggableCard({ contact, onAddNote, isDragging = false, currentU
                   "font-medium truncate",
                   contact.assignedProviderName ? "text-blue-700 dark:text-blue-300" : "text-muted-foreground italic"
                 )}>
-                  {contact.assignedProviderName || "no provider assigned yet"}
+                  {/* Empty state matches the waitlist list view. The NAME itself
+                      stays full here — abbreviation is a list-view-only concern. */}
+                  {contact.assignedProviderName || "No provider"}
                 </span>
               </div>
               {contact.householdMembers && contact.householdMembers.length > 0 && (
