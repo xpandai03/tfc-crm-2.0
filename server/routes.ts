@@ -84,6 +84,7 @@ import {
 import { isRestrictedUser, canAccessReferralUpload, isTnV2User, canEditEmailTemplates, canBuildReports, canUseReportAgent } from "@shared/access-control";
 import { ACCEPTED_INSURANCES } from "@shared/insurance-utils";
 import { SERVICE_TYPES } from "@shared/service-types";
+import { PAPERWORK_STATUSES, isValidPaperworkStatus } from "@shared/paperwork-status";
 import {
   MODALITIES,
   normalizeModality,
@@ -2493,6 +2494,19 @@ export async function registerRoutes(
       }
       if (!author || typeof author !== "string") {
         return res.status(400).json({ error: "author (initials) is required" });
+      }
+
+      // Paperwork Status is dropdown-constrained in the UI; enforce that
+      // server-side too so an out-of-band caller can't write a value the
+      // dropdown would never render (and that no report would recognise).
+      // null / "" are valid — they clear the field.
+      if ("paperworkStatus" in fields && !isValidPaperworkStatus(fields.paperworkStatus)) {
+        return res.status(400).json({
+          error: "validation_error",
+          field: "paperworkStatus",
+          message: "paperworkStatus must be one of the allowed values, or empty to clear it",
+          allowedValues: PAPERWORK_STATUSES,
+        });
       }
 
       console.log(`[intake-update] Updating contact ${contactId}`, {

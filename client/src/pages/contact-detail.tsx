@@ -87,6 +87,7 @@ import {
 } from "@shared/modality-utils";
 import { SERVICE_TYPES } from "@shared/service-types";
 import { ACCEPTED_INSURANCES } from "@shared/insurance-utils";
+import { PAPERWORK_STATUSES } from "@shared/paperwork-status";
 import { buildTimelineEvents, formatFullDate, matchSnapshotForEmailEvent, type EmailSnapshotMeta, type TimelineEvent } from "@/lib/timeline";
 import { ProviderMatchingModal } from "@/components/ui/provider-matching-modal";
 import { CreateTnModal } from "@/components/ui/create-tn-modal";
@@ -576,6 +577,28 @@ export default function ContactDetail() {
     onError: (err: Error) => {
       toast({
         title: "Failed to update intake",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Paperwork Status saves on change rather than through the intake edit flow —
+  // it's one dropdown that staff flip independently of editing intake data.
+  // Kept as its own mutation so it doesn't tear down an in-progress intake edit.
+  const updatePaperworkMutation = useMutation({
+    mutationFn: (value: string | null) =>
+      updateContactIntake(contactId!, { paperworkStatus: value }, authorInitials),
+    onSuccess: (_data, value) => {
+      toast({
+        title: "Paperwork status updated",
+        description: value ? `Set to ${value}` : "Cleared",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/contact", contactId] });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Could not update paperwork status",
         description: err.message,
         variant: "destructive",
       });
@@ -2175,6 +2198,42 @@ export default function ContactDetail() {
                    !contact?.rfsLink && !contact?.custody && (
                     <p className="text-muted-foreground text-xs italic">No intake data available</p>
                   )}
+                </CardContent>
+              </Card>
+
+              {/* Paperwork Status — a plain CRM-owned field, deliberately its own
+                  card rather than a row inside Intake Details, because staff set
+                  it on its own cadence (when paperwork goes out / comes back)
+                  rather than while editing intake data. Saves on change; the
+                  blank option clears it back to null. NOT a status code: it has
+                  no bearing on the pipeline or the status cluster system. */}
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <FileText className="h-4 w-4" />
+                    Paperwork
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <label className="text-muted-foreground text-xs">Paperwork Status</label>
+                  <Select
+                    value={contact?.paperworkStatus || "none"}
+                    disabled={updatePaperworkMutation.isPending}
+                    onValueChange={(v) =>
+                      updatePaperworkMutation.mutate(v === "none" ? null : v)
+                    }
+                  >
+                    <SelectTrigger className="h-8 text-sm mt-1" data-testid="select-paperworkStatus">
+                      <SelectValue placeholder="Not set" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {/* Blank clears to null — the "not tracked yet" state. */}
+                      <SelectItem value="none">—</SelectItem>
+                      {PAPERWORK_STATUSES.map((s) => (
+                        <SelectItem key={s} value={s}>{s}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </CardContent>
               </Card>
 

@@ -24,7 +24,7 @@ import {
   normalizeModalityTokens,
   getPrimaryModality,
   getModalityPriorities,
-  matchesModality,
+  matchesPrimaryModality,
 } from "@shared/modality-utils";
 
 const MONTH_NAMES: Record<string, number> = {
@@ -134,6 +134,8 @@ export interface SyncContact {
   modalityP2: string | null;
   modalityP3: string | null;
   modalityP4: string | null;
+  /** Paperwork Status — CRM-owned, NULL = not tracked. See shared/paperwork-status.ts. */
+  paperworkStatus: string | null;
   referralSource: string | null;
   priorServices: string | null;
   priorProvider: string | null;
@@ -275,6 +277,13 @@ export async function initSyncTables(): Promise<void> {
       modality_p3 TEXT,
       modality_p4 TEXT,
 
+      -- Paperwork Status: has intake paperwork gone out / come back. Allowed
+      -- values live in shared/paperwork-status.ts; NULL = not tracked yet.
+      -- NOT a status code — no interaction with the status/umbrella cluster.
+      -- CRM-owned; never written by the n8n sync upserts (excluded from every
+      -- DO UPDATE SET below and from enrichSyncContact's fieldMap).
+      paperwork_status TEXT,
+
       synced_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       sync_hash          TEXT
     )
@@ -377,6 +386,13 @@ export async function initSyncTables(): Promise<void> {
            ON sync_contacts(modality_p1)`
       );
     } catch (_) { /* index already exists */ }
+    // Paperwork status. Prod adds this manually via
+    // migrations/add-paperwork-status.sql (schema-before-code, C16); this block
+    // keeps fresh/non-prod DBs in sync without a manual step. CRM-owned —
+    // excluded from every sync upsert's DO UPDATE SET.
+    try {
+      await pool.query(`ALTER TABLE sync_contacts ADD COLUMN IF NOT EXISTS paperwork_status TEXT`);
+    } catch (_) { /* column already exists */ }
   }
 
   console.log("[sync-db] Sync tables initialized");
@@ -658,6 +674,7 @@ export async function getAllSyncContacts(): Promise<SyncContact[]> {
       modality_p2 AS "modalityP2",
       modality_p3 AS "modalityP3",
       modality_p4 AS "modalityP4",
+      paperwork_status AS "paperworkStatus",
       referral_source AS "referralSource",
       prior_services AS "priorServices",
       prior_provider AS "priorProvider",
@@ -826,10 +843,11 @@ export function matchesWaitlistExportFilters(
     if (normalizeInsurance(r.insurance_payer as string | null) !== f.insurance) return false;
   }
 
-  // Match-ANY across priorities, identical to the list view's filter (the
-  // export exists to reproduce what's on screen).
+  // Priority-1 only, via the SAME shared predicate the list view calls — the
+  // export exists to reproduce what's on screen, so it must never hold its own
+  // copy of this rule.
   if (f.modality && f.modality !== "all") {
-    const ok = matchesModality(
+    const ok = matchesPrimaryModality(
       {
         modalityP1: r.modality_p1 as string | null,
         modalityP2: r.modality_p2 as string | null,
@@ -1341,6 +1359,7 @@ export async function getSyncContactById(contactId: number): Promise<SyncContact
       modality_p2 AS "modalityP2",
       modality_p3 AS "modalityP3",
       modality_p4 AS "modalityP4",
+      paperwork_status AS "paperworkStatus",
       referral_source AS "referralSource",
       prior_services AS "priorServices",
       prior_provider AS "priorProvider",
@@ -2739,6 +2758,10 @@ const SAFE_INTAKE_FIELDS: Record<string, string> = {
   modalityP3: "modality_p3",
   modalityP4: "modality_p4",
   formCompletedBy: "form_completed_by",
+  // Paperwork Status. CRM-owned and dropdown-constrained; the PATCH route
+  // validates the value against shared/paperwork-status.ts before it gets here.
+  // Excluded from the n8n sync upserts so a sync can never clobber it.
+  paperworkStatus: "paperwork_status",
   insurancePayer: "insurance_payer",
   insurancePlan: "insurance_plan",
   insuranceId: "insurance_id",

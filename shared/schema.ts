@@ -42,6 +42,9 @@ export const contactSnapshotSchema = z.object({
   modalityP2: z.string().nullable().optional(),
   modalityP3: z.string().nullable().optional(),
   modalityP4: z.string().nullable().optional(),
+  // Paperwork Status — CRM-owned, NULL = not tracked. Allowed values in
+  // shared/paperwork-status.ts. NOT a status code.
+  paperworkStatus: z.string().nullable().optional(),
   referralSource: z.string().nullable().optional(),  // How client found TFC
   priorServices: z.string().nullable().optional(),   // Previous service history
   priorProvider: z.string().nullable().optional(),   // Previous provider name
@@ -143,12 +146,14 @@ export const waitlistContactSchema = z.object({
   assignedTo: z.string().nullable().optional(), // Staff email address (e.g., "jsmith@tfc.help")
   insurancePayer: z.string().nullable().optional(), // Insurance company name (for insights aggregation)
   modality: z.string().nullable().optional(), // Desired modality/location, legacy raw string (for insights aggregation)
-  // Ordered modality priorities. Pipeline/list filter matches ANY of these;
-  // reports and Insights count p1 only. NULL falls back to parsing `modality`.
+  // Ordered modality priorities. Every filter and count keys off p1 only;
+  // p2..p4 are displayed but never matched. NULL falls back to parsing `modality`.
   modalityP1: z.string().nullable().optional(),
   modalityP2: z.string().nullable().optional(),
   modalityP3: z.string().nullable().optional(),
   modalityP4: z.string().nullable().optional(),
+  // Paperwork Status — CRM-owned, NULL = not tracked; shown as a list column.
+  paperworkStatus: z.string().nullable().optional(),
   reasonForTherapy: z.array(z.string()).optional(), // Reason(s) for seeking services (for insights aggregation)
   language: z.string().nullable().optional(), // Preferred service language ("English"/"Spanish"); for wait-list filter
   patientDob: z.string().nullable().optional(), // Patient date of birth (YYYY-MM-DD or MM/DD/YYYY)
