@@ -1682,6 +1682,43 @@ export default function ContactDetail() {
                   )}
                 </CardContent>
               </Card>
+              {/* Paperwork Status — sits in this stat row beside Assigned Provider
+                  rather than in a card further down, because staff set it while
+                  looking at the assignment, and it was previously below the fold.
+                  This grid is grid-cols-2 / sm:grid-cols-4, so the three cards in
+                  this second row wrap onto their own line rather than compressing.
+                  A plain CRM-owned field, NOT a status code — unrelated to the
+                  Workflow Status control above. */}
+              <Card className="overflow-visible bg-white dark:bg-gray-800/90">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <FileText className="h-4 w-4" />
+                    <span className="text-xs">Paperwork Status</span>
+                  </div>
+                  {isLoading ? (
+                    <Skeleton className="h-9 w-full" />
+                  ) : (
+                    <Select
+                      value={contact?.paperworkStatus || "none"}
+                      disabled={updatePaperworkMutation.isPending}
+                      onValueChange={(v) =>
+                        updatePaperworkMutation.mutate(v === "none" ? null : v)
+                      }
+                    >
+                      <SelectTrigger className="h-9 text-sm" data-testid="select-paperworkStatus">
+                        <SelectValue placeholder="Not set" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {/* Blank clears to null — the "not tracked yet" state. */}
+                        <SelectItem value="none">—</SelectItem>
+                        {PAPERWORK_STATUSES.map((s) => (
+                          <SelectItem key={s} value={s}>{s}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </CardContent>
+              </Card>
             </div>
 
             {/* Activity Timeline */}
@@ -2201,41 +2238,8 @@ export default function ContactDetail() {
                 </CardContent>
               </Card>
 
-              {/* Paperwork Status — a plain CRM-owned field, deliberately its own
-                  card rather than a row inside Intake Details, because staff set
-                  it on its own cadence (when paperwork goes out / comes back)
-                  rather than while editing intake data. Saves on change; the
-                  blank option clears it back to null. NOT a status code: it has
-                  no bearing on the pipeline or the status cluster system. */}
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium flex items-center gap-2">
-                    <FileText className="h-4 w-4" />
-                    Paperwork
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <label className="text-muted-foreground text-xs">Paperwork Status</label>
-                  <Select
-                    value={contact?.paperworkStatus || "none"}
-                    disabled={updatePaperworkMutation.isPending}
-                    onValueChange={(v) =>
-                      updatePaperworkMutation.mutate(v === "none" ? null : v)
-                    }
-                  >
-                    <SelectTrigger className="h-8 text-sm mt-1" data-testid="select-paperworkStatus">
-                      <SelectValue placeholder="Not set" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {/* Blank clears to null — the "not tracked yet" state. */}
-                      <SelectItem value="none">—</SelectItem>
-                      {PAPERWORK_STATUSES.map((s) => (
-                        <SelectItem key={s} value={s}>{s}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </CardContent>
-              </Card>
+              {/* (Paperwork Status moved into the stat-card row beside Assigned
+                  Provider — it was below the fold here. Single instance only.) */}
 
               {/* Intake History — expandable per-submission view */}
               {intakeSubmissions.length > 0 && (
@@ -2298,7 +2302,8 @@ export default function ContactDetail() {
                             {/* Show the assigned PROVIDER (not assigned-to staff). Fallback
                                 copy matches the board card (draggable-card.tsx). assignedTo
                                 remains in the payload/state, just no longer rendered here. */}
-                            <span>Provider: {m.assignedProviderName ?? "no provider assigned yet"}</span>
+                            {/* Empty state matches the waitlist list view. */}
+                            <span>Provider: {m.assignedProviderName ?? "No provider"}</span>
                           </div>
                         </div>
                       </Link>
