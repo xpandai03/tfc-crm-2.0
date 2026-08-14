@@ -19,12 +19,15 @@ import {
   normalizeModalityTokens,
   getModalityPriorities,
   getPrimaryModality,
-  matchesModality,
+  matchesPrimaryModality,
+  isRetiredModality,
+  RETIRED_MODALITY_OPTIONS,
   joinModalityPriorities,
   MODALITIES,
   MODALITY_OPTIONS,
   MODALITY_SHORT_LABELS,
 } from "../shared/modality-utils";
+import { PAPERWORK_STATUSES, isValidPaperworkStatus } from "../shared/paperwork-status";
 
 let fails = 0;
 function eq(label: string, actual: unknown, expected: unknown) {
@@ -59,8 +62,26 @@ eq("variant missing-comma LL/TH", normalizeModality("In Person - Los Lunas Teleh
 eq("variant (Open toTelehealth)", normalizeModality("(Open toTelehealth)"), "Telehealth");
 
 // canonical lists
-eq("MODALITIES is 8", MODALITIES.length, 8);
-eq("MODALITY_OPTIONS is 7 (no residual Unknown)", MODALITY_OPTIONS.length, 7);
+// MODALITIES is the ACCEPTANCE list and must stay wide — the intake endpoint
+// validates against it and the public RFS form still sends the legacy values.
+eq("MODALITIES still accepts all 8", MODALITIES.length, 8);
+ok("MODALITIES still accepts Flex", (MODALITIES as readonly string[]).includes("Flex"));
+ok("MODALITIES still accepts Hybrid", (MODALITIES as readonly string[]).includes("Hybrid"));
+ok("MODALITIES still accepts generic In Person", (MODALITIES as readonly string[]).includes("In Person"));
+
+// MODALITY_OPTIONS is the OFFER list: canonical minus Unknown minus retired.
+eq("MODALITY_OPTIONS is 4 (Telehealth + 3 locations)", MODALITY_OPTIONS.length, 4);
+for (const retired of ["Flex", "Hybrid", "In Person"]) {
+  ok(`${retired} is NOT selectable`, !(MODALITY_OPTIONS as readonly string[]).includes(retired));
+  ok(`${retired} is flagged retired`, isRetiredModality(retired));
+}
+// The location-specific in-person options must survive the generic retirement.
+for (const keep of ["In Person ABQ", "In Person RR", "In Person LL", "Telehealth"]) {
+  ok(`${keep} is still selectable`, (MODALITY_OPTIONS as readonly string[]).includes(keep));
+  ok(`${keep} is not flagged retired`, !isRetiredModality(keep));
+}
+eq("RETIRED list is exactly the three requested", [...RETIRED_MODALITY_OPTIONS].sort(),
+   ["Flex", "Hybrid", "In Person"]);
 ok("no Virtual option", !(MODALITY_OPTIONS as readonly string[]).includes("Virtual"));
 ok("no Either option", !(MODALITY_OPTIONS as readonly string[]).includes("Either"));
 ok("no Fax Referral option", !MODALITY_OPTIONS.some((m) => /fax/i.test(m)));
@@ -79,21 +100,27 @@ const prioritized = {
 eq("priorities read in order", getModalityPriorities(prioritized),
    ["In Person RR", "In Person ABQ", "Telehealth"]);
 eq("primary = p1, NOT the raw string's first token", getPrimaryModality(prioritized), "In Person RR");
-ok("match-any hits p1", matchesModality(prioritized, "In Person RR"));
-ok("match-any hits p3", matchesModality(prioritized, "Telehealth"));
-ok("match-any misses unselected", !matchesModality(prioritized, "In Person LL"));
+// FILTERING IS P1-ONLY. This contact holds RR at p1 and ABQ at p2: an RR filter
+// returns them, an ABQ filter does not, even though the row displays both.
+ok("filter hits p1", matchesPrimaryModality(prioritized, "In Person RR"));
+ok("filter MISSES p2", !matchesPrimaryModality(prioritized, "In Person ABQ"));
+ok("filter MISSES p3", !matchesPrimaryModality(prioritized, "Telehealth"));
+ok("filter misses unselected", !matchesPrimaryModality(prioritized, "In Person LL"));
+// ...while display still shows the whole set.
+eq("display still shows all priorities", getModalityPriorities(prioritized).length, 3);
 
 // Fallback: rows the backfill left alone must behave exactly as before.
 const legacy = { modalityP1: null, modalityP2: null, modalityP3: null, modalityP4: null,
                  modality: "In Person - Los Lunas, Telehealth" };
 eq("fallback priorities from raw string", getModalityPriorities(legacy), ["In Person LL", "Telehealth"]);
 eq("fallback primary", getPrimaryModality(legacy), "In Person LL");
-ok("fallback match-any", matchesModality(legacy, "Telehealth"));
+ok("fallback filter hits the primary bucket", matchesPrimaryModality(legacy, "In Person LL"));
+ok("fallback filter misses a lower priority", !matchesPrimaryModality(legacy, "Telehealth"));
 
 const unresolvable = { modalityP1: null, modality: "Fax Referral (For staff use only)" };
 eq("unresolvable primary is Unknown", getPrimaryModality(unresolvable), "Unknown");
-ok("unresolvable matches only Unknown", matchesModality(unresolvable, "Unknown"));
-ok("unresolvable does not match a real bucket", !matchesModality(unresolvable, "Telehealth"));
+ok("unresolvable matches only Unknown", matchesPrimaryModality(unresolvable, "Unknown"));
+ok("unresolvable does not match a real bucket", !matchesPrimaryModality(unresolvable, "Telehealth"));
 
 // The counting invariant: primary is always exactly one bucket, so per-contact
 // report/Insights counts sum to the contact count.
@@ -133,11 +160,48 @@ const fieldMapBlock = dbSrc.slice(
 ok("enrich fieldMap block located", fieldMapBlock.length > 0);
 ok("enrich fieldMap does NOT write modality", !/\["modality",/.test(fieldMapBlock));
 
-// The priority columns must never appear in a sync upsert's column list.
-for (const p of ["modality_p1", "modality_p2", "modality_p3", "modality_p4"]) {
-  ok(`${p} is not written by an ON CONFLICT DO UPDATE`,
-     !new RegExp(`${p}\\s*=\\s*EXCLUDED`).test(dbSrc));
+// CRM-OWNED COLUMNS must never appear in a sync upsert's column list. An
+// unenumerated column cannot be written or nulled by a sync — that is the whole
+// protection, and it only holds as long as nobody adds the column to one of the
+// three upserts. This is the guard added after the July incident where a sync
+// clobbered a CRM-owned column.
+const CRM_OWNED_COLUMNS = [
+  "modality_p1", "modality_p2", "modality_p3", "modality_p4",
+  "paperwork_status",
+];
+for (const col of CRM_OWNED_COLUMNS) {
+  ok(`${col} is not written by an ON CONFLICT DO UPDATE`,
+     !new RegExp(`${col}\\s*=\\s*EXCLUDED`).test(dbSrc));
+  ok(`${col} is not assigned in enrichSyncContact's fieldMap`,
+     !new RegExp(`\\["${col}",`).test(fieldMapBlock));
 }
 
+// Paperwork Status is NOT a status code: it must stay out of the status-code
+// machinery entirely. If it ever needs to drive the pipeline, that is a
+// different feature with a different review.
+ok("paperwork_status is not wired into status-code handling",
+   !/paperwork/i.test(readFileSync(join(process.cwd(), "shared", "status-codes.ts"), "utf8")));
+
 if (fails === 0) console.log("PASS — modality: normalizer, priorities, and ownership guards OK");
+else { console.error(`\n${fails} FAILURES`); process.exit(1); }
+
+
+// ============================================================================
+// 4. Paperwork Status — a plain CRM-owned field, NOT a status code
+// ============================================================================
+
+ok("Sent is valid", isValidPaperworkStatus("Sent"));
+ok("Received is valid", isValidPaperworkStatus("Received"));
+ok("null is valid (clears the field)", isValidPaperworkStatus(null));
+ok("empty string is valid (clears the field)", isValidPaperworkStatus(""));
+ok("undefined is valid", isValidPaperworkStatus(undefined));
+ok("an arbitrary string is rejected", !isValidPaperworkStatus("Partially Received"));
+ok("a status-code-shaped value is rejected", !isValidPaperworkStatus("202"));
+ok("wrong case is rejected", !isValidPaperworkStatus("sent"));
+eq("currently two options", PAPERWORK_STATUSES.length, 2);
+// Adding an option must be a one-line change to the shared constant — this
+// asserts the UI/API read the list rather than hardcoding values.
+eq("options are the data-driven list", [...PAPERWORK_STATUSES], ["Sent", "Received"]);
+
+if (fails === 0) console.log("PASS — paperwork status: validation + data-driven options OK");
 else { console.error(`\n${fails} FAILURES`); process.exit(1); }

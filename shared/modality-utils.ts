@@ -96,16 +96,17 @@ export const MODALITY_NORMALIZATION_MAP: Record<string, string> = {
 };
 
 /**
- * Canonical modality buckets, in display order.
+ * Every modality bucket the system RECOGNISES, in display order.
  *
- * The single source of truth for every staff-facing modality option list and
- * for the reporting agent's filter enum. Import this instead of re-declaring
- * the values — divergent hand-maintained copies are what produced the
- * non-canonical "Virtual" / "Either" options on the staff review form.
+ * This is the ACCEPTANCE list, not the offer list — it stays wide on purpose.
+ * The intake endpoint validates against it, and the public RFS form still sends
+ * the legacy values, so narrowing this would start rejecting real submissions.
+ * Historical records also still hold the legacy values and must keep rendering.
  *
- * "Unknown" is last and is a RESIDUAL bucket, not a selectable intent: it means
- * "nothing in this row resolved". Option lists that must not offer it should
- * use MODALITY_OPTIONS below.
+ * For anything a human PICKS FROM, use MODALITY_OPTIONS below.
+ *
+ * "Unknown" is a RESIDUAL bucket, not an intent: it means "nothing in this row
+ * resolved".
  */
 export const MODALITIES = [
   "Telehealth",
@@ -120,8 +121,33 @@ export const MODALITIES = [
 
 export type Modality = typeof MODALITIES[number];
 
-/** Selectable buckets (canonical 8 minus the residual "Unknown"). */
-export const MODALITY_OPTIONS = MODALITIES.filter((m) => m !== "Unknown");
+/**
+ * Values RETIRED from selection. Still recognised, still displayed on the
+ * records that hold them, but no longer offered anywhere a human picks a
+ * modality — the clinic stopped using them and wants intake steered to a
+ * specific location or Telehealth.
+ *
+ * "In Person" here is the GENERIC value only. The location-specific
+ * "In Person ABQ/RR/LL" options are unaffected and remain selectable.
+ *
+ * Retiring a value is display/selection-only and never rewrites stored data.
+ * To retire another, add it here — do not delete it from MODALITIES, or intake
+ * will start rejecting submissions that legitimately carry it.
+ */
+export const RETIRED_MODALITY_OPTIONS: readonly string[] = ["Flex", "Hybrid", "In Person"];
+
+/**
+ * Buckets a human may SELECT: canonical values minus the residual "Unknown"
+ * and minus anything retired. This is what every dropdown should render.
+ */
+export const MODALITY_OPTIONS = MODALITIES.filter(
+  (m) => m !== "Unknown" && !RETIRED_MODALITY_OPTIONS.includes(m),
+);
+
+/** True for a value that is still stored/displayed but no longer selectable. */
+export function isRetiredModality(value: string | null | undefined): boolean {
+  return !!value && RETIRED_MODALITY_OPTIONS.includes(value.trim());
+}
 
 /** Compact labels for dense UI (kanban cards, table badges). */
 export const MODALITY_SHORT_LABELS: Record<string, string> = {
@@ -203,13 +229,19 @@ export function normalizeModality(rawValue: string | null | undefined): string {
 // Modality priorities (modality_p1..p4)
 // ============================================================================
 //
-// A contact's modality selections as an ORDERED list, p1 = top choice. These
-// drive the dual semantics the clinic asked for:
+// A contact's modality selections as an ORDERED list, p1 = top choice.
 //
-//   - Pipeline / list filter -> match ANY of p1..p4, so a contact shows up
-//     under every location they are willing to attend.
-//   - Referral reports + Insights -> count p1 ONLY, so each contact counts
-//     once, under their top choice, and totals still sum to contact count.
+// FILTERING IS PRIORITY-1 ONLY, EVERYWHERE. Pipeline, list, export, referral
+// reports and Insights all key off p1, so a contact is counted and found under
+// exactly one modality: their top choice.
+//
+// This narrowed deliberately. The pipeline filter originally matched ANY of
+// p1..p4 so a contact surfaced under every location they would attend, but that
+// made filtered counts exceed the contact count and disagreed with what the
+// reports said. The client asked for one consistent meaning.
+//
+// DISPLAY IS UNCHANGED: a row still shows the contact's full p1..p4 set (see
+// getModalityPriorities). Only which rows a filter RETURNS narrowed.
 //
 // FALLBACK: rows the backfill left alone (Flex, Fax Referral, out-of-area
 // multi-office) and any row created before the priority columns existed have a
@@ -246,8 +278,9 @@ export function getModalityPriorities(c: ModalityPriorityFields): string[] {
 }
 
 /**
- * The single bucket a contact counts under for reports and Insights.
- * p1 when set, else the primary bucket of the legacy string, else "Unknown".
+ * The single bucket a contact counts under, everywhere: reports, Insights, and
+ * every filter. p1 when set, else the primary bucket of the legacy string, else
+ * "Unknown".
  */
 export function getPrimaryModality(c: ModalityPriorityFields): string {
   const p1 = typeof c.modalityP1 === "string" ? c.modalityP1.trim() : "";
@@ -256,12 +289,19 @@ export function getPrimaryModality(c: ModalityPriorityFields): string {
 }
 
 /**
- * Does this contact belong under `bucket` in a match-ANY context (the pipeline
- * filter)? Rows that resolve to nothing match only an explicit "Unknown".
+ * Does this contact belong under `bucket` when filtering?
+ *
+ * PRIORITY-1 ONLY. A contact whose p1 is Albuquerque and p2 is Rio Rancho is
+ * returned by an Albuquerque filter and NOT by a Rio Rancho one — even though
+ * their row still displays both. Rows that resolve to nothing match only an
+ * explicit "Unknown" (getPrimaryModality returns "Unknown" for them).
+ *
+ * This is THE filter predicate: the list view and the server-side export
+ * predicate both call it, so the export can never drift from the view it is
+ * supposed to reproduce. Do not inline this comparison at a call site.
  */
-export function matchesModality(c: ModalityPriorityFields, bucket: string): boolean {
-  const list = getModalityPriorities(c);
-  return list.length === 0 ? bucket === "Unknown" : list.includes(bucket);
+export function matchesPrimaryModality(c: ModalityPriorityFields, bucket: string): boolean {
+  return getPrimaryModality(c) === bucket;
 }
 
 /** Comma-joined priority list, matching the legacy `modality` raw format. */

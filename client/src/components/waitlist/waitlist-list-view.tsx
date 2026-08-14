@@ -36,7 +36,9 @@ import {
 import { normalizeInsurance } from "@/lib/insurance-utils";
 import {
   getModalityPriorities,
-  matchesModality,
+  getPrimaryModality,
+  matchesPrimaryModality,
+  isRetiredModality,
   MODALITY_SHORT_LABELS,
 } from "@shared/modality-utils";
 import { getAttentionFlags } from "@/lib/api";
@@ -92,6 +94,60 @@ const umbrellaColors: Record<UmbrellaId, string> = {
   PMR: "bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300",
   INS: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
 };
+
+/**
+ * Abbreviate a provider name to "First L." for the list view's Assigned
+ * Provider column, which is tight on horizontal space.
+ *
+ * DISPLAY LAYER ONLY, and only here. Contact cards, assignment modals, provider
+ * management and the CSV export all keep full names — a CSV has no space
+ * constraint and abbreviating there would destroy information.
+ *
+ * Names that don't fit "First Last" (single word, or three+ parts) are returned
+ * untouched rather than guessed at.
+ */
+function abbreviateProviderName(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return fullName.trim();
+  const first = parts[0];
+  const last = parts[parts.length - 1];
+  const initial = last[0];
+  if (!initial) return fullName.trim();
+  return `${first} ${initial.toUpperCase()}.`;
+}
+
+/**
+ * Build fullName -> displayName for a set of providers, keeping full names for
+ * any pair that would abbreviate to the same thing.
+ *
+ * Without this, two providers sharing a first name and last initial would both
+ * render "Anna A." and staff couldn't tell which contact went to whom — the
+ * exact confusion the column exists to prevent.
+ */
+function buildProviderDisplayMap(fullNames: string[]): Record<string, string> {
+  // Plain objects/arrays rather than Map/Set: this tsconfig targets below ES2015
+  // without downlevelIteration, so for-of over a Map or Set is a type error.
+  const byAbbrev: Record<string, string[]> = {};
+  fullNames.forEach((name) => {
+    const clean = name.trim();
+    if (!clean) return;
+    const abbrev = abbreviateProviderName(clean);
+    const group = byAbbrev[abbrev] ?? (byAbbrev[abbrev] = []);
+    if (group.indexOf(clean) === -1) group.push(clean);
+  });
+
+  const out: Record<string, string> = {};
+  Object.keys(byAbbrev).forEach((abbrev) => {
+    const originals = byAbbrev[abbrev];
+    // Collision: more than one distinct full name abbreviates to this, so
+    // everyone in the group falls back to their full name.
+    const collides = originals.length > 1;
+    originals.forEach((original) => {
+      out[original] = collides ? original : abbrev;
+    });
+  });
+  return out;
+}
 
 /** Parse ?status=100 or ?status=100,101,102 — returns null when no status filter (all). */
 function parseStatusCodesFromFilter(raw: string | null | undefined): number[] | null {
@@ -219,12 +275,27 @@ export function WaitlistListView({
   // contact's tokens (not just its primary bucket) so a modality only one
   // multi-select contact asked for is still offered in the dropdown. Contacts
   // whose value resolves to nothing contribute "Unknown".
+  // Options are built from each contact's PRIMARY modality, because that is what
+  // the filter now matches on — offering a value that filters to zero rows would
+  // read as a bug. Retired values (Flex / Hybrid / generic In Person) are
+  // excluded even where historical records still carry them; those records keep
+  // displaying their value, they just aren't filterable by it.
+  // Built from ALL contacts, not just the filtered set, so a provider's
+  // abbreviation doesn't change as the user filters — a name that reads
+  // "Anna A." in one view and "Anna Alvarez" in another is worse than either.
+  const providerDisplayNames = useMemo(
+    () =>
+      buildProviderDisplayMap(
+        contacts.map((c) => c.assignedProviderName ?? "").filter(Boolean),
+      ),
+    [contacts],
+  );
+
   const availableModalities = useMemo(() => {
     const modalitySet = new Set<string>();
     for (const contact of contacts) {
-      const list = getModalityPriorities(contact);
-      if (list.length === 0) modalitySet.add("Unknown");
-      else for (const t of list) modalitySet.add(t);
+      const primary = getPrimaryModality(contact);
+      if (!isRetiredModality(primary)) modalitySet.add(primary);
     }
     return Array.from(modalitySet).sort();
   }, [contacts]);
@@ -258,12 +329,11 @@ export function WaitlistListView({
         }
       }
 
-      // Modality filter — match-ANY across the contact's priorities, so a
-      // contact appears under EVERY location they're willing to attend. Reports
-      // and Insights deliberately differ: they count priority-1 only. Rows with
-      // no priorities fall back to the legacy string; rows that resolve to
-      // nothing match only an explicit "Unknown".
-      if (modalityFilter !== "all" && !matchesModality(contact, modalityFilter)) {
+      // Modality filter — PRIORITY-1 ONLY, matching reports, Insights and the
+      // export (all four go through the same shared predicate). A contact whose
+      // p1 is Albuquerque and p2 is Rio Rancho is returned by an Albuquerque
+      // filter and not by a Rio Rancho one; their row still displays both.
+      if (modalityFilter !== "all" && !matchesPrimaryModality(contact, modalityFilter)) {
         return false;
       }
 
@@ -520,34 +590,42 @@ export function WaitlistListView({
                   <SortIcon field="name" />
                 </Button>
               </TableHead>
-              <TableHead>Umbrella</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>
+              <TableHead className="w-[104px]">Umbrella</TableHead>
+              {/* Column tightening (client request): Status, Days Waiting,
+                  Service, Modality and Assigned To are width-capped and given
+                  tighter horizontal padding so every column fits at 1440px
+                  without horizontal scroll. No column was removed — Days
+                  Waiting and Household are both in active use. Name is
+                  deliberately left unconstrained so it stays fully readable. */}
+              <TableHead className="w-[168px] px-2">Status</TableHead>
+              <TableHead className="w-[76px] px-2">
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="-ml-3 h-8"
+                  className="-ml-2 h-8 px-1"
                   onClick={() => toggleSort("daysOnWaitlist")}
+                  title="Days Waiting"
                 >
-                  Days Waiting
+                  Days
                   <SortIcon field="daysOnWaitlist" />
                 </Button>
               </TableHead>
-              <TableHead>Service</TableHead>
+              <TableHead className="w-[116px] px-2">Service</TableHead>
               {/* Replaced the Date Added column: Days Waiting already covers
                   recency, and staff need to see at a glance which locations a
                   contact will attend. dateAdded remains the default sort field
                   (see SortField) — only its header button is gone. */}
-              <TableHead>Modality</TableHead>
-              <TableHead>Assigned To</TableHead>
-              <TableHead>Assigned Provider</TableHead>
+              <TableHead className="w-[120px] px-2">Modality</TableHead>
+              <TableHead className="w-[92px] px-2">Assigned To</TableHead>
+              <TableHead className="w-[124px] px-2">Assigned Provider</TableHead>
+              <TableHead className="w-[92px] px-2">Paperwork</TableHead>
               <TableHead>Household</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {sortedContacts.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
+                <TableCell colSpan={10} className="h-24 text-center text-muted-foreground">
                   No contacts match the current filters
                 </TableCell>
               </TableRow>
@@ -597,13 +675,13 @@ export function WaitlistListView({
                         </Badge>
                       )}
                     </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs text-muted-foreground">{statusCode}</span>
-                        <span className={cn("text-sm", isInactive && "italic")}>{statusLabel}</span>
+                    <TableCell className="px-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono text-[11px] text-muted-foreground">{statusCode}</span>
+                        <span className={cn("text-xs leading-tight", isInactive && "italic")}>{statusLabel}</span>
                       </div>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="px-2">
                       {(() => {
                         const dw = computeDaysWaiting(contact.dateAdded, contact.daysOnWaitlist);
                         return (
@@ -619,10 +697,10 @@ export function WaitlistListView({
                         );
                       })()}
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
+                    <TableCell className="px-2 text-xs text-muted-foreground">
                       {contact.requestingFor ?? contact.serviceRequested ?? "—"}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="px-2">
                       {(() => {
                         const list = getModalityPriorities(contact);
                         if (list.length === 0) {
@@ -651,7 +729,7 @@ export function WaitlistListView({
                         );
                       })()}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="px-2">
                       <OwnerBadge
                         email={contact.assignedTo}
                         currentUserEmail={currentUserEmail}
@@ -659,11 +737,33 @@ export function WaitlistListView({
                         size="sm"
                       />
                     </TableCell>
-                    <TableCell className="text-sm">
+                    <TableCell className="px-2 text-xs">
                       {contact.assignedProviderName ? (
-                        <span className="text-foreground font-medium">{contact.assignedProviderName}</span>
+                        <span
+                          className="text-foreground font-medium whitespace-nowrap"
+                          // Full name stays available on hover, so abbreviating
+                          // costs nothing when someone needs to be certain.
+                          title={contact.assignedProviderName}
+                        >
+                          {providerDisplayNames[contact.assignedProviderName] ??
+                            abbreviateProviderName(contact.assignedProviderName)}
+                        </span>
                       ) : (
-                        <span className="text-muted-foreground">no provider assigned yet</span>
+                        <span className="text-muted-foreground">No provider</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="px-2">
+                      {contact.paperworkStatus ? (
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] px-1.5 py-0 h-4 font-normal whitespace-nowrap text-muted-foreground border-muted-foreground/30"
+                        >
+                          {contact.paperworkStatus}
+                        </Badge>
+                      ) : (
+                        // Blank, not a dash: "not tracked yet" should read as
+                        // absence, not as a value staff need to interpret.
+                        <span />
                       )}
                     </TableCell>
                     <TableCell className="text-xs">
