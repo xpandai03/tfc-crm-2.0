@@ -7218,6 +7218,12 @@ export async function registerRoutes(
 
   // Legal filter values (insurance sourced from code, not hardcoded here).
   const AGENT_SERVICE_TYPES = SERVICE_TYPES;
+  // DELIBERATELY WIDER THAN THE STAFF DROPDOWNS. "In Person" (generic), "Hybrid"
+  // and "Flex" are RETIRED FROM SELECTION (see RETIRED_MODALITY_OPTIONS in
+  // shared/modality-utils) but RETAINED FOR REPORTING: ~239 historical records
+  // still hold them, and a manager must be able to report on those. Do not
+  // "clean up" this list to match MODALITY_OPTIONS — that would make that
+  // history unreportable.
   const AGENT_MODALITIES = ["Telehealth", "In Person ABQ", "In Person RR", "In Person LL", "In Person", "Hybrid", "Flex", "Unknown"] as const;
   const AGENT_INSURANCES = [...ACCEPTED_INSURANCES, "Unknown"];
   const AGENT_STATUS_CODES = [100, 101, 102, 103, 104, 200, 201, 202, 203, 204, 205, 206, 300, 400, 402, 403, 500];
