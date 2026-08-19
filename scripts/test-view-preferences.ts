@@ -12,9 +12,17 @@ import {
   applyViewPreferences,
   buildViewPreferences,
   defaultPreferences,
+  stockView,
+  applyNamedView,
+  sanitizeNamedViews,
+  validateViewName,
+  hasDivergedFrom,
   DEFAULT_FILTERS,
+  DEFAULT_SORT,
   VIEW_PREFS_VERSION,
+  MAX_NAMED_VIEWS,
   type ColumnMetaForRestore,
+  type NamedView,
 } from "../client/src/lib/view-preferences";
 
 let fails = 0;
@@ -185,6 +193,137 @@ const prefs = (over: any = {}) => ({
   ok("view-prefs endpoints never take a user id from the request",
      !/view-prefs\/:viewKey\/:userId|req\.body\?\.userId|req\.query\.userId/.test(routesSrc));
   ok("view-prefs identity comes from req.user.id", /viewPrefsIdentity/.test(routesSrc));
+}
+
+// ============================================================================
+// PHASE 2 — named views, Default escape, version migration
+// ============================================================================
+
+const mkView = (over: Partial<NamedView> = {}): NamedView => ({
+  id: "v1", name: "Scheduling", createdAt: "2026-08-19T00:00:00.000Z",
+  columns: { visible: ["name", "email"], order: ["name", "email", "status", "insurance", "modality"] },
+  filters: { ...DEFAULT_FILTERS, insurance: "Aetna" },
+  sort: { field: "name", direction: "asc" },
+  ...over,
+});
+
+// ---- v1 payloads still readable (migrate-on-read, NOT discarded) -----------
+{
+  const v1 = { version: 1, columns: { visible: ["name", "status"], order: ["name", "status", "insurance", "modality", "email"] },
+               filters: { ...DEFAULT_FILTERS, insurance: "Aetna" }, sort: { field: "name", direction: "asc" } };
+  const r = applyViewPreferences(v1, CTX());
+  eq("v1 payload still restores its columns", r.columns.visible, ["name", "status"]);
+  eq("v1 payload still restores its filters", r.filters.insurance, "Aetna");
+  eq("v1 payload yields an empty named-view list", r.namedViews, []);
+  eq("current version is 2", VIEW_PREFS_VERSION, 2);
+  const r3 = applyViewPreferences({ ...v1, version: 3 }, CTX());
+  eq("a FUTURE version is discarded, not guessed at", r3.columns.visible, ["name", "status", "insurance", "modality"]);
+}
+
+// ---- stockView: the Default escape hatch ----------------------------------
+{
+  const stock = stockView(COLS);
+  eq("stock columns are the defaults", stock.columns.visible, ["name", "status", "insurance", "modality"]);
+  eq("stock clears every filter", stock.filters, DEFAULT_FILTERS);
+  eq("stock sort", stock.sort, DEFAULT_SORT);
+  // The whole point: it takes no stored input, so corruption can't break it.
+  eq("stockView is pure — identical on repeat calls", stockView(COLS), stockView(COLS));
+}
+
+// ---- Default works from a CORRUPTED payload -------------------------------
+{
+  for (const junk of [null, undefined, "nonsense", 42, [], { version: 1 }, { version: 2, columns: null },
+                      { version: 2, columns: { visible: "not-an-array" } }]) {
+    const r = applyViewPreferences(junk, CTX());
+    ok(`corrupt payload ${JSON.stringify(junk)} still yields usable columns`, r.columns.visible.length > 0);
+    ok(`corrupt payload keeps Name`, r.columns.visible.indexOf("name") !== -1);
+    ok(`corrupt payload yields no named views`, Array.isArray(r.namedViews));
+  }
+}
+
+// ---- named-view sanitizing ------------------------------------------------
+{
+  eq("non-array -> []", sanitizeNamedViews("x"), []);
+  eq("malformed entries dropped", sanitizeNamedViews([{ id: "a" }, null, 5, { name: "no cols", id: "b" }]), []);
+  const many = Array.from({ length: 20 }, (_, i) => mkView({ id: `v${i}`, name: `View ${i}` }));
+  eq("cap enforced on read", sanitizeNamedViews(many).length, MAX_NAMED_VIEWS);
+  const long = sanitizeNamedViews([mkView({ name: "x".repeat(80) })]);
+  eq("over-long name is truncated, not rejected", long[0].name.length, 30);
+}
+
+// ---- APPLY runs the same rules as restore ---------------------------------
+{
+  // Retired values inside a named view degrade exactly like a restore.
+  const stale = mkView({ filters: { ...DEFAULT_FILTERS, insurance: "Tricare", modality: "Flex" } });
+  const r = applyNamedView(stale, CTX());
+  eq("applying a view resets a retired insurance", r.filters.insurance, "all");
+  eq("applying a view resets a retired modality", r.filters.modality, "all");
+  eq("the notice names them", r.resetFilters.sort(), ["Insurance", "Modality"]);
+  ok("columns still apply despite stale filters", r.columns.visible.indexOf("email") !== -1);
+
+  // Gating: "it was allowed when saved" is NOT authorization.
+  const gated = mkView({ filters: { ...DEFAULT_FILTERS, staff: "someone@tfc.health" } });
+  eq("gate closed -> staff stripped on APPLY", applyNamedView(gated, CTX({ canUseStaffFilter: false })).filters.staff, "all");
+  eq("gate open -> staff restored on APPLY", applyNamedView(gated, CTX({ canUseStaffFilter: true })).filters.staff, "someone@tfc.health");
+  const widened = ["a@tfc.health", "me", "*"].filter(
+    (v) => applyNamedView(mkView({ filters: { ...DEFAULT_FILTERS, staff: v } }), CTX({ canUseStaffFilter: false })).filters.staff !== "all");
+  eq("NO named view can widen access when gated", widened, []);
+
+  // Unknown / new columns behave as in a restore.
+  const ghosts = mkView({ columns: { visible: ["name", "ghost"], order: ["name", "ghost", "status"] } });
+  const g = applyNamedView(ghosts, CTX());
+  ok("unknown column id dropped on apply", g.columns.order.indexOf("ghost") === -1);
+  ok("column shipped later is appended on apply", g.columns.order.indexOf("email") !== -1);
+
+  // Name stays locked even if a view says otherwise.
+  const attack = mkView({ columns: { visible: ["status"], order: ["status", "name"] } });
+  const a = applyNamedView(attack, CTX());
+  ok("apply cannot hide Name", a.columns.visible.indexOf("name") !== -1);
+  eq("apply cannot move Name", a.columns.order[0], "name");
+}
+
+// ---- name validation ------------------------------------------------------
+{
+  const existing = [mkView({ id: "a", name: "Scheduling" })];
+  ok("empty name rejected", validateViewName("   ", existing).ok === false);
+  ok("31 chars rejected", validateViewName("x".repeat(31), existing).ok === false);
+  ok("30 chars accepted", validateViewName("x".repeat(30), existing).ok === true);
+  ok("duplicate rejected case-insensitively", validateViewName("scheduling", existing).ok === false);
+  ok("renaming a view to its own name is allowed", validateViewName("Scheduling", existing, "a").ok === true);
+  const trimmed = validateViewName("  Admin  ", existing);
+  ok("name is trimmed", trimmed.ok === true && trimmed.name === "Admin");
+}
+
+// ---- divergence never mutates the view ------------------------------------
+{
+  const v = mkView();
+  const same = { columns: v.columns, filters: v.filters, sort: v.sort };
+  ok("identical state is not diverged", !hasDivergedFrom(v, same));
+  const changed = { columns: { visible: ["name"], order: v.columns.order }, filters: v.filters, sort: v.sort };
+  ok("hidden column marks diverged", hasDivergedFrom(v, changed));
+  const filterChanged = { columns: v.columns, filters: { ...v.filters, insurance: "Medicaid" }, sort: v.sort };
+  ok("filter change marks diverged", hasDivergedFrom(v, filterChanged));
+  // hasDivergedFrom must be read-only.
+  const snapshot = JSON.stringify(v);
+  hasDivergedFrom(v, changed);
+  eq("checking divergence does not mutate the view", JSON.stringify(v), snapshot);
+}
+
+// ---- round trip carries named views ---------------------------------------
+{
+  const views = [mkView({ id: "a", name: "Scheduling" }), mkView({ id: "b", name: "Admin" })];
+  const built = buildViewPreferences(
+    { visible: ["name", "status"], order: ["name", "status", "insurance", "modality", "email"] },
+    { ...DEFAULT_FILTERS }, { ...DEFAULT_SORT }, views);
+  eq("payload is version 2", built.version, 2);
+  eq("named views ride in the same blob", built.namedViews?.length, 2);
+  const back = applyViewPreferences(built, CTX());
+  eq("named views survive the round trip", back.namedViews.map((v) => v.name), ["Scheduling", "Admin"]);
+  ok("payload stays well under the 20KB cap", JSON.stringify(built).length < 20000);
+  // Eight full views must still fit the cap.
+  const eight = Array.from({ length: MAX_NAMED_VIEWS }, (_, i) => mkView({ id: `v${i}`, name: `View number ${i}` }));
+  const big = buildViewPreferences(built.columns, built.filters, built.sort, eight);
+  ok(`${MAX_NAMED_VIEWS} views fit the 20KB cap (${JSON.stringify(big).length}B)`, JSON.stringify(big).length < 20000);
 }
 
 if (fails === 0) console.log("PASS — view preferences: degradation, column rules, gate safety, round-trip, sync isolation OK");

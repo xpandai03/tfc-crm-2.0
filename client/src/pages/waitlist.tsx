@@ -22,6 +22,7 @@ import {
   applyViewPreferences,
   defaultPreferences,
   type RestoreResult,
+  type RestoreContext,
 } from "@/lib/view-preferences";
 import { getViewPrefs } from "@/lib/api";
 import { CANONICAL_INSURANCES } from "@shared/insurance";
@@ -200,22 +201,27 @@ export default function Waitlist() {
   // Restored state. Every filter value is re-validated against the CURRENT
   // option lists, and the staff filter against the CURRENT gate — a saved value
   // can never resurrect a retired option or an access a user no longer has.
+  // One context, used for BOTH the initial restore and every named-view apply.
+  // Sharing it is what makes "a view can't do what a restore couldn't" true by
+  // construction rather than by convention.
+  const restoreCtx: RestoreContext = useMemo(() => ({
+    allColumns: WAITLIST_COLUMNS,
+    validOptions: {
+      umbrella: Object.keys(STATUS_UMBRELLAS),
+      insurance: [...CANONICAL_INSURANCES],
+      modality: [...MODALITY_OPTIONS, "Unknown"],
+      language: ["English", "Spanish"],
+      reason: [...REASON_CANONICALS],
+      serviceType: [...SERVICE_TYPES],
+    },
+    canUseStaffFilter: canStaffFilter,
+    validSortFields: ["daysOnWaitlist", "dateAdded", "name"],
+  }), [canStaffFilter]);
+
   const restored: RestoreResult = useMemo(() => {
     if (!prefsData) return defaultPreferences(WAITLIST_COLUMNS);
-    return applyViewPreferences(prefsData.prefs, {
-      allColumns: WAITLIST_COLUMNS,
-      validOptions: {
-        umbrella: Object.keys(STATUS_UMBRELLAS),
-        insurance: [...CANONICAL_INSURANCES],
-        modality: [...MODALITY_OPTIONS, "Unknown"],
-        language: ["English", "Spanish"],
-        reason: [...REASON_CANONICALS],
-        serviceType: [...SERVICE_TYPES],
-      },
-      canUseStaffFilter: canStaffFilter,
-      validSortFields: ["daysOnWaitlist", "dateAdded", "name"],
-    });
-  }, [prefsData, canStaffFilter]);
+    return applyViewPreferences(prefsData.prefs, restoreCtx);
+  }, [prefsData, restoreCtx]);
 
   useEffect(() => {
     if (!prefsData || staffRestoredRef.current) return;
@@ -786,6 +792,8 @@ export default function Waitlist() {
             restored={restored}
             staffFilter={staffFilter}
             canUseStaffFilter={canStaffFilter}
+            onStaffFilterChange={setStaffFilter}
+            restoreCtx={restoreCtx}
             initialInsuranceFilter={urlParams.insurance}
             initialModalityFilter={urlParams.modality}
             initialStatusFilter={urlParams.status}

@@ -90,6 +90,7 @@ import {
   saveViewPreferences,
   deleteViewPreferences,
   isValidViewKey,
+  MAX_NAMED_VIEWS,
 } from "./view-preferences/db";
 import {
   MODALITIES,
@@ -2621,6 +2622,21 @@ export async function registerRoutes(
       // Cheap sanity bound — this is a small settings blob, never a payload.
       if (JSON.stringify(prefs).length > 20_000) {
         return res.status(413).json({ error: "prefs payload too large" });
+      }
+      // Named-view cap, enforced HERE as well as in the client so it holds for
+      // any caller. The client shows a friendly message before it gets here.
+      const namedViews = (prefs as { namedViews?: unknown }).namedViews;
+      if (namedViews !== undefined) {
+        if (!Array.isArray(namedViews)) {
+          return res.status(400).json({ error: "namedViews must be an array" });
+        }
+        if (namedViews.length > MAX_NAMED_VIEWS) {
+          return res.status(400).json({
+            error: "view_limit",
+            message: `You can save up to ${MAX_NAMED_VIEWS} views. Delete one to add another.`,
+            limit: MAX_NAMED_VIEWS,
+          });
+        }
       }
       await saveViewPreferences(who.userId, who.email, viewKey, prefs);
       return res.json({ success: true });

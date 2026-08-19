@@ -14,6 +14,13 @@ import { getPool } from "../db/pool";
 export const VIEW_KEYS = ["waitlist_list"] as const;
 export type ViewKey = typeof VIEW_KEYS[number];
 
+/**
+ * Per-user cap on named views. Enforced server-side so it holds regardless of
+ * client; mirrored in client/src/lib/view-preferences.ts for the friendly
+ * message. Keep the two in step.
+ */
+export const MAX_NAMED_VIEWS = 8;
+
 export function isValidViewKey(v: string): v is ViewKey {
   return (VIEW_KEYS as readonly string[]).includes(v);
 }
