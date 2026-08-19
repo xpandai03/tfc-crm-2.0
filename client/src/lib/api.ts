@@ -500,3 +500,26 @@ export async function createTherapyNotesWithSchedule(contactId: number, inputs: 
     clearTimeout(timeoutId);
   }
 }
+
+// ============================================================================
+// Per-user saved view preferences (customizable waitlist views)
+//
+// Always scoped server-side to the authenticated caller — there is no user id
+// in these signatures because a client can't address another user's row.
+// ============================================================================
+
+export async function getViewPrefs(viewKey: string): Promise<{ prefs: unknown | null }> {
+  const res = await fetch(`/api/user/view-prefs/${viewKey}`, { credentials: "include", cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to load view preferences (${res.status})`);
+  return res.json();
+}
+
+export async function saveViewPrefs(viewKey: string, prefs: unknown): Promise<void> {
+  const res = await apiRequest("PUT", `/api/user/view-prefs/${viewKey}`, { prefs });
+  if (!res.ok) throw new Error(`Failed to save view preferences (${res.status})`);
+}
+
+export async function resetViewPrefs(viewKey: string): Promise<void> {
+  const res = await apiRequest("DELETE", `/api/user/view-prefs/${viewKey}`);
+  if (!res.ok) throw new Error(`Failed to reset view preferences (${res.status})`);
+}

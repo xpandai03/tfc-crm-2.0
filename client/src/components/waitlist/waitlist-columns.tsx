@@ -35,6 +35,31 @@ import { abbreviateInsurance } from "@shared/insurance";
 import { getModalityPriorities, MODALITY_SHORT_LABELS } from "@shared/modality-utils";
 import type { WaitlistContact } from "@shared/schema";
 
+/**
+ * MM/DD/YYYY for the list. Handles the ISO strings the CRM stores and the Excel
+ * serial numbers some legacy sheet rows still carry.
+ */
+function formatListDate(value: string | number | null | undefined): string {
+  if (!value) return "—";
+  let str: string | null = null;
+  if (typeof value === "number" && value > 15000 && value < 80000) {
+    const excelEpoch = new Date(1899, 11, 30);
+    str = new Date(excelEpoch.getTime() + value * 86400000).toISOString().split("T")[0];
+  } else if (typeof value === "string") {
+    str = value;
+  } else {
+    return String(value);
+  }
+  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[2]}/${m[3]}/${m[1]}`;
+  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(str)) return str;
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) {
+    return `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/${d.getFullYear()}`;
+  }
+  return str || "—";
+}
+
 export type SortField = "daysOnWaitlist" | "dateAdded" | "name";
 export type SortDirection = "asc" | "desc";
 
@@ -370,6 +395,58 @@ export const WAITLIST_COLUMNS: WaitlistColumnDef[] = [
         // value staff need to interpret.
         <span />
       ),
+  },
+  // ---------------------------------------------------------------------------
+  // OPTIONAL COLUMNS — off by default, enabled per user in the column picker.
+  // All four are already carried by the board payload (getAllSyncContacts puts
+  // ~50 fields on the wire); none required a query change.
+  // ---------------------------------------------------------------------------
+  {
+    id: "dateAdded",
+    label: "Date Added",
+    order: 11,
+    defaultVisible: false,
+    widthClass: "w-[104px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    // dateAdded remains the default SORT field even while this column is
+    // hidden — the two are independent.
+    render: (contact) => formatListDate(contact.dateAdded),
+  },
+  {
+    id: "language",
+    label: "Language",
+    order: 12,
+    defaultVisible: false,
+    widthClass: "w-[88px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => (contact as { language?: string | null }).language || "—",
+  },
+  {
+    id: "email",
+    label: "Email",
+    order: 13,
+    defaultVisible: false,
+    widthClass: "w-[180px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) =>
+      contact.email ? (
+        // Truncated with the full address on hover — addresses are long and
+        // would otherwise force the table wide.
+        <span className="block max-w-[172px] truncate" title={contact.email}>
+          {contact.email}
+        </span>
+      ) : (
+        "—"
+      ),
+  },
+  {
+    id: "phone",
+    label: "Phone",
+    order: 14,
+    defaultVisible: false,
+    widthClass: "w-[116px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground whitespace-nowrap",
+    render: (contact) => contact.phone || "—",
   },
   {
     id: "household",

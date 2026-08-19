@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { computeDaysWaiting } from "@/lib/days-waiting";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
@@ -22,7 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Search, X, EyeOff, Shield } from "lucide-react";
+import { Search, X, EyeOff, Shield, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   STATUS_UMBRELLAS,
@@ -34,11 +34,20 @@ import {
 } from "@/lib/status-config";
 import {
   WAITLIST_COLUMNS,
+  WAITLIST_COLUMNS_BY_ID,
   buildProviderDisplayMap,
   type SortField,
   type SortDirection,
   type WaitlistCellCtx,
 } from "./waitlist-columns";
+import { ColumnSettings } from "./column-settings";
+import {
+  buildViewPreferences,
+  defaultPreferences,
+  type RestoreResult,
+} from "@/lib/view-preferences";
+import { saveViewPrefs, resetViewPrefs } from "@/lib/api";
+import { useQueryClient } from "@tanstack/react-query";
 import { CANONICAL_INSURANCES, matchesInsurance } from "@shared/insurance";
 import {
   getPrimaryModality,
@@ -63,6 +72,9 @@ export interface WaitlistFilterState {
   reason: string | null;
   serviceType: string | null;
   search: string | null;
+  /** Carried so the export can reproduce the on-screen ordering. */
+  sortField?: string;
+  sortDirection?: string;
 }
 
 interface WaitlistListViewProps {
@@ -70,6 +82,12 @@ interface WaitlistListViewProps {
   currentUserEmail?: string;
   /** Fired whenever the filter state changes, so the parent can export the current view. */
   onFiltersChange?: (filters: WaitlistFilterState) => void;
+  /** Saved view, already validated + gate-checked by the page. */
+  restored?: RestoreResult;
+  /** Assignment filter (owned by the page) — persisted with the rest. */
+  staffFilter?: string;
+  /** Whether the caller currently passes the staff-filter gate. */
+  canUseStaffFilter?: boolean;
   // Optional props for URL-driven filtering (drill-down from Insights)
   initialInsuranceFilter?: string | null;
   initialModalityFilter?: string | null;
@@ -103,6 +121,9 @@ export function WaitlistListView({
   contacts,
   currentUserEmail,
   onFiltersChange,
+  restored,
+  staffFilter = "all",
+  canUseStaffFilter = false,
   initialInsuranceFilter,
   initialModalityFilter,
   initialStatusFilter,
@@ -122,18 +143,21 @@ export function WaitlistListView({
   }, [flagsData]);
 
   // Filter state
+  // URL drill-down params take precedence over saved state: following an
+  // Insights link must land on that link's filter, not yesterday's.
+  const saved = restored ?? defaultPreferences(WAITLIST_COLUMNS);
   const [umbrellaFilter, setUmbrellaFilter] = useState<UmbrellaId | "all">(
-    (initialUmbrellaFilter as UmbrellaId) || "all"
+    (initialUmbrellaFilter as UmbrellaId) || (saved.filters.umbrella as UmbrellaId | "all")
   );
-  const [statusFilter, setStatusFilter] = useState<string>(initialStatusFilter || "all");
+  const [statusFilter, setStatusFilter] = useState<string>(initialStatusFilter || saved.filters.status);
   const [searchQuery, setSearchQuery] = useState("");
-  const [hideInactive, setHideInactive] = useState(true);
-  const [insuranceFilter, setInsuranceFilter] = useState<string>(initialInsuranceFilter || "all");
-  const [modalityFilter, setModalityFilter] = useState<string>(initialModalityFilter || "all");
+  const [hideInactive, setHideInactive] = useState(saved.filters.hideInactive);
+  const [insuranceFilter, setInsuranceFilter] = useState<string>(initialInsuranceFilter || saved.filters.insurance);
+  const [modalityFilter, setModalityFilter] = useState<string>(initialModalityFilter || saved.filters.modality);
   // Language filter (Lane): exact match on dropdown-constrained "English"/"Spanish".
-  const [languageFilter, setLanguageFilter] = useState<string>("all");
-  const [reasonFilter, setReasonFilter] = useState<string>(initialReasonFilter || "all");
-  const [serviceTypeFilter, setServiceTypeFilter] = useState<string>(initialServiceTypeFilter || "all");
+  const [languageFilter, setLanguageFilter] = useState<string>(saved.filters.language);
+  const [reasonFilter, setReasonFilter] = useState<string>(initialReasonFilter || saved.filters.reason);
+  const [serviceTypeFilter, setServiceTypeFilter] = useState<string>(initialServiceTypeFilter || saved.filters.serviceType);
 
   // Update filters when initial props change (e.g., from URL navigation)
   useEffect(() => {
@@ -146,8 +170,8 @@ export function WaitlistListView({
   }, [initialInsuranceFilter, initialModalityFilter, initialStatusFilter, initialUmbrellaFilter, initialReasonFilter, initialServiceTypeFilter]);
 
   // Sort state
-  const [sortField, setSortField] = useState<SortField>("daysOnWaitlist");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [sortField, setSortField] = useState<SortField>(saved.sort.field as SortField);
+  const [sortDirection, setSortDirection] = useState<SortDirection>(saved.sort.direction as SortDirection);
 
   // Get effective status code for a contact
   const getStatusCode = (contact: WaitlistContact): number => {
@@ -175,6 +199,101 @@ export function WaitlistListView({
   const isMultiStatusFromUrl =
     statusFilter !== "all" && allowedStatusCodes !== null && allowedStatusCodes.length > 1;
 
+  // Column layout, seeded from the saved view (already validated by the page).
+  const [columnOrder, setColumnOrder] = useState<string[]>(saved.columns.order);
+  const [visibleIds, setVisibleIds] = useState<string[]>(saved.columns.visible);
+
+  const visibleColumns = useMemo(
+    () =>
+      columnOrder
+        .filter((id) => visibleIds.indexOf(id) !== -1)
+        .map((id) => WAITLIST_COLUMNS_BY_ID[id])
+        .filter(Boolean),
+    [columnOrder, visibleIds],
+  );
+
+  // Filters that were dropped on restore, surfaced once so the user isn't left
+  // staring at an unexpectedly different (or empty) table with no explanation.
+  const [staleNotice, setStaleNotice] = useState<string[]>(saved.resetFilters);
+
+  // ---------------------------------------------------------------------------
+  // Auto-save. No save button: the client's ask is "remember what I did last",
+  // and a button introduces the worse failure mode (change something, forget to
+  // save, come back to stale state). Debounced so dragging through a dropdown
+  // doesn't write on every keystroke of state.
+  //
+  // searchQuery is deliberately excluded — see @/lib/view-preferences.
+  //
+  // The first render after restore must NOT write: it would rewrite storage
+  // with values the user hasn't touched, and would persist a gate-stripped
+  // staff filter as if the user had chosen "all".
+  // ---------------------------------------------------------------------------
+  const queryClient = useQueryClient();
+  const [isResetting, setIsResetting] = useState(false);
+  const hydratedRef = useRef(false);
+
+  useEffect(() => {
+    if (!hydratedRef.current) { hydratedRef.current = true; return; }
+    const t = setTimeout(() => {
+      const prefs = buildViewPreferences(
+        { visible: visibleIds, order: columnOrder },
+        {
+          umbrella: umbrellaFilter,
+          status: statusFilter,
+          insurance: insuranceFilter,
+          modality: modalityFilter,
+          language: languageFilter,
+          reason: reasonFilter,
+          serviceType: serviceTypeFilter,
+          hideInactive,
+          // Only persist a staff filter the user is currently entitled to; a
+          // value they can't set shouldn't be written back either.
+          staff: canUseStaffFilter ? staffFilter : "all",
+        },
+        { field: sortField, direction: sortDirection },
+      );
+      // Fire and forget: a failed preference save must never interrupt work.
+      void saveViewPrefs("waitlist_list", prefs).catch((err) => {
+        console.warn("[view-prefs] save failed (non-fatal):", err);
+      });
+    }, 500);
+    return () => clearTimeout(t);
+  }, [
+    visibleIds, columnOrder,
+    umbrellaFilter, statusFilter, insuranceFilter, modalityFilter,
+    languageFilter, reasonFilter, serviceTypeFilter, hideInactive,
+    staffFilter, canUseStaffFilter, sortField, sortDirection,
+  ]);
+
+  const handleResetView = async () => {
+    setIsResetting(true);
+    try {
+      await resetViewPrefs("waitlist_list");
+      const stock = defaultPreferences(WAITLIST_COLUMNS);
+      setColumnOrder(stock.columns.order);
+      setVisibleIds(stock.columns.visible);
+      setUmbrellaFilter(stock.filters.umbrella as UmbrellaId | "all");
+      setStatusFilter(stock.filters.status);
+      setInsuranceFilter(stock.filters.insurance);
+      setModalityFilter(stock.filters.modality);
+      setLanguageFilter(stock.filters.language);
+      setReasonFilter(stock.filters.reason);
+      setServiceTypeFilter(stock.filters.serviceType);
+      setHideInactive(stock.filters.hideInactive);
+      setSortField(stock.sort.field as SortField);
+      setSortDirection(stock.sort.direction as SortDirection);
+      setSearchQuery("");
+      setStaleNotice([]);
+      // Drop the cached prefs so a reload genuinely starts from stock rather
+      // than from the row we just deleted.
+      queryClient.setQueryData(["/api/user/view-prefs", "waitlist_list"], { prefs: null });
+    } catch (err) {
+      console.warn("[view-prefs] reset failed:", err);
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   // Publish the live filter state upward so the parent's Export button can send
   // it to the server. Keyed on the same values as the filter memo below, so the
   // two can't disagree about what's currently applied.
@@ -189,9 +308,13 @@ export function WaitlistListView({
       reason: reasonFilter === "all" ? null : reasonFilter,
       serviceType: serviceTypeFilter === "all" ? null : serviceTypeFilter,
       search: searchQuery.trim() || null,
+      sortField,
+      sortDirection,
     });
   }, [
     onFiltersChange,
+    sortField,
+    sortDirection,
     hideInactive,
     umbrellaFilter,
     allowedStatusCodes,
@@ -218,13 +341,6 @@ export function WaitlistListView({
   // read as a bug. Retired values (Flex / Hybrid / generic In Person) are
   // excluded even where historical records still carry them; those records keep
   // displaying their value, they just aren't filterable by it.
-  // Columns in their default order. The refactor keeps every column visible so
-  // behavior is identical to before; user-configurable visibility/order arrives
-  // in the next commit and replaces only this line.
-  const visibleColumns = useMemo(
-    () => WAITLIST_COLUMNS.slice().sort((a, b) => a.order - b.order),
-    [],
-  );
 
   // Built from ALL contacts, not just the filtered set, so a provider's
   // abbreviation doesn't change as the user filters — a name that reads
@@ -500,7 +616,16 @@ export function WaitlistListView({
           </Label>
         </div>
 
-        <div className="ml-auto text-sm text-muted-foreground">
+        <div className="ml-auto flex items-center gap-3">
+          <ColumnSettings
+            allColumns={WAITLIST_COLUMNS}
+            order={columnOrder}
+            visible={visibleIds}
+            onChange={({ order, visible }) => { setColumnOrder(order); setVisibleIds(visible); }}
+            onReset={handleResetView}
+            isResetting={isResetting}
+          />
+        <div className="text-sm text-muted-foreground">
           {sortedContacts.length} contact{sortedContacts.length !== 1 ? "s" : ""}
           {!hideInactive && (() => {
             const inactiveCount = sortedContacts.filter(c => !isActiveStatus(getStatusCode(c))).length;
@@ -508,7 +633,31 @@ export function WaitlistListView({
             return inactiveCount > 0 ? ` (${activeCount} active, ${inactiveCount} inactive)` : "";
           })()}
         </div>
+        </div>
       </div>
+
+      {/* Saved filters that no longer exist were reset — say so once, rather
+          than leaving the user with a silently different view. */}
+      {staleNotice.length > 0 && (
+        <div
+          role="status"
+          className="flex items-center gap-2 rounded-lg border border-amber-300/60 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700/50 px-3 py-2 text-xs text-amber-900 dark:text-amber-100"
+        >
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          <span className="flex-1">
+            Some saved filters are no longer available and were reset
+            {` (${staleNotice.join(", ")})`}.
+          </span>
+          <button
+            type="button"
+            onClick={() => setStaleNotice([])}
+            className="rounded px-1.5 py-0.5 font-medium underline-offset-2 hover:underline"
+            aria-label="Dismiss"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Table */}
       <div className="rounded-2xl border border-white/40 dark:border-gray-700/40 bg-white/60 dark:bg-gray-900/60 backdrop-blur-xl shadow-lg overflow-hidden">

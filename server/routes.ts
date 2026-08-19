@@ -86,6 +86,12 @@ import { ACCEPTED_INSURANCES } from "@shared/insurance-utils";
 import { SERVICE_TYPES } from "@shared/service-types";
 import { PAPERWORK_STATUSES, isValidPaperworkStatus } from "@shared/paperwork-status";
 import {
+  getViewPreferences,
+  saveViewPreferences,
+  deleteViewPreferences,
+  isValidViewKey,
+} from "./view-preferences/db";
+import {
   MODALITIES,
   normalizeModality,
   normalizeModalityTokens,
@@ -2560,6 +2566,81 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[intake-update] Error:", error);
       return res.status(500).json({ error: "Failed to update intake fields" });
+    }
+  });
+
+  // ==========================================================================
+  // Per-user view preferences (customizable waitlist views)
+  //
+  // SCOPED TO THE CALLER, ALWAYS. Every handler derives user_id from the
+  // authenticated session (Azure AD `oid`) — there is no route parameter or
+  // body field that can address another user's row, so one user can never read
+  // or overwrite another's saved view.
+  //
+  // The server stores the payload opaquely and does NOT interpret filter or
+  // column values. Validation against current option lists and access gates
+  // happens on restore, client-side, because that is where the current gates
+  // and option lists live. The consequence is deliberate: a stale saved value
+  // can never widen visibility, because it is re-checked against live gates
+  // every time it is applied rather than trusted from storage.
+  // ==========================================================================
+  function viewPrefsIdentity(req: any, res: any): { userId: string; email: string | null } | null {
+    if (!req.isAuthenticated?.() || !req.user?.id) {
+      res.status(401).json({ error: "Authentication required" });
+      return null;
+    }
+    return { userId: String(req.user.id), email: req.user.email ?? null };
+  }
+
+  app.get("/api/user/view-prefs/:viewKey", async (req: any, res) => {
+    try {
+      const who = viewPrefsIdentity(req, res);
+      if (!who) return;
+      const { viewKey } = req.params;
+      if (!isValidViewKey(viewKey)) return res.status(400).json({ error: "Unknown view key" });
+      const prefs = await getViewPreferences(who.userId, viewKey);
+      // null (not 404) when nothing is saved: "no saved view" is a normal state
+      // the client renders defaults for, not an error.
+      return res.json({ prefs });
+    } catch (error) {
+      console.error("[view-prefs] GET failed:", error);
+      return res.status(500).json({ error: "Failed to load view preferences" });
+    }
+  });
+
+  app.put("/api/user/view-prefs/:viewKey", async (req: any, res) => {
+    try {
+      const who = viewPrefsIdentity(req, res);
+      if (!who) return;
+      const { viewKey } = req.params;
+      if (!isValidViewKey(viewKey)) return res.status(400).json({ error: "Unknown view key" });
+      const prefs = req.body?.prefs;
+      if (!prefs || typeof prefs !== "object" || Array.isArray(prefs)) {
+        return res.status(400).json({ error: "prefs object is required" });
+      }
+      // Cheap sanity bound — this is a small settings blob, never a payload.
+      if (JSON.stringify(prefs).length > 20_000) {
+        return res.status(413).json({ error: "prefs payload too large" });
+      }
+      await saveViewPreferences(who.userId, who.email, viewKey, prefs);
+      return res.json({ success: true });
+    } catch (error) {
+      console.error("[view-prefs] PUT failed:", error);
+      return res.status(500).json({ error: "Failed to save view preferences" });
+    }
+  });
+
+  app.delete("/api/user/view-prefs/:viewKey", async (req: any, res) => {
+    try {
+      const who = viewPrefsIdentity(req, res);
+      if (!who) return;
+      const { viewKey } = req.params;
+      if (!isValidViewKey(viewKey)) return res.status(400).json({ error: "Unknown view key" });
+      const deleted = await deleteViewPreferences(who.userId, viewKey);
+      return res.json({ success: true, deleted });
+    } catch (error) {
+      console.error("[view-prefs] DELETE failed:", error);
+      return res.status(500).json({ error: "Failed to reset view preferences" });
     }
   });
 

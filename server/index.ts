@@ -13,6 +13,7 @@ import { initAssignmentsTable } from "./assignments/db";
 import { initSyncTables } from "./sync/db";
 import { initActivityTable } from "./activity/db";
 import { initEmailTemplatesTable } from "./email/templates";
+import { initViewPreferencesTable } from "./view-preferences/db";
 
 const app = express();
 const httpServer = createServer(app);
@@ -200,6 +201,9 @@ app.use((req, res, next) => {
     await initSyncTables();
     await initActivityTable();
     await initEmailTemplatesTable();
+    // Prod creates this via migrations/add-user-view-preferences.sql
+    // (schema-before-code, C16); this keeps fresh/non-prod DBs in step.
+    await initViewPreferencesTable();
     startReminderCron();
     // Phase 3: load the crm_providers-derived email-axis directory, then keep it
     // fresh on an interval (mutations also refresh it on write). Sync resolvers

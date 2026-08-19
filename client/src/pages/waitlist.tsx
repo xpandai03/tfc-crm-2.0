@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSearch, useLocation } from "wouter";
 import {
@@ -17,6 +17,17 @@ import { PageLayout } from "@/components/layout/page-layout";
 import { DroppableColumn } from "@/components/kanban/droppable-column";
 import { DraggableCard } from "@/components/kanban/draggable-card";
 import { WaitlistListView, type WaitlistFilterState } from "@/components/waitlist/waitlist-list-view";
+import { WAITLIST_COLUMNS } from "@/components/waitlist/waitlist-columns";
+import {
+  applyViewPreferences,
+  defaultPreferences,
+  type RestoreResult,
+} from "@/lib/view-preferences";
+import { getViewPrefs } from "@/lib/api";
+import { CANONICAL_INSURANCES } from "@shared/insurance";
+import { MODALITY_OPTIONS } from "@shared/modality-utils";
+import { SERVICE_TYPES } from "@shared/service-types";
+import { REASON_CANONICALS } from "@shared/reason-canonicals";
 import { QuickNoteModal } from "@/components/ui/quick-note-modal";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { PageLoader } from "@/components/ui/page-loader";
@@ -51,6 +62,7 @@ import {
   getColumnForStatus,
   getUmbrellaForStatus,
   getEntryStatusForUmbrella,
+  STATUS_UMBRELLAS,
   stringStatusToCode,
   type PipelineColumnId,
   type UmbrellaId,
@@ -165,13 +177,52 @@ export default function Waitlist() {
       setLocation("/waitlist");
     }
   };
+  // Saved view preferences. Fetched ALONGSIDE the board query and folded into
+  // the same loading gate below, so the table's first paint already has the
+  // user's columns — no flash of the default column set.
+  const { data: prefsData, isLoading: prefsLoading } = useQuery<{ prefs: unknown | null }>({
+    queryKey: ["/api/user/view-prefs", "waitlist_list"],
+    queryFn: () => getViewPrefs("waitlist_list"),
+    staleTime: Infinity,   // only this tab changes it; we write through on save
+    retry: false,          // a prefs outage must never block the waitlist
+  });
   // Task ownership filter state.
   // "all" = unfiltered (matches the previous default: "Assigned to Me" switch OFF),
   // "me" = current user's assignments, or a specific staff email (managers only).
+  // Seeded from saved prefs once they resolve. applyViewPreferences has already
+  // dropped it if the user doesn't pass the gate right now.
   const [staffFilter, setStaffFilter] = useState<string>("all");
+  const staffRestoredRef = useRef(false);
 
   // Managers get a staff-member <Select> instead of the plain switch (own gate list).
   const canStaffFilter = canUseWaitlistStaffFilter(user?.email);
+
+  // Restored state. Every filter value is re-validated against the CURRENT
+  // option lists, and the staff filter against the CURRENT gate — a saved value
+  // can never resurrect a retired option or an access a user no longer has.
+  const restored: RestoreResult = useMemo(() => {
+    if (!prefsData) return defaultPreferences(WAITLIST_COLUMNS);
+    return applyViewPreferences(prefsData.prefs, {
+      allColumns: WAITLIST_COLUMNS,
+      validOptions: {
+        umbrella: Object.keys(STATUS_UMBRELLAS),
+        insurance: [...CANONICAL_INSURANCES],
+        modality: [...MODALITY_OPTIONS, "Unknown"],
+        language: ["English", "Spanish"],
+        reason: [...REASON_CANONICALS],
+        serviceType: [...SERVICE_TYPES],
+      },
+      canUseStaffFilter: canStaffFilter,
+      validSortFields: ["daysOnWaitlist", "dateAdded", "name"],
+    });
+  }, [prefsData, canStaffFilter]);
+
+  useEffect(() => {
+    if (!prefsData || staffRestoredRef.current) return;
+    staffRestoredRef.current = true;
+    if (restored.filters.staff !== "all") setStaffFilter(restored.filters.staff);
+  }, [prefsData, restored]);
+
 
   // Staff roster for the manager dropdown — reuses the assign-contact source.
   // Only fetched for managers; on loading/error the Select still renders Me/All.
@@ -206,6 +257,7 @@ export default function Waitlist() {
     queryKey: ["/api/get-waitlist-board"],
     queryFn: getWaitlistBoard,
   });
+
 
   // Attention flags — for badges on kanban cards and list view
   const { data: flagsData } = useQuery({
@@ -554,7 +606,9 @@ export default function Waitlist() {
     }
   }, [toast, listFilters, staffFilter, user?.email]);
 
-  if (isLoading) {
+  // Prefs join the same gate as the board data, so the first render of the
+  // table is already the user's saved view.
+  if (isLoading || prefsLoading) {
     return (
       <PageLayout>
         <PageLoader context="waitlist" />
@@ -729,6 +783,9 @@ export default function Waitlist() {
             contacts={contacts}
             currentUserEmail={user?.email}
             onFiltersChange={setListFilters}
+            restored={restored}
+            staffFilter={staffFilter}
+            canUseStaffFilter={canStaffFilter}
             initialInsuranceFilter={urlParams.insurance}
             initialModalityFilter={urlParams.modality}
             initialStatusFilter={urlParams.status}

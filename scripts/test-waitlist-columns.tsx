@@ -57,14 +57,24 @@ const baseContact = (over: any = {}) => ({
 });
 
 // ---------------------------------------------------------------- config shape
-eq("11 columns after the refactor", WAITLIST_COLUMNS.length, 11);
+eq("15 columns (11 default + 4 optional)", WAITLIST_COLUMNS.length, 15);
 eq("default order is the shipped order", ALL_COLUMN_IDS_IN_DEFAULT_ORDER,
+  ["name","umbrella","status","daysWaiting","service","insurance","modality","assignedTo","assignedProvider","paperwork","household","dateAdded","language","email","phone"]);
+// A user with no saved prefs must see exactly the pre-feature table.
+eq("11 visible by default (identical to pre-feature)", DEFAULT_VISIBLE_COLUMN_IDS, 
   ["name","umbrella","status","daysWaiting","service","insurance","modality","assignedTo","assignedProvider","paperwork","household"]);
-eq("all 11 visible by default (identical to pre-refactor)", DEFAULT_VISIBLE_COLUMN_IDS.length, 11);
+eq("the 4 optional columns are default-hidden",
+  WAITLIST_COLUMNS.filter((c) => !c.defaultVisible).map((c) => c.id), ["dateAdded","language","email","phone"]);
+// Internal plumbing must never be offerable.
+for (const banned of ["syncHash","syncedAt"]) {
+  ok(`${banned} is not a column`, !WAITLIST_COLUMNS.some((c) => c.id === banned));
+}
+// Status duration is explicitly deferred (needs a query change).
+ok("statusDuration is not a column", !WAITLIST_COLUMNS.some((c) => c.id === "statusDuration"));
 ok("name is alwaysVisible", !!WAITLIST_COLUMNS_BY_ID.name.alwaysVisible);
 ok("only name is alwaysVisible", WAITLIST_COLUMNS.filter((c) => c.alwaysVisible).length === 1);
-ok("every column has a unique id", new Set(WAITLIST_COLUMNS.map((c) => c.id)).size === 11);
-ok("order values are unique", new Set(WAITLIST_COLUMNS.map((c) => c.order)).size === 11);
+ok("every column has a unique id", new Set(WAITLIST_COLUMNS.map((c) => c.id)).size === WAITLIST_COLUMNS.length);
+ok("order values are unique", new Set(WAITLIST_COLUMNS.map((c) => c.order)).size === WAITLIST_COLUMNS.length);
 ok("only name and daysWaiting have custom headers",
    WAITLIST_COLUMNS.filter((c) => c.header).map((c) => c.id).join() === "name,daysWaiting");
 
@@ -75,6 +85,7 @@ const widths: Record<string, string | undefined> = {
   service: "w-[116px] px-2", insurance: "w-[104px] px-2", modality: "w-[120px] px-2",
   assignedTo: "w-[92px] px-2", assignedProvider: "w-[124px] px-2", paperwork: "w-[92px] px-2",
   household: undefined,
+  dateAdded: "w-[104px] px-2", language: "w-[88px] px-2", email: "w-[180px] px-2", phone: "w-[116px] px-2",
 };
 for (const [id, w] of Object.entries(widths)) eq(`width parity: ${id}`, WAITLIST_COLUMNS_BY_ID[id].widthClass, w);
 const cells: Record<string, string | undefined> = {
@@ -197,6 +208,27 @@ for (const [id, c] of Object.entries(cells)) eq(`cell-class parity: ${id}`, WAIT
      WAITLIST_COLUMNS_BY_ID.service.render(baseContact({ requestingFor: null, serviceRequested: "My Child" }), baseCtx()), "My Child");
   eq("service: em-dash when neither",
      WAITLIST_COLUMNS_BY_ID.service.render(baseContact({ requestingFor: null, serviceRequested: null }), baseCtx()), "—");
+}
+
+// ------------------------------------------------ OPTIONAL COLUMN renders
+{
+  eq("dateAdded: ISO renders MM/DD/YYYY",
+     WAITLIST_COLUMNS_BY_ID.dateAdded.render(baseContact({ dateAdded: "2026-01-28" }), baseCtx()), "01/28/2026");
+  eq("dateAdded: Excel serial renders MM/DD/YYYY",
+     WAITLIST_COLUMNS_BY_ID.dateAdded.render(baseContact({ dateAdded: 45917 as any }), baseCtx()), "09/17/2025");
+  eq("dateAdded: null renders a dash",
+     WAITLIST_COLUMNS_BY_ID.dateAdded.render(baseContact({ dateAdded: null }), baseCtx()), "—");
+  eq("language: value renders",
+     WAITLIST_COLUMNS_BY_ID.language.render(baseContact({ language: "Spanish" }), baseCtx()), "Spanish");
+  eq("language: null renders a dash",
+     WAITLIST_COLUMNS_BY_ID.language.render(baseContact({ language: null }), baseCtx()), "—");
+  const em = render("email", baseContact({ email: "person@example.com" }), baseCtx());
+  ok("email: renders truncated with full value in title",
+     textOf(em).includes("person@example.com") && em.some((n) => n.props?.title === "person@example.com"));
+  eq("email: null renders a dash",
+     WAITLIST_COLUMNS_BY_ID.email.render(baseContact({ email: null }), baseCtx()), "—");
+  eq("phone: value renders",
+     WAITLIST_COLUMNS_BY_ID.phone.render(baseContact({ phone: "5055550100" }), baseCtx()), "5055550100");
 }
 
 if (fails === 0) console.log("PASS — waitlist columns: config shape, width/class parity, and all render branches OK");
