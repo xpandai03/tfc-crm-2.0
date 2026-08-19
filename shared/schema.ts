@@ -144,6 +144,10 @@ export const waitlistContactSchema = z.object({
   daysOnWaitlist: z.number(),
   dateAdded: z.string().nullable(),
   assignedTo: z.string().nullable().optional(), // Staff email address (e.g., "jsmith@tfc.help")
+  // Already on the wire from getAllSyncContacts; typed here so they can be
+  // rendered as optional list columns. No query change was needed.
+  email: z.string().nullable().optional(),
+  phone: z.string().nullable().optional(),
   insurancePayer: z.string().nullable().optional(), // Insurance company name (for insights aggregation)
   modality: z.string().nullable().optional(), // Desired modality/location, legacy raw string (for insights aggregation)
   // Ordered modality priorities. Every filter and count keys off p1 only;

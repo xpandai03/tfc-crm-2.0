@@ -20,8 +20,11 @@ import { cn } from "@/lib/utils";
 export interface ContactSearchItem {
   contactId: string | number;
   name?: string;
-  email?: string;
-  phone?: string;
+  // Nullable to match the waitlist payload these come from: the DB columns are
+  // nullable and always were. Surfaced when email/phone were typed onto
+  // waitlistContactSchema for the optional list columns.
+  email?: string | null;
+  phone?: string | null;
   status?: string;
   serviceRequested?: string;
 }

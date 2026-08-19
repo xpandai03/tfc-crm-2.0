@@ -176,6 +176,13 @@ for (const col of CRM_OWNED_COLUMNS) {
      !new RegExp(`\\["${col}",`).test(fieldMapBlock));
 }
 
+// CRM-ONLY TABLES the sync must never touch. Same protection as the CRM-owned
+// columns above: the sync writes sync_contacts, sync_meta and form_submissions,
+// so a table it never names cannot be written or cleared by a sync cycle.
+for (const table of ["user_view_preferences"]) {
+  ok(`${table} is not referenced by any sync path`, !new RegExp(table).test(dbSrc));
+}
+
 // Paperwork Status is NOT a status code: it must stay out of the status-code
 // machinery entirely. If it ever needs to drive the pipeline, that is a
 // different feature with a different review.
