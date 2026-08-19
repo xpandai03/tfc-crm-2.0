@@ -12,8 +12,23 @@
  * reality every single time it is applied, rather than trusted from storage.
  */
 
-/** Bump when the shape changes incompatibly; unknown versions are discarded. */
-export const VIEW_PREFS_VERSION = 1;
+/**
+ * Version 2 adds `namedViews` alongside the existing last-state fields.
+ *
+ * NOT a breaking change: a v1 payload is upgraded on read (v1 has no named
+ * views, so the upgrade is "attach an empty list"), and every v1 field keeps
+ * its exact meaning. That is why this is a migrate-on-read bump rather than a
+ * new table — the last-state blob and the named views are read together, written
+ * together, and capped together, so splitting them across rows would buy
+ * nothing and cost a second round trip on every page load.
+ */
+export const VIEW_PREFS_VERSION = 2;
+/** Versions we can still read (older ones are upgraded, not discarded). */
+const READABLE_VERSIONS = [1, 2];
+
+/** Per-user cap. Enforced server-side too; this is the client-side guard. */
+export const MAX_NAMED_VIEWS = 8;
+export const MAX_VIEW_NAME_LENGTH = 30;
 
 export interface ViewPrefsFilters {
   umbrella: string;
@@ -28,11 +43,25 @@ export interface ViewPrefsFilters {
   staff: string;
 }
 
-export interface ViewPrefs {
-  version: number;
+/** A user-named arrangement. Snapshot only — applying one copies it into the
+ *  working state; it is never live-linked, so later tweaks can't mutate it. */
+export interface NamedView {
+  id: string;
+  name: string;
+  createdAt: string;
   columns: { visible: string[]; order: string[] };
   filters: ViewPrefsFilters;
   sort: { field: string; direction: string };
+}
+
+export interface ViewPrefs {
+  version: number;
+  /** Last-state (Phase 1). Unchanged in meaning. */
+  columns: { visible: string[]; order: string[] };
+  filters: ViewPrefsFilters;
+  sort: { field: string; direction: string };
+  /** Phase 2. Absent on a v1 payload. */
+  namedViews?: NamedView[];
 }
 
 /**
@@ -87,6 +116,8 @@ export interface RestoreResult {
   sort: { field: string; direction: string };
   /** Human-readable names of filters that were reset, for the notice. */
   resetFilters: string[];
+  /** The user's saved arrangements, validated on read. */
+  namedViews: NamedView[];
 }
 
 function defaultColumns(all: ColumnMetaForRestore[]) {
@@ -101,6 +132,26 @@ export function defaultPreferences(all: ColumnMetaForRestore[]): RestoreResult {
     filters: { ...DEFAULT_FILTERS },
     sort: { ...DEFAULT_SORT },
     resetFilters: [],
+    namedViews: [],
+  };
+}
+
+/**
+ * The stock arrangement, derived from the column config alone.
+ *
+ * Deliberately takes NO stored input. The Default chip must work when saved
+ * prefs are missing, stale or corrupt — it is the escape hatch, so it cannot
+ * depend on the thing the user may be escaping from.
+ */
+export function stockView(all: ColumnMetaForRestore[]): {
+  columns: { visible: string[]; order: string[] };
+  filters: ViewPrefsFilters;
+  sort: { field: string; direction: string };
+} {
+  return {
+    columns: defaultColumns(all),
+    filters: { ...DEFAULT_FILTERS },
+    sort: { ...DEFAULT_SORT },
   };
 }
 
@@ -125,7 +176,9 @@ export function applyViewPreferences(raw: unknown, ctx: RestoreContext): Restore
   const fallback = defaultPreferences(ctx.allColumns);
   if (!raw || typeof raw !== "object") return fallback;
   const p = raw as Partial<ViewPrefs>;
-  if (p.version !== VIEW_PREFS_VERSION) return fallback;
+  // Migrate-on-read: a v1 payload is valid, it simply has no named views.
+  // Anything we don't recognise is discarded rather than guessed at.
+  if (typeof p.version !== "number" || READABLE_VERSIONS.indexOf(p.version) === -1) return fallback;
 
   // ---- columns -------------------------------------------------------------
   const known = new Set(ctx.allColumns.map((c) => c.id));
@@ -203,7 +256,95 @@ export function applyViewPreferences(raw: unknown, ctx: RestoreContext): Restore
     sort.direction = p.sort?.direction === "asc" ? "asc" : "desc";
   }
 
-  return { columns: { visible, order }, filters, sort, resetFilters };
+  return {
+    columns: { visible, order },
+    filters,
+    sort,
+    resetFilters,
+    namedViews: sanitizeNamedViews((p as ViewPrefs).namedViews),
+  };
+}
+
+/**
+ * Keep only structurally-sound named views. A malformed entry is dropped rather
+ * than repaired: a half-understood arrangement applied to someone's table is
+ * worse than one that quietly isn't offered.
+ *
+ * NOTE: this validates SHAPE only. Filter values and access gates are checked
+ * at APPLY time by applyNamedView, because that is when the current option
+ * lists and gates are known — and because "it was allowed when saved" is not
+ * authorization.
+ */
+export function sanitizeNamedViews(raw: unknown): NamedView[] {
+  if (!Array.isArray(raw)) return [];
+  const out: NamedView[] = [];
+  for (const v of raw) {
+    if (!v || typeof v !== "object") continue;
+    const nv = v as Partial<NamedView>;
+    if (!isStr(nv.id) || !isStr(nv.name) || !nv.name.trim()) continue;
+    if (!nv.columns || !Array.isArray(nv.columns.visible) || !Array.isArray(nv.columns.order)) continue;
+    out.push({
+      id: nv.id,
+      name: nv.name.trim().slice(0, MAX_VIEW_NAME_LENGTH),
+      createdAt: isStr(nv.createdAt) ? nv.createdAt : "",
+      columns: { visible: nv.columns.visible.filter(isStr), order: nv.columns.order.filter(isStr) },
+      filters: { ...DEFAULT_FILTERS, ...(nv.filters ?? {}) },
+      sort: {
+        field: isStr(nv.sort?.field) ? nv.sort!.field : DEFAULT_SORT.field,
+        direction: nv.sort?.direction === "asc" ? "asc" : "desc",
+      },
+    });
+    if (out.length >= MAX_NAMED_VIEWS) break;
+  }
+  return out;
+}
+
+/**
+ * Apply a named view to the working state.
+ *
+ * Runs the SAME validation and gating as a fresh restore, by construction: it
+ * builds a v-current payload from the snapshot and hands it to
+ * applyViewPreferences. A named view therefore cannot do anything a restore
+ * couldn't — it can't resurrect a retired filter value, and it can't hand back
+ * an access the user has since lost.
+ */
+export function applyNamedView(view: NamedView, ctx: RestoreContext): RestoreResult {
+  return applyViewPreferences(
+    {
+      version: VIEW_PREFS_VERSION,
+      columns: view.columns,
+      filters: view.filters,
+      sort: view.sort,
+    },
+    ctx,
+  );
+}
+
+/** Name rules: trimmed, 1-30 chars, unique per user case-insensitively. */
+export function validateViewName(
+  name: string,
+  existing: NamedView[],
+  ignoreId?: string,
+): { ok: true; name: string } | { ok: false; error: string } {
+  const trimmed = name.trim();
+  if (!trimmed) return { ok: false, error: "Name is required" };
+  if (trimmed.length > MAX_VIEW_NAME_LENGTH) {
+    return { ok: false, error: `Name must be ${MAX_VIEW_NAME_LENGTH} characters or fewer` };
+  }
+  const clash = existing.some(
+    (v) => v.id !== ignoreId && v.name.trim().toLowerCase() === trimmed.toLowerCase(),
+  );
+  if (clash) return { ok: false, error: "You already have a view with that name" };
+  return { ok: true, name: trimmed };
+}
+
+/** True when the working state differs from a named view's snapshot. */
+export function hasDivergedFrom(
+  view: NamedView,
+  current: { columns: { visible: string[]; order: string[] }; filters: ViewPrefsFilters; sort: { field: string; direction: string } },
+): boolean {
+  return JSON.stringify({ c: view.columns, f: view.filters, s: view.sort })
+      !== JSON.stringify({ c: current.columns, f: current.filters, s: current.sort });
 }
 
 /** Serialize current UI state into the stored shape. */
@@ -211,6 +352,9 @@ export function buildViewPreferences(
   columns: { visible: string[]; order: string[] },
   filters: ViewPrefsFilters,
   sort: { field: string; direction: string },
+  namedViews: NamedView[] = [],
 ): ViewPrefs {
-  return { version: VIEW_PREFS_VERSION, columns, filters, sort };
+  // Named views ride in the same blob as last-state so a single write keeps
+  // them consistent — an auto-save can never drop them.
+  return { version: VIEW_PREFS_VERSION, columns, filters, sort, namedViews };
 }

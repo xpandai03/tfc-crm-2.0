@@ -5,7 +5,8 @@
  * is fiddly (drag handles in <th>, live preview, touch and keyboard support)
  * and buys nothing here — the list is short and reordering is rare.
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -20,9 +21,18 @@ interface Props {
   onChange: (next: { order: string[]; visible: string[] }) => void;
   onReset: () => void;
   isResetting?: boolean;
+  /** Snapshot the current arrangement under a name. */
+  onSaveAsView?: (name: string) => void;
+  savedViewCount?: number;
+  maxViews?: number;
 }
 
-export function ColumnSettings({ allColumns, order, visible, onChange, onReset, isResetting }: Props) {
+export function ColumnSettings({
+  allColumns, order, visible, onChange, onReset, isResetting,
+  onSaveAsView, savedViewCount = 0, maxViews = 8,
+}: Props) {
+  const [newViewName, setNewViewName] = useState("");
+  const atLimit = savedViewCount >= maxViews;
   const byId = useMemo(() => {
     const m: Record<string, WaitlistColumnDef> = {};
     allColumns.forEach((c) => { m[c.id] = c; });
@@ -102,6 +112,41 @@ export function ColumnSettings({ allColumns, order, visible, onChange, onReset, 
             );
           })}
         </div>
+        {onSaveAsView && (
+          <div className="pt-2 mt-2 border-t space-y-1.5">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Save as view
+            </span>
+            <div className="flex items-center gap-1.5">
+              <Input
+                value={newViewName}
+                maxLength={30}
+                placeholder={atLimit ? `Limit ${maxViews} reached` : "Name this view…"}
+                disabled={atLimit}
+                onChange={(e) => setNewViewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && newViewName.trim()) {
+                    onSaveAsView(newViewName); setNewViewName("");
+                  }
+                }}
+                className="h-7 text-xs"
+                data-testid="input-new-view-name"
+              />
+              <Button
+                size="sm" variant="secondary" className="h-7 text-xs shrink-0"
+                disabled={atLimit || !newViewName.trim()}
+                onClick={() => { onSaveAsView(newViewName); setNewViewName(""); }}
+                data-testid="button-save-as-view"
+              >
+                Save
+              </Button>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              {savedViewCount} of {maxViews} views saved
+            </p>
+          </div>
+        )}
+
         <div className="pt-2 mt-2 border-t">
           <Button
             variant="outline" size="sm" className="w-full text-xs"
