@@ -162,6 +162,27 @@ export const waitlistContactSchema = z.object({
   language: z.string().nullable().optional(), // Preferred service language ("English"/"Spanish"); for wait-list filter
   patientDob: z.string().nullable().optional(), // Patient date of birth (YYYY-MM-DD or MM/DD/YYYY)
   assignedProviderName: z.string().nullable().optional(), // Latest assigned provider name (from contact_provider_assignments)
+  // Phase 2 optional list columns. All were ALREADY carried by the board
+  // payload (getAllSyncContacts selects ~50 fields); typing them here is what
+  // makes them renderable. No query changed.
+  lastContact: z.string().nullable().optional(),
+  insurancePlan: z.string().nullable().optional(),
+  insuranceStatus: z.string().nullable().optional(),
+  referralSource: z.string().nullable().optional(),
+  referralStatus: z.string().nullable().optional(),
+  preferredContact: z.string().nullable().optional(),
+  age: z.number().nullable().optional(),
+  gender: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  county: z.string().nullable().optional(),
+  state: z.string().nullable().optional(),
+  zipCode: z.string().nullable().optional(),
+  formCompletedBy: z.string().nullable().optional(),
+  priorProvider: z.string().nullable().optional(),
+  priority: z.string().nullable().optional(),
+  custody: z.string().nullable().optional(),
+  flags: z.string().nullable().optional(),
+  intakeSource: z.string().nullable().optional(),
   // Household members (other contacts sharing email/phone), with each member's
   // own assigned provider — surfaced on the card so staff can avoid pairing two
   // household members with the same provider. Bulk-resolved on the board path.
