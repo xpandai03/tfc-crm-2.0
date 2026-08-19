@@ -60,6 +60,21 @@ function formatListDate(value: string | number | null | undefined): string {
   return str || "—";
 }
 
+/**
+ * Renderer for the compact scalar columns: truncates to the column width with
+ * the full value on hover, so a longer-than-expected value can never push the
+ * row height out or force the table wider than its column budget.
+ */
+function compactText(value: unknown): ReactNode {
+  const v = value === null || value === undefined ? "" : String(value).trim();
+  if (!v) return "—";
+  return (
+    <span className="block truncate" title={v}>
+      {v}
+    </span>
+  );
+}
+
 export type SortField = "daysOnWaitlist" | "dateAdded" | "name";
 export type SortDirection = "asc" | "desc";
 
@@ -447,6 +462,174 @@ export const WAITLIST_COLUMNS: WaitlistColumnDef[] = [
     widthClass: "w-[116px] px-2",
     cellClass: "px-2 text-xs text-muted-foreground whitespace-nowrap",
     render: (contact) => contact.phone || "—",
+  },
+  // --- Phase 2 additions. Compact scalars only: anything long (reason for
+  // therapy, detailed reason, last note, prior services, street address) is
+  // deliberately absent — it wraps, blows up row height, and belongs on the
+  // contact card. Identifier-class fields (insurance member ID, referral auth
+  // number, patient DOB) are also excluded: putting them in a browsable list
+  // column meaningfully widens on-screen exposure, and that is a client call.
+  {
+    id: "lastContact",
+    label: "Last Contact",
+    order: 15,
+    defaultVisible: false,
+    widthClass: "w-[104px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => compactText((contact as any).lastContact),
+  },
+  {
+    id: "insurancePlan",
+    label: "Insurance Plan",
+    order: 16,
+    defaultVisible: false,
+    widthClass: "w-[128px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => compactText((contact as any).insurancePlan),
+  },
+  {
+    id: "insuranceStatus",
+    label: "Insurance Status",
+    order: 17,
+    defaultVisible: false,
+    widthClass: "w-[112px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => compactText((contact as any).insuranceStatus),
+  },
+  {
+    id: "referralSource",
+    label: "Referral Source",
+    order: 18,
+    defaultVisible: false,
+    widthClass: "w-[128px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => compactText((contact as any).referralSource),
+  },
+  {
+    id: "referralStatus",
+    label: "Referral Status",
+    order: 19,
+    defaultVisible: false,
+    widthClass: "w-[112px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => compactText((contact as any).referralStatus),
+  },
+  {
+    id: "preferredContact",
+    label: "Preferred Contact",
+    order: 20,
+    defaultVisible: false,
+    widthClass: "w-[116px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => compactText((contact as any).preferredContact),
+  },
+  {
+    id: "age",
+    label: "Age",
+    order: 21,
+    defaultVisible: false,
+    widthClass: "w-[60px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => (typeof (contact as any).age === "number" ? String((contact as any).age) : "—"),
+  },
+  {
+    id: "gender",
+    label: "Gender",
+    order: 22,
+    defaultVisible: false,
+    widthClass: "w-[80px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => compactText((contact as any).gender),
+  },
+  {
+    id: "city",
+    label: "City",
+    order: 23,
+    defaultVisible: false,
+    widthClass: "w-[112px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => compactText((contact as any).city),
+  },
+  {
+    id: "county",
+    label: "County",
+    order: 24,
+    defaultVisible: false,
+    widthClass: "w-[104px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => compactText((contact as any).county),
+  },
+  {
+    id: "state",
+    label: "State",
+    order: 25,
+    defaultVisible: false,
+    widthClass: "w-[64px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => compactText((contact as any).state),
+  },
+  {
+    id: "zipCode",
+    label: "Zip",
+    order: 26,
+    defaultVisible: false,
+    widthClass: "w-[76px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => compactText((contact as any).zipCode),
+  },
+  {
+    id: "formCompletedBy",
+    label: "Form Completed By",
+    order: 27,
+    defaultVisible: false,
+    widthClass: "w-[136px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => compactText((contact as any).formCompletedBy),
+  },
+  {
+    id: "priorProvider",
+    label: "Prior Provider",
+    order: 28,
+    defaultVisible: false,
+    widthClass: "w-[128px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => compactText((contact as any).priorProvider),
+  },
+  {
+    id: "priority",
+    label: "Priority",
+    order: 29,
+    defaultVisible: false,
+    widthClass: "w-[88px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => compactText((contact as any).priority),
+  },
+  {
+    id: "custody",
+    label: "Custody",
+    order: 30,
+    defaultVisible: false,
+    widthClass: "w-[96px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => compactText((contact as any).custody),
+  },
+  {
+    id: "flags",
+    label: "Flags",
+    order: 31,
+    defaultVisible: false,
+    widthClass: "w-[96px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => compactText((contact as any).flags),
+  },
+  {
+    id: "intakeSource",
+    label: "Intake Source",
+    order: 32,
+    defaultVisible: false,
+    widthClass: "w-[112px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    render: (contact) => compactText((contact as any).intakeSource),
   },
   {
     id: "household",

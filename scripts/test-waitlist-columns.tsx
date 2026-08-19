@@ -57,17 +57,34 @@ const baseContact = (over: any = {}) => ({
 });
 
 // ---------------------------------------------------------------- config shape
-eq("15 columns (11 default + 4 optional)", WAITLIST_COLUMNS.length, 15);
-eq("default order is the shipped order", ALL_COLUMN_IDS_IN_DEFAULT_ORDER,
-  ["name","umbrella","status","daysWaiting","service","insurance","modality","assignedTo","assignedProvider","paperwork","household","dateAdded","language","email","phone"]);
+eq("33 columns (11 default + 22 optional)", WAITLIST_COLUMNS.length, 33);
+// The 11 stock columns must remain first and in their exact original order —
+// that is the pixel-identical guarantee for a non-customizing user.
+eq("stock 11 lead the default order", ALL_COLUMN_IDS_IN_DEFAULT_ORDER.slice(0, 11),
+  ["name","umbrella","status","daysWaiting","service","insurance","modality","assignedTo","assignedProvider","paperwork","household"]);
 // A user with no saved prefs must see exactly the pre-feature table.
 eq("11 visible by default (identical to pre-feature)", DEFAULT_VISIBLE_COLUMN_IDS, 
   ["name","umbrella","status","daysWaiting","service","insurance","modality","assignedTo","assignedProvider","paperwork","household"]);
-eq("the 4 optional columns are default-hidden",
-  WAITLIST_COLUMNS.filter((c) => !c.defaultVisible).map((c) => c.id), ["dateAdded","language","email","phone"]);
-// Internal plumbing must never be offerable.
-for (const banned of ["syncHash","syncedAt"]) {
-  ok(`${banned} is not a column`, !WAITLIST_COLUMNS.some((c) => c.id === banned));
+eq("22 optional columns, all default-hidden", WAITLIST_COLUMNS.filter((c) => !c.defaultVisible).length, 22);
+// Phase 2 picker set.
+for (const id of ["lastContact","insurancePlan","insuranceStatus","referralSource","referralStatus",
+                  "preferredContact","age","gender","city","county","state","zipCode",
+                  "formCompletedBy","priorProvider","priority","custody","flags","intakeSource"]) {
+  ok(`${id} is offered and default-hidden`,
+     WAITLIST_COLUMNS.some((c) => c.id === id && !c.defaultVisible));
+}
+// PERMANENTLY EXCLUDED. Internal plumbing, the deferred query-change column,
+// long free-text that would wreck row height, and identifier-class fields whose
+// exposure in a browsable list is a client decision, not a default.
+for (const banned of ["syncHash","syncedAt","statusDuration",
+                      "reasonForTherapy","detailedReason","lastNote","reasonForSeeking","priorServices",
+                      "streetAddress","rfsLink","documentLink",
+                      "insuranceId","referralAuth","patientDob"]) {
+  ok(`${banned} is NOT offerable as a column`, !WAITLIST_COLUMNS.some((c) => c.id === banned));
+}
+// Every optional column must declare a width, or it can blow the layout out.
+for (const c of WAITLIST_COLUMNS.filter((x) => !x.defaultVisible)) {
+  ok(`${c.id} declares a widthClass`, !!c.widthClass);
 }
 // Status duration is explicitly deferred (needs a query change).
 ok("statusDuration is not a column", !WAITLIST_COLUMNS.some((c) => c.id === "statusDuration"));
