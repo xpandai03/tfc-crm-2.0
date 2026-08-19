@@ -11,7 +11,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { OwnerBadge } from "@/components/ui/owner-badge";
 import {
   Select,
   SelectContent,
@@ -23,8 +22,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { ArrowUpDown, ArrowUp, ArrowDown, Search, X, EyeOff, Shield, AlertTriangle } from "lucide-react";
-import { cn, formatDob } from "@/lib/utils";
+import { Search, X, EyeOff, Shield } from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   STATUS_UMBRELLAS,
   STATUS_LABELS,
@@ -34,16 +33,17 @@ import {
   type UmbrellaId,
 } from "@/lib/status-config";
 import {
-  CANONICAL_INSURANCES,
-  abbreviateInsurance,
-  matchesInsurance,
-} from "@shared/insurance";
+  WAITLIST_COLUMNS,
+  buildProviderDisplayMap,
+  type SortField,
+  type SortDirection,
+  type WaitlistCellCtx,
+} from "./waitlist-columns";
+import { CANONICAL_INSURANCES, matchesInsurance } from "@shared/insurance";
 import {
-  getModalityPriorities,
   getPrimaryModality,
   matchesPrimaryModality,
   isRetiredModality,
-  MODALITY_SHORT_LABELS,
 } from "@shared/modality-utils";
 import { getAttentionFlags } from "@/lib/api";
 import type { WaitlistContact } from "@shared/schema";
@@ -87,71 +87,9 @@ interface WaitlistListViewProps {
 // (formatDateForDisplay removed: the Date Added column it served was replaced
 // by the Modality badge column. dateAdded is still a sort field.)
 
-type SortField = "daysOnWaitlist" | "dateAdded" | "name";
-type SortDirection = "asc" | "desc";
 
-const umbrellaColors: Record<UmbrellaId, string> = {
-  WL: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
-  PS: "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300",
-  SCH: "bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200",
-  REF: "bg-teal-100 text-teal-700 dark:bg-teal-900/50 dark:text-teal-300",
-  PMR: "bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300",
-  INS: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
-};
 
-/**
- * Abbreviate a provider name to "First L." for the list view's Assigned
- * Provider column, which is tight on horizontal space.
- *
- * DISPLAY LAYER ONLY, and only here. Contact cards, assignment modals, provider
- * management and the CSV export all keep full names — a CSV has no space
- * constraint and abbreviating there would destroy information.
- *
- * Names that don't fit "First Last" (single word, or three+ parts) are returned
- * untouched rather than guessed at.
- */
-function abbreviateProviderName(fullName: string): string {
-  const parts = fullName.trim().split(/\s+/).filter(Boolean);
-  if (parts.length < 2) return fullName.trim();
-  const first = parts[0];
-  const last = parts[parts.length - 1];
-  const initial = last[0];
-  if (!initial) return fullName.trim();
-  return `${first} ${initial.toUpperCase()}.`;
-}
 
-/**
- * Build fullName -> displayName for a set of providers, keeping full names for
- * any pair that would abbreviate to the same thing.
- *
- * Without this, two providers sharing a first name and last initial would both
- * render "Anna A." and staff couldn't tell which contact went to whom — the
- * exact confusion the column exists to prevent.
- */
-function buildProviderDisplayMap(fullNames: string[]): Record<string, string> {
-  // Plain objects/arrays rather than Map/Set: this tsconfig targets below ES2015
-  // without downlevelIteration, so for-of over a Map or Set is a type error.
-  const byAbbrev: Record<string, string[]> = {};
-  fullNames.forEach((name) => {
-    const clean = name.trim();
-    if (!clean) return;
-    const abbrev = abbreviateProviderName(clean);
-    const group = byAbbrev[abbrev] ?? (byAbbrev[abbrev] = []);
-    if (group.indexOf(clean) === -1) group.push(clean);
-  });
-
-  const out: Record<string, string> = {};
-  Object.keys(byAbbrev).forEach((abbrev) => {
-    const originals = byAbbrev[abbrev];
-    // Collision: more than one distinct full name abbreviates to this, so
-    // everyone in the group falls back to their full name.
-    const collides = originals.length > 1;
-    originals.forEach((original) => {
-      out[original] = collides ? original : abbrev;
-    });
-  });
-  return out;
-}
 
 /** Parse ?status=100 or ?status=100,101,102 — returns null when no status filter (all). */
 function parseStatusCodesFromFilter(raw: string | null | undefined): number[] | null {
@@ -280,6 +218,14 @@ export function WaitlistListView({
   // read as a bug. Retired values (Flex / Hybrid / generic In Person) are
   // excluded even where historical records still carry them; those records keep
   // displaying their value, they just aren't filterable by it.
+  // Columns in their default order. The refactor keeps every column visible so
+  // behavior is identical to before; user-configurable visibility/order arrives
+  // in the next commit and replaces only this line.
+  const visibleColumns = useMemo(
+    () => WAITLIST_COLUMNS.slice().sort((a, b) => a.order - b.order),
+    [],
+  );
+
   // Built from ALL contacts, not just the filtered set, so a provider's
   // abbreviation doesn't change as the user filters — a name that reads
   // "Anna A." in one view and "Anna Alvarez" in another is worse than either.
@@ -418,16 +364,6 @@ export function WaitlistListView({
   };
 
   // Render sort icon
-  const SortIcon = ({ field }: { field: SortField }) => {
-    if (sortField !== field) {
-      return <ArrowUpDown className="h-4 w-4 text-muted-foreground/50" />;
-    }
-    return sortDirection === "asc" ? (
-      <ArrowUp className="h-4 w-4" />
-    ) : (
-      <ArrowDown className="h-4 w-4" />
-    );
-  };
 
   // Reset status filter when umbrella changes
   const handleUmbrellaChange = (value: string) => {
@@ -579,54 +515,21 @@ export function WaitlistListView({
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md border-b border-white/40 dark:border-gray-700/40 shadow-sm">
             <TableRow className="hover:bg-transparent">
-              <TableHead>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="-ml-3 h-8"
-                  onClick={() => toggleSort("name")}
-                >
-                  Name
-                  <SortIcon field="name" />
-                </Button>
-              </TableHead>
-              <TableHead className="w-[104px]">Umbrella</TableHead>
-              {/* Column tightening (client request): Status, Days Waiting,
-                  Service, Modality and Assigned To are width-capped and given
-                  tighter horizontal padding so every column fits at 1440px
-                  without horizontal scroll. No column was removed — Days
-                  Waiting and Household are both in active use. Name is
-                  deliberately left unconstrained so it stays fully readable. */}
-              <TableHead className="w-[168px] px-2">Status</TableHead>
-              <TableHead className="w-[76px] px-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="-ml-2 h-8 px-1"
-                  onClick={() => toggleSort("daysOnWaitlist")}
-                  title="Days Waiting"
-                >
-                  Days
-                  <SortIcon field="daysOnWaitlist" />
-                </Button>
-              </TableHead>
-              <TableHead className="w-[116px] px-2">Service</TableHead>
-              {/* Replaced the Date Added column: Days Waiting already covers
-                  recency, and staff need to see at a glance which locations a
-                  contact will attend. dateAdded remains the default sort field
-                  (see SortField) — only its header button is gone. */}
-              <TableHead className="w-[104px] px-2">Insurance</TableHead>
-              <TableHead className="w-[120px] px-2">Modality</TableHead>
-              <TableHead className="w-[92px] px-2">Assigned To</TableHead>
-              <TableHead className="w-[124px] px-2">Assigned Provider</TableHead>
-              <TableHead className="w-[92px] px-2">Paperwork</TableHead>
-              <TableHead>Household</TableHead>
+              {visibleColumns.map((col) => (
+                <TableHead key={col.id} className={col.widthClass}>
+                  {col.header
+                    ? col.header({ sortField, sortDirection, toggleSort })
+                    : col.label}
+                </TableHead>
+              ))}
             </TableRow>
           </TableHeader>
           <TableBody>
             {sortedContacts.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={11} className="h-24 text-center text-muted-foreground">
+                {/* colSpan follows the visible column count so the empty state
+                    always spans the full table, whatever the user has on. */}
+                <TableCell colSpan={visibleColumns.length} className="h-24 text-center text-muted-foreground">
                   No contacts match the current filters
                 </TableCell>
               </TableRow>
@@ -634,9 +537,19 @@ export function WaitlistListView({
               sortedContacts.map((contact) => {
                 const statusCode = getStatusCode(contact);
                 const umbrella = getUmbrella(contact);
-                const umbrellaLabel = umbrella ? STATUS_UMBRELLAS[umbrella].label : "Unknown";
-                const statusLabel = STATUS_LABELS[statusCode] || `Status ${statusCode}`;
-                const isInactive = !isActiveStatus(statusCode);
+                // Derived once per row and handed to every cell renderer, so no
+                // column recomputes them and none can drift from another.
+                const ctx: WaitlistCellCtx = {
+                  statusCode,
+                  umbrella,
+                  umbrellaLabel: umbrella ? STATUS_UMBRELLAS[umbrella].label : "Unknown",
+                  statusLabel: STATUS_LABELS[statusCode] || `Status ${statusCode}`,
+                  isInactive: !isActiveStatus(statusCode),
+                  daysWaiting: computeDaysWaiting(contact.dateAdded, contact.daysOnWaitlist),
+                  flaggedIds,
+                  providerDisplayNames,
+                  currentUserEmail,
+                };
 
                 return (
                   <TableRow
@@ -645,170 +558,14 @@ export function WaitlistListView({
                       "cursor-pointer transition-all duration-200",
                       "bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm",
                       "hover:bg-white/90 dark:hover:bg-gray-800/90 hover:backdrop-blur-md hover:shadow-md hover:-translate-y-0.5",
-                      isInactive && "opacity-60"
+                      ctx.isInactive && "opacity-60"
                     )}
                   >
-                    <TableCell className="font-medium">
-                      <Link href={`/contact/${contact.contactId}`}>
-                        <span className={cn(
-                          "hover:underline",
-                          isInactive ? "text-muted-foreground italic" : "text-primary"
-                        )}>
-                          {contact.name}
-                        </span>
-                      </Link>
-                      {flaggedIds.has(contact.contactId) && (
-                        <Badge variant="outline" className="ml-1.5 text-[10px] px-1 py-0 h-4 text-amber-600 border-amber-400/50 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-600/30">
-                          <AlertTriangle className="h-2.5 w-2.5 mr-0.5" />
-                          Attn
-                        </Badge>
-                      )}
-                      {isInactive && (
-                        <Badge variant="outline" className="ml-1.5 text-[10px] px-1 py-0 h-4 text-muted-foreground border-muted-foreground/30">
-                          Inactive
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {umbrella && (
-                        <Badge className={cn("font-normal", umbrellaColors[umbrella])}>
-                          {umbrellaLabel}
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="px-2">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-mono text-[11px] text-muted-foreground">{statusCode}</span>
-                        <span className={cn("text-xs leading-tight", isInactive && "italic")}>{statusLabel}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="px-2">
-                      {(() => {
-                        const dw = computeDaysWaiting(contact.dateAdded, contact.daysOnWaitlist);
-                        return (
-                          <span
-                            className={cn(
-                              "font-medium",
-                              !isInactive && dw >= 60 && "text-red-600 dark:text-red-400",
-                              !isInactive && dw >= 30 && dw < 60 && "text-amber-600 dark:text-amber-400"
-                            )}
-                          >
-                            {dw}
-                          </span>
-                        );
-                      })()}
-                    </TableCell>
-                    <TableCell className="px-2 text-xs text-muted-foreground">
-                      {contact.requestingFor ?? contact.serviceRequested ?? "—"}
-                    </TableCell>
-                    <TableCell className="px-2">
-                      {contact.insurancePayer ? (
-                        <span
-                          className="text-xs text-foreground whitespace-nowrap"
-                          // Full stored value on hover — the column abbreviates,
-                          // but staff must be able to see exactly what a record
-                          // holds, especially for legacy strings.
-                          title={contact.insurancePayer}
-                        >
-                          {abbreviateInsurance(contact.insurancePayer)}
-                        </span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="px-2">
-                      {(() => {
-                        const list = getModalityPriorities(contact);
-                        if (list.length === 0) {
-                          return <span className="text-xs text-muted-foreground italic">Unknown</span>;
-                        }
-                        return (
-                          <div className="flex flex-wrap items-center gap-1">
-                            {list.map((m, i) => (
-                              <Badge
-                                key={m}
-                                variant="outline"
-                                className={cn(
-                                  "text-[10px] px-1.5 py-0 h-4 font-normal",
-                                  // P1 is the choice reports and Insights count,
-                                  // so it reads as primary; the rest are muted.
-                                  i === 0
-                                    ? "border-primary/40 bg-primary/10 text-primary font-medium"
-                                    : "text-muted-foreground border-muted-foreground/30"
-                                )}
-                                title={i === 0 ? `${m} (first priority)` : `${m} (priority ${i + 1})`}
-                              >
-                                {MODALITY_SHORT_LABELS[m] ?? m}
-                              </Badge>
-                            ))}
-                          </div>
-                        );
-                      })()}
-                    </TableCell>
-                    <TableCell className="px-2">
-                      <OwnerBadge
-                        email={contact.assignedTo}
-                        currentUserEmail={currentUserEmail}
-                        showUnassigned={false}
-                        size="sm"
-                      />
-                    </TableCell>
-                    <TableCell className="px-2 text-xs">
-                      {contact.assignedProviderName ? (
-                        <span
-                          className="text-foreground font-medium whitespace-nowrap"
-                          // Full name stays available on hover, so abbreviating
-                          // costs nothing when someone needs to be certain.
-                          title={contact.assignedProviderName}
-                        >
-                          {providerDisplayNames[contact.assignedProviderName] ??
-                            abbreviateProviderName(contact.assignedProviderName)}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">No provider</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="px-2">
-                      {contact.paperworkStatus ? (
-                        <Badge
-                          variant="outline"
-                          className="text-[10px] px-1.5 py-0 h-4 font-normal whitespace-nowrap text-muted-foreground border-muted-foreground/30"
-                        >
-                          {contact.paperworkStatus}
-                        </Badge>
-                      ) : (
-                        // Blank, not a dash: "not tracked yet" should read as
-                        // absence, not as a value staff need to interpret.
-                        <span />
-                      )}
-                    </TableCell>
-                    <TableCell className="text-xs">
-                      {contact.householdMembers && contact.householdMembers.length > 0 ? (
-                        <div className="space-y-0.5">
-                          {contact.householdMembers.map((m, i) => {
-                            const conflict = !!m.assignedProviderName && !!contact.assignedProviderName
-                              && m.assignedProviderName === contact.assignedProviderName;
-                            return (
-                              <div key={i} className="whitespace-nowrap">
-                                <span className="text-foreground font-medium">
-                                  {m.name}{m.dob ? ` (${formatDob(m.dob)})` : ""}
-                                </span>
-                                {m.assignedProviderName && (
-                                  <span className={cn(
-                                    "ml-1",
-                                    conflict ? "text-red-600 dark:text-red-400 font-semibold" : "text-muted-foreground"
-                                  )}>
-                                    · {conflict ? "⚠ same: " : ""}{m.assignedProviderName}
-                                  </span>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
+                    {visibleColumns.map((col) => (
+                      <TableCell key={col.id} className={col.cellClass}>
+                        {col.render(contact, ctx)}
+                      </TableCell>
+                    ))}
                   </TableRow>
                 );
               })
