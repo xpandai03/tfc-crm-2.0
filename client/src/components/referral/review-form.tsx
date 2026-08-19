@@ -18,7 +18,7 @@ import {
 import { ChevronDown } from "lucide-react";
 import { REASON_CANONICALS } from "@shared/reason-canonicals";
 import { MODALITY_OPTIONS as CANONICAL_MODALITY_OPTIONS } from "@shared/modality-utils";
-import { ACCEPTED_INSURANCES } from "@shared/insurance-utils";
+import { CANONICAL_INSURANCES } from "@shared/insurance";
 import { SERVICE_TYPES } from "@shared/service-types";
 
 export interface ReferralFormState {
@@ -384,9 +384,9 @@ export function ReviewForm({ value, onChange, onSubmit, onStartOver, isSubmittin
       <Section title="Referral">
         <div className="grid grid-cols-2 gap-3">
           <Field label={labelFor("insurancePayer")}>
-            {/* Dropdown-only (shared ACCEPTED_INSURANCES + Unknown). Free text
-                here is what produced "BCBS", "BCBS Comm", "Blue cross" etc. as
-                separate buckets in every report. */}
+            {/* Canonical 16 only (@shared/insurance). Free text here is what
+                produced "BCBS", "BCBS Comm", "Blue cross" etc. as separate
+                buckets. "Unknown" is one of the 16, so it isn't appended. */}
             <Select
               value={value.insurancePayer || undefined}
               onValueChange={(v) => set("insurancePayer", v)}
@@ -395,12 +395,11 @@ export function ReviewForm({ value, onChange, onSubmit, onStartOver, isSubmittin
                 <SelectValue placeholder="Select a payer…" />
               </SelectTrigger>
               <SelectContent>
-                {ACCEPTED_INSURANCES.map((i) => (
+                {CANONICAL_INSURANCES.map((i) => (
                   <SelectItem key={i} value={i}>
                     {i}
                   </SelectItem>
                 ))}
-                <SelectItem value="Unknown">Unknown</SelectItem>
               </SelectContent>
             </Select>
           </Field>

@@ -33,7 +33,11 @@ import {
   isActiveStatus,
   type UmbrellaId,
 } from "@/lib/status-config";
-import { normalizeInsurance } from "@/lib/insurance-utils";
+import {
+  CANONICAL_INSURANCES,
+  abbreviateInsurance,
+  matchesInsurance,
+} from "@shared/insurance";
 import {
   getModalityPriorities,
   getPrimaryModality,
@@ -261,15 +265,11 @@ export function WaitlistListView({
     searchQuery,
   ]);
 
-  // Compute unique insurance options from contacts (normalized)
-  const availableInsurances = useMemo(() => {
-    const insuranceSet = new Set<string>();
-    for (const contact of contacts) {
-      const normalized = normalizeInsurance(contact.insurancePayer);
-      insuranceSet.add(normalized);
-    }
-    return Array.from(insuranceSet).sort();
-  }, [contacts]);
+  // Insurance options are the CANONICAL 16, not values derived from the data.
+  // Deriving from data would resurface the ~114 legacy strings as filter
+  // choices, which is exactly what this batch removes. Records holding a legacy
+  // payer are reachable under "All Insurances" only.
+  const availableInsurances = CANONICAL_INSURANCES;
 
   // Compute unique modality options from contacts. Built from the UNION of each
   // contact's tokens (not just its primary bucket) so a modality only one
@@ -321,12 +321,12 @@ export function WaitlistListView({
         return false;
       }
 
-      // Insurance filter (use normalized comparison for consistency with Insights)
-      if (insuranceFilter !== "all") {
-        const contactInsurance = normalizeInsurance(contact.insurancePayer);
-        if (contactInsurance !== insuranceFilter) {
-          return false;
-        }
+      // Insurance filter — EXACT canonical match via the shared predicate (the
+      // export predicate calls the same function, so the two can't drift).
+      // Legacy payer strings match no specific filter by design; see
+      // matchesInsurance in @shared/insurance.
+      if (insuranceFilter !== "all" && !matchesInsurance(contact.insurancePayer, insuranceFilter)) {
+        return false;
       }
 
       // Modality filter — PRIORITY-1 ONLY, matching reports, Insights and the
@@ -615,6 +615,7 @@ export function WaitlistListView({
                   recency, and staff need to see at a glance which locations a
                   contact will attend. dateAdded remains the default sort field
                   (see SortField) — only its header button is gone. */}
+              <TableHead className="w-[104px] px-2">Insurance</TableHead>
               <TableHead className="w-[120px] px-2">Modality</TableHead>
               <TableHead className="w-[92px] px-2">Assigned To</TableHead>
               <TableHead className="w-[124px] px-2">Assigned Provider</TableHead>
@@ -625,7 +626,7 @@ export function WaitlistListView({
           <TableBody>
             {sortedContacts.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="h-24 text-center text-muted-foreground">
+                <TableCell colSpan={11} className="h-24 text-center text-muted-foreground">
                   No contacts match the current filters
                 </TableCell>
               </TableRow>
@@ -699,6 +700,21 @@ export function WaitlistListView({
                     </TableCell>
                     <TableCell className="px-2 text-xs text-muted-foreground">
                       {contact.requestingFor ?? contact.serviceRequested ?? "—"}
+                    </TableCell>
+                    <TableCell className="px-2">
+                      {contact.insurancePayer ? (
+                        <span
+                          className="text-xs text-foreground whitespace-nowrap"
+                          // Full stored value on hover — the column abbreviates,
+                          // but staff must be able to see exactly what a record
+                          // holds, especially for legacy strings.
+                          title={contact.insurancePayer}
+                        >
+                          {abbreviateInsurance(contact.insurancePayer)}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell className="px-2">
                       {(() => {
