@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
+import { useHorizontalOverflow } from "./use-overflow";
 import { computeDaysWaiting } from "@/lib/days-waiting";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
@@ -44,8 +45,17 @@ import { ColumnSettings } from "./column-settings";
 import {
   buildViewPreferences,
   defaultPreferences,
+  stockView,
+  applyNamedView,
+  validateViewName,
+  hasDivergedFrom,
+  MAX_NAMED_VIEWS,
   type RestoreResult,
+  type RestoreContext,
+  type NamedView,
+  type ViewPrefsFilters,
 } from "@/lib/view-preferences";
+import { ViewChips } from "./view-chips";
 import { saveViewPrefs, resetViewPrefs } from "@/lib/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { CANONICAL_INSURANCES, matchesInsurance } from "@shared/insurance";
@@ -88,6 +98,14 @@ interface WaitlistListViewProps {
   staffFilter?: string;
   /** Whether the caller currently passes the staff-filter gate. */
   canUseStaffFilter?: boolean;
+  /** Lets an applied view set the page-owned assignment filter. */
+  onStaffFilterChange?: (value: string) => void;
+  /**
+   * The SAME validation/gating context the page used for the initial restore.
+   * Passed down so applying a named view runs identical rules — that identity
+   * is what guarantees a view can't do what a restore couldn't.
+   */
+  restoreCtx: RestoreContext;
   // Optional props for URL-driven filtering (drill-down from Insights)
   initialInsuranceFilter?: string | null;
   initialModalityFilter?: string | null;
@@ -124,6 +142,8 @@ export function WaitlistListView({
   restored,
   staffFilter = "all",
   canUseStaffFilter = false,
+  onStaffFilterChange,
+  restoreCtx,
   initialInsuranceFilter,
   initialModalityFilter,
   initialStatusFilter,
@@ -199,6 +219,9 @@ export function WaitlistListView({
   const isMultiStatusFromUrl =
     statusFilter !== "all" && allowedStatusCodes !== null && allowedStatusCodes.length > 1;
 
+  // Horizontal-overflow mode drives the frozen Name column. See use-overflow.
+  const { ref: overflowRef, isOverflowing } = useHorizontalOverflow<HTMLDivElement>();
+
   // Column layout, seeded from the saved view (already validated by the page).
   const [columnOrder, setColumnOrder] = useState<string[]>(saved.columns.order);
   const [visibleIds, setVisibleIds] = useState<string[]>(saved.columns.visible);
@@ -212,9 +235,52 @@ export function WaitlistListView({
     [columnOrder, visibleIds],
   );
 
+  const [namedViews, setNamedViews] = useState<NamedView[]>(saved.namedViews);
+  // null = Default. Tracks which snapshot was last applied so the chip can show
+  // active/modified; it is NOT a live link — divergence never rewrites a view.
+  const [activeViewId, setActiveViewId] = useState<string | null>(null);
+  const [viewError, setViewError] = useState<string | null>(null);
+
   // Filters that were dropped on restore, surfaced once so the user isn't left
   // staring at an unexpectedly different (or empty) table with no explanation.
   const [staleNotice, setStaleNotice] = useState<string[]>(saved.resetFilters);
+
+  /** Current working state, in the persisted shape. */
+  const currentState = () => ({
+    columns: { visible: visibleIds, order: columnOrder },
+    filters: {
+      umbrella: umbrellaFilter, status: statusFilter, insurance: insuranceFilter,
+      modality: modalityFilter, language: languageFilter, reason: reasonFilter,
+      serviceType: serviceTypeFilter, hideInactive,
+      staff: canUseStaffFilter ? staffFilter : "all",
+    } as ViewPrefsFilters,
+    sort: { field: sortField, direction: sortDirection },
+  });
+
+  /** Push a validated arrangement into the working state. */
+  const applyState = (next: {
+    columns: { visible: string[]; order: string[] };
+    filters: ViewPrefsFilters;
+    sort: { field: string; direction: string };
+  }) => {
+    setColumnOrder(next.columns.order);
+    setVisibleIds(next.columns.visible);
+    setUmbrellaFilter(next.filters.umbrella as UmbrellaId | "all");
+    setStatusFilter(next.filters.status);
+    setInsuranceFilter(next.filters.insurance);
+    setModalityFilter(next.filters.modality);
+    setLanguageFilter(next.filters.language);
+    setReasonFilter(next.filters.reason);
+    setServiceTypeFilter(next.filters.serviceType);
+    setHideInactive(next.filters.hideInactive);
+    setSortField(next.sort.field as SortField);
+    setSortDirection(next.sort.direction as SortDirection);
+    onStaffFilterChange?.(next.filters.staff);
+  };
+
+  // Divergence drives the "modified" dot. Computed, never stored.
+  const activeView = namedViews.find((v) => v.id === activeViewId) ?? null;
+  const isDiverged = activeView ? hasDivergedFrom(activeView, currentState()) : false;
 
   // ---------------------------------------------------------------------------
   // Auto-save. No save button: the client's ask is "remember what I did last",
@@ -251,6 +317,7 @@ export function WaitlistListView({
           staff: canUseStaffFilter ? staffFilter : "all",
         },
         { field: sortField, direction: sortDirection },
+        namedViews,
       );
       // Fire and forget: a failed preference save must never interrupt work.
       void saveViewPrefs("waitlist_list", prefs).catch((err) => {
@@ -262,8 +329,70 @@ export function WaitlistListView({
     visibleIds, columnOrder,
     umbrellaFilter, statusFilter, insuranceFilter, modalityFilter,
     languageFilter, reasonFilter, serviceTypeFilter, hideInactive,
-    staffFilter, canUseStaffFilter, sortField, sortDirection,
+    staffFilter, canUseStaffFilter, sortField, sortDirection, namedViews,
   ]);
+
+  /**
+   * DEFAULT ESCAPE. Derives the stock arrangement from the column config alone,
+   * so it works even if stored prefs are missing or malformed. Non-destructive:
+   * named views are untouched; this just becomes the new last-state via
+   * auto-save.
+   */
+  const handleApplyDefault = () => {
+    applyState(stockView(WAITLIST_COLUMNS));
+    setSearchQuery("");
+    setActiveViewId(null);
+    setStaleNotice([]);
+  };
+
+  const handleApplyView = (view: NamedView) => {
+    // Routed through the SAME validation + gating as a fresh restore: a saved
+    // view can't resurrect a retired filter value or an access since lost.
+    const result = applyNamedView(view, restoreCtx);
+    applyState({ columns: result.columns, filters: result.filters, sort: result.sort });
+    setActiveViewId(view.id);
+    setStaleNotice(result.resetFilters);
+  };
+
+  const handleSaveAsView = (rawName: string) => {
+    const check = validateViewName(rawName, namedViews);
+    if (!check.ok) { setViewError(check.error); return; }
+    if (namedViews.length >= MAX_NAMED_VIEWS) {
+      setViewError(`You can save up to ${MAX_NAMED_VIEWS} views. Delete one to add another.`);
+      return;
+    }
+    const st = currentState();
+    const view: NamedView = {
+      id: `v${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+      name: check.name,
+      createdAt: new Date().toISOString(),
+      columns: st.columns, filters: st.filters, sort: st.sort,
+    };
+    setNamedViews(namedViews.concat(view));   // creation order
+    setActiveViewId(view.id);
+    setViewError(null);
+  };
+
+  const handleUpdateView = (view: NamedView) => {
+    const st = currentState();
+    setNamedViews(namedViews.map((v) =>
+      v.id === view.id ? { ...v, columns: st.columns, filters: st.filters, sort: st.sort } : v));
+    setActiveViewId(view.id);
+  };
+
+  const handleRenameView = (view: NamedView, name: string) => {
+    const check = validateViewName(name, namedViews, view.id);
+    if (!check.ok) { setViewError(check.error); return; }
+    setNamedViews(namedViews.map((v) => (v.id === view.id ? { ...v, name: check.name } : v)));
+    setViewError(null);
+  };
+
+  const handleDeleteView = (view: NamedView) => {
+    setNamedViews(namedViews.filter((v) => v.id !== view.id));
+    // Deleting the active view drops the chip selection but leaves the table
+    // exactly as it is — the user didn't ask for their columns to change.
+    if (activeViewId === view.id) setActiveViewId(null);
+  };
 
   const handleResetView = async () => {
     setIsResetting(true);
@@ -284,6 +413,8 @@ export function WaitlistListView({
       setSortDirection(stock.sort.direction as SortDirection);
       setSearchQuery("");
       setStaleNotice([]);
+      setNamedViews([]);
+      setActiveViewId(null);
       // Drop the cached prefs so a reload genuinely starts from stock rather
       // than from the row we just deleted.
       queryClient.setQueryData(["/api/user/view-prefs", "waitlist_list"], { prefs: null });
@@ -624,6 +755,9 @@ export function WaitlistListView({
             onChange={({ order, visible }) => { setColumnOrder(order); setVisibleIds(visible); }}
             onReset={handleResetView}
             isResetting={isResetting}
+            onSaveAsView={handleSaveAsView}
+            savedViewCount={namedViews.length}
+            maxViews={MAX_NAMED_VIEWS}
           />
         <div className="text-sm text-muted-foreground">
           {sortedContacts.length} contact{sortedContacts.length !== 1 ? "s" : ""}
@@ -634,6 +768,23 @@ export function WaitlistListView({
           })()}
         </div>
         </div>
+      </div>
+
+      {/* Saved views. Default is always first and always works. */}
+      <div className="flex flex-col gap-1">
+        <ViewChips
+          views={namedViews}
+          activeViewId={activeViewId}
+          isDiverged={isDiverged}
+          onApply={handleApplyView}
+          onApplyDefault={handleApplyDefault}
+          onUpdate={handleUpdateView}
+          onRename={handleRenameView}
+          onDelete={handleDeleteView}
+        />
+        {viewError && (
+          <span className="text-[11px] text-destructive" data-testid="view-error">{viewError}</span>
+        )}
       </div>
 
       {/* Saved filters that no longer exist were reset — say so once, rather
@@ -660,12 +811,51 @@ export function WaitlistListView({
       )}
 
       {/* Table */}
-      <div className="rounded-2xl border border-white/40 dark:border-gray-700/40 bg-white/60 dark:bg-gray-900/60 backdrop-blur-xl shadow-lg overflow-hidden">
-        <Table>
-          <TableHeader className="sticky top-0 z-10 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md border-b border-white/40 dark:border-gray-700/40 shadow-sm">
+      {/* OVERFLOW MODE (Phase 2 feature 3).
+          The table renders w-full so it compresses to fit — that is why there
+          was never a horizontal scrollbar. Adding min-w-max makes its width
+          max(100%, max-content): unchanged when the columns fit, wider than the
+          container when they don't, at which point the Table primitive's own
+          overflow-auto engages and the Name column sticks.
+
+          When NOT overflowing we keep the original glassmorphic classes exactly,
+          so a user who never adds columns sees v187 pixel-for-pixel. */}
+      <div
+        ref={overflowRef}
+        className={cn(
+          "rounded-2xl border border-white/40 dark:border-gray-700/40 shadow-lg overflow-hidden",
+          isOverflowing
+            ? // Opaque in scroll mode: the sticky Name cells inherit this
+              // background, and a translucent one would let scrolled content
+              // show through them.
+              "bg-white dark:bg-gray-900"
+            : "bg-white/60 dark:bg-gray-900/60 backdrop-blur-xl"
+        )}
+      >
+        <Table className={isOverflowing ? "min-w-max" : undefined}>
+          <TableHeader
+            className={cn(
+              "sticky top-0 z-10 border-b border-white/40 dark:border-gray-700/40 shadow-sm",
+              // backdrop-blur creates a containing block, which breaks
+              // position:sticky on descendant cells — so the frozen Name header
+              // can only work if the blur goes in scroll mode.
+              isOverflowing
+                ? "bg-white dark:bg-gray-900"
+                : "bg-white/80 dark:bg-gray-900/80 backdrop-blur-md"
+            )}
+          >
             <TableRow className="hover:bg-transparent">
-              {visibleColumns.map((col) => (
-                <TableHead key={col.id} className={col.widthClass}>
+              {visibleColumns.map((col, i) => (
+                <TableHead
+                  key={col.id}
+                  className={cn(
+                    col.widthClass,
+                    // z-30 so the frozen header cell wins over both the sticky
+                    // header row (z-10) and the frozen body cells (z-20).
+                    isOverflowing && i === 0 && "sticky left-0 z-30 bg-inherit relative",
+                    isOverflowing && i === 0 && "after:absolute after:inset-y-0 after:-right-px after:w-px after:bg-border"
+                  )}
+                >
                   {col.header
                     ? col.header({ sortField, sortDirection, toggleSort })
                     : col.label}
@@ -705,13 +895,28 @@ export function WaitlistListView({
                     key={contact.contactId || contact.name}
                     className={cn(
                       "cursor-pointer transition-all duration-200",
-                      "bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm",
-                      "hover:bg-white/90 dark:hover:bg-gray-800/90 hover:backdrop-blur-md hover:shadow-md hover:-translate-y-0.5",
+                      isOverflowing
+                        ? // Scroll mode: opaque (sticky cells inherit it) and no
+                          // backdrop-blur / translate — both create containing
+                          // blocks that break position:sticky on child cells,
+                          // the translate specifically breaking it on hover.
+                          "bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 hover:shadow-md"
+                        : "bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm hover:bg-white/90 dark:hover:bg-gray-800/90 hover:backdrop-blur-md hover:shadow-md hover:-translate-y-0.5",
                       ctx.isInactive && "opacity-60"
                     )}
                   >
-                    {visibleColumns.map((col) => (
-                      <TableCell key={col.id} className={col.cellClass}>
+                    {visibleColumns.map((col, i) => (
+                      <TableCell
+                        key={col.id}
+                        className={cn(
+                          col.cellClass,
+                          // bg-inherit tracks the row's resolved background, so
+                          // hover and the inactive dimming carry across the
+                          // frozen column without duplicating those rules.
+                          isOverflowing && i === 0 && "sticky left-0 z-20 bg-inherit relative",
+                          isOverflowing && i === 0 && "after:absolute after:inset-y-0 after:-right-px after:w-px after:bg-border"
+                        )}
+                      >
                         {col.render(contact, ctx)}
                       </TableCell>
                     ))}
