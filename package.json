@@ -11,7 +11,8 @@
     "test:insurance": "tsx client/src/lib/insurance-utils.test.ts",
     "test:status": "tsx client/src/lib/status-config.test.ts",
     "db:push": "drizzle-kit push",
-    "test:modality": "tsx scripts/test-modality.ts"
+    "test:modality": "tsx scripts/test-modality.ts",
+    "test:insurance-canonical": "tsx scripts/test-insurance-canonical.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1034.0",

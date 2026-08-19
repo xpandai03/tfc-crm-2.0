@@ -86,7 +86,7 @@ import {
   joinModalityPriorities,
 } from "@shared/modality-utils";
 import { SERVICE_TYPES } from "@shared/service-types";
-import { ACCEPTED_INSURANCES } from "@shared/insurance-utils";
+import { CANONICAL_INSURANCES, isLegacyInsurance } from "@shared/insurance";
 import { PAPERWORK_STATUSES } from "@shared/paperwork-status";
 import { buildTimelineEvents, formatFullDate, matchSnapshotForEmailEvent, type EmailSnapshotMeta, type TimelineEvent } from "@/lib/timeline";
 import { ProviderMatchingModal } from "@/components/ui/provider-matching-modal";
@@ -1996,9 +1996,15 @@ export default function ContactDetail() {
                       {isEditingIntake ? (
                         <div className="space-y-2">
                           <div>
-                            {/* Dropdown-only (shared ACCEPTED_INSURANCES + Unknown).
-                                Free text here is what produced "BCBS", "BCBS Comm",
-                                "Blue cross" and friends as separate report buckets. */}
+                            {/* Canonical 16 only (@shared/insurance). Free text
+                                here is what produced "BCBS", "BCBS Comm", "Blue
+                                cross" and friends as separate buckets.
+                                A record already holding a LEGACY payer keeps
+                                showing it — it's listed first and marked, so the
+                                Select doesn't render blank and staff can see what
+                                they're replacing. Choosing anything else replaces
+                                it with a canonical value; the legacy option then
+                                disappears. Stored data is never rewritten here. */}
                             <label className="text-muted-foreground text-xs">Payer</label>
                             <Select
                               value={intakeEdits.insurancePayer || "none"}
@@ -2009,10 +2015,14 @@ export default function ContactDetail() {
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="none">Unset</SelectItem>
-                                {ACCEPTED_INSURANCES.map((i) => (
+                                {isLegacyInsurance(intakeEdits.insurancePayer) && (
+                                  <SelectItem value={intakeEdits.insurancePayer}>
+                                    {intakeEdits.insurancePayer} (legacy)
+                                  </SelectItem>
+                                )}
+                                {CANONICAL_INSURANCES.map((i) => (
                                   <SelectItem key={i} value={i}>{i}</SelectItem>
                                 ))}
-                                <SelectItem value="Unknown">Unknown</SelectItem>
                               </SelectContent>
                             </Select>
                           </div>

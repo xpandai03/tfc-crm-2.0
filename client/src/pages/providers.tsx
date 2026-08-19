@@ -52,6 +52,7 @@ import {
   PROVIDERS_WITHOUT_INSURANCE_DATA,
 } from "@/lib/provider-insurance-data";
 import type { InsuranceCategory } from "@/lib/insurance-utils";
+import { CANONICAL_INSURANCES } from "@shared/insurance";
 import { transformApiProvider, type ProviderWithInsurance } from "@/lib/provider-api";
 import type { SkillEntry } from "@/lib/providers";
 import { PatientMatchingModal } from "@/components/ui/patient-matching-modal";
@@ -659,24 +660,14 @@ const AGE_GROUP_SPECIALTIES: Record<string, string[]> = {
   "Children (0-5)": ["Anxiety", "Depression", "Family", "Grief", "Trauma"],
 };
 
-const ALL_INSURANCES = [
-  "Aetna",
-  "BlueCross BlueShield Commercial",
-  "BlueCross BlueShield Turquoise Care",
-  "Carelon",
-  "ChampVA",
-  "ComPsych",
-  "Medicare",
-  "Molina",
-  "Partners Direct Health",
-  "Presbyterian Commercial",
-  "Presbyterian Turquoise Care",
-  "Self-Pay (Cash / Out-of-Pocket)",
-  "Tricare",
-  "UHC Centennial",
-  "UHC Commercial",
-  "VACCN",
-];
+// Provider accepted-insurances options: the canonical 16, FULL names (this is a
+// selection list, not a dense column, so no abbreviations). Sourced from
+// @shared/insurance so it can't drift from the contact-card and waitlist lists
+// the way this hand-maintained copy did — it still had Tricare, UHC Centennial,
+// plain "Molina", Carelon, Partners Direct Health and "Self-Pay (Cash /
+// Out-of-Pocket)". NO PROVIDER RECORD IS MODIFIED by this change; existing
+// provider insurance selections are untouched and the team reassigns manually.
+const ALL_INSURANCES: readonly string[] = CANONICAL_INSURANCES;
 
 // ============================================================================
 // Interactive Chip Components

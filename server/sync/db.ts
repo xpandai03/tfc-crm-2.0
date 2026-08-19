@@ -19,6 +19,7 @@ import {
   getUmbrellaForStatusCode,
 } from "@shared/status-codes";
 import { normalizeInsurance } from "@shared/insurance-utils";
+import { matchesInsurance } from "@shared/insurance";
 import {
   normalizeModality,
   normalizeModalityTokens,
@@ -839,8 +840,13 @@ export function matchesWaitlistExportFilters(
     if (!f.statusCodes.includes(statusCode)) return false;
   }
 
+  // EXACT canonical match via the SAME shared predicate the list view calls, so
+  // an export can never disagree with the view it reproduces. Legacy payer
+  // strings match no specific filter by design (see @shared/insurance).
+  // NOTE: getReferralReportData below still uses normalizeInsurance — reporting
+  // semantics are deliberately unchanged by this batch.
   if (f.insurance && f.insurance !== "all") {
-    if (normalizeInsurance(r.insurance_payer as string | null) !== f.insurance) return false;
+    if (!matchesInsurance(r.insurance_payer as string | null, f.insurance)) return false;
   }
 
   // Priority-1 only, via the SAME shared predicate the list view calls — the
