@@ -6988,7 +6988,13 @@ export async function registerRoutes(
       const period = typeof req.body?.period === "string" && req.body.period
         ? req.body.period : previousPeriod();
       console.log(`[monthly-report] MANUAL SEND requested for ${period} by ${email}`);
-      const outcome = await sendMonthlyReport({ period, trigger: "manual", actor: email });
+      // ?test=true widens to MONTHLY_REPORT_TEST_RECIPIENTS, prefixes the
+      // subject with [TEST], and records nothing — so testing a period cannot
+      // make the scheduled send skip it.
+      const isTest = req.body?.test === true;
+      const outcome = await sendMonthlyReport({
+        period, trigger: "manual", actor: email, test: isTest,
+      });
       return res.status(outcome.ok ? 200 : 500).json(outcome);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Send failed";
