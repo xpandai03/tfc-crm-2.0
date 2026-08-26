@@ -1788,7 +1788,7 @@ export async function insertIntakeContact(fields: {
     fields.modalityP4 || null,
   ]);
 
-  console.log(`[sync-db] Intake contact upserted: ${fields.contactId} (${fields.name})`);
+  console.log(`[sync-db] Intake contact upserted: ${fields.contactId}`);
 }
 
 // ============================================================================
