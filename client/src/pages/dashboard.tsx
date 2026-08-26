@@ -32,11 +32,17 @@ import { PageLoader } from "@/components/ui/page-loader";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ChartContainer, ChartTooltip } from "@/components/ui/chart";
+import {
+  ChartContainer, ChartTooltip, ChartLegend, ChartLegendContent,
+} from "@/components/ui/chart";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 import { AlertCircle, BarChart3, TableIcon } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessDashboard } from "@shared/access-control";
+import {
+  buildServiceTypeChart, buildInsuranceChart, buildOriginChart,
+  insuranceChartHeight, type ChartSeries, type StackRow,
+} from "@/lib/dashboard-charts";
 import {
   getDashboardSummary,
   type DashboardSummary,
@@ -64,9 +70,131 @@ function LocationLabel({
   );
 }
 
+// ============================================================================
+// Shared chart + view-toggle layer
+//
+// Table and graph toggle INDEPENDENTLY and may both be on — the client asked
+// for that explicitly. Neither-on is a legal (empty) state, not an error.
+// Default is both, so a first-time viewer opens the page fully populated with
+// no configuration. State is per-card and NOT persisted; it resets on reload,
+// which is expected — persistence is the next build.
+// ============================================================================
+
+type CardView = "table" | "chart";
+const DEFAULT_VIEWS: CardView[] = ["table", "chart"];
+
+function useCardViews() {
+  const [views, setViews] = useState<CardView[]>(DEFAULT_VIEWS);
+  return {
+    views,
+    showTable: views.includes("table"),
+    showChart: views.includes("chart"),
+    onChange: (v: string[]) => setViews(v as CardView[]),
+  };
+}
+
+function ViewToggle({ views, onChange }: {
+  views: CardView[]; onChange: (v: string[]) => void;
+}) {
+  return (
+    <ToggleGroup type="multiple" value={views} onValueChange={onChange} size="sm">
+      <ToggleGroupItem value="table" aria-label="Show table">
+        <TableIcon className="h-4 w-4" />
+      </ToggleGroupItem>
+      <ToggleGroupItem value="chart" aria-label="Show graph">
+        <BarChart3 className="h-4 w-4" />
+      </ToggleGroupItem>
+    </ToggleGroup>
+  );
+}
+
+function NoViews() {
+  return (
+    <p className="text-sm text-muted-foreground text-center py-8">
+      Both views are hidden. Use the toggle above to show the table, the graph, or both.
+    </p>
+  );
+}
+
+/**
+ * Tooltip for a stacked row: every segment with a non-zero count, plus the row
+ * total so it can be checked against the table beside it at a glance.
+ *
+ * Renders ONLY series labels supplied by the caller — all of which are canonical
+ * constants or location names. No stored field value reaches this component.
+ * insurance_payer is free text and has held a patient name and DOB in
+ * production; a tooltip on this exact card leaked it in v189.
+ */
+function StackTooltip({ active, payload, series }: {
+  active?: boolean;
+  payload?: Array<{ payload?: StackRow }>;
+  series: ChartSeries[];
+}) {
+  if (!active || !payload?.length) return null;
+  const row = payload[0]?.payload;
+  if (!row) return null;
+  const parts = series
+    .map((s) => ({ ...s, value: Number(row[s.key] ?? 0) }))
+    .filter((s) => s.value > 0);
+  return (
+    <div className="rounded-lg border bg-background px-3 py-2 text-sm shadow-md min-w-[180px]">
+      <div className="font-medium mb-1">{row.full}</div>
+      {parts.length === 0 ? (
+        <div className="text-muted-foreground text-xs">No records</div>
+      ) : parts.map((s) => (
+        <div key={s.key} className="flex items-center justify-between gap-4 text-xs py-0.5">
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <span className="h-2 w-2 rounded-[2px] shrink-0" style={{ background: s.color }} />
+            {s.label}
+          </span>
+          <span className="font-medium tabular-nums">{s.value}</span>
+        </div>
+      ))}
+      <div className="flex items-center justify-between gap-4 text-xs pt-1 mt-1 border-t font-medium">
+        <span>Total</span><span className="tabular-nums">{row.__total}</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Horizontal stacked bars — the shape Card 1 established, extended to multiple
+ * series.
+ *
+ * STACKED, not grouped, on every multi-series card. The page's core promise is
+ * that a chart agrees with the table beside it, and only a stack makes a row's
+ * segments visibly sum to that row's total. Grouped bars compare series to each
+ * other but show no total, so the reconciliation the whole dashboard is built
+ * around would become invisible exactly where it is easiest to doubt.
+ */
+function StackedBars({ rows, series, height, yAxisWidth }: {
+  rows: StackRow[]; series: ChartSeries[]; height: number; yAxisWidth: number;
+}) {
+  const config = Object.fromEntries(
+    series.map((s) => [s.key, { label: s.label, color: s.color }]),
+  );
+  return (
+    <ChartContainer config={config} className="aspect-auto w-full" style={{ height }}>
+      <BarChart data={rows} layout="vertical"
+        margin={{ left: 4, right: 28, top: 4, bottom: 4 }}>
+        <CartesianGrid horizontal={false} />
+        <XAxis type="number" allowDecimals={false} />
+        <YAxis type="category" dataKey="name" width={yAxisWidth}
+          tickLine={false} axisLine={false} interval={0} />
+        <ChartTooltip cursor={{ fillOpacity: 0.1 }}
+          content={<StackTooltip series={series} />} />
+        <ChartLegend content={<ChartLegendContent />} />
+        {series.map((s) => (
+          <Bar key={s.key} dataKey={s.key} stackId="stack" fill={s.color} />
+        ))}
+      </BarChart>
+    </ChartContainer>
+  );
+}
+
 /** Card 1 — Location × Status. The only card with a chart toggle tonight. */
 function StatusCard({ summary }: { summary: DashboardSummary }) {
-  const [view, setView] = useState<"table" | "chart">("table");
+  const { views, showTable, showChart, onChange } = useCardViews();
   const { rows, totals, buckets, labels } = summary.byStatus;
 
   const chartData = summary.locations.map((loc) => {
@@ -84,22 +212,11 @@ function StatusCard({ summary }: { summary: DashboardSummary }) {
             so Pipeline + Other Active = Active.
           </p>
         </div>
-        <ToggleGroup
-          type="single"
-          value={view}
-          onValueChange={(v) => v && setView(v as "table" | "chart")}
-          size="sm"
-        >
-          <ToggleGroupItem value="table" aria-label="Table view">
-            <TableIcon className="h-4 w-4" />
-          </ToggleGroupItem>
-          <ToggleGroupItem value="chart" aria-label="Chart view">
-            <BarChart3 className="h-4 w-4" />
-          </ToggleGroupItem>
-        </ToggleGroup>
+        <ViewToggle views={views} onChange={onChange} />
       </CardHeader>
-      <CardContent>
-        {view === "chart" ? (
+      <CardContent className="space-y-6">
+        {!showTable && !showChart && <NoViews />}
+        {showChart && (
           <ChartContainer
             config={{ pipeline: { label: "Pipeline", color: "hsl(var(--chart-1))" } }}
             className="h-[260px] w-full"
@@ -124,7 +241,8 @@ function StatusCard({ summary }: { summary: DashboardSummary }) {
               <Bar dataKey="pipeline" fill="var(--color-pipeline)" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ChartContainer>
-        ) : (
+        )}
+        {showTable && (
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
@@ -201,7 +319,7 @@ function StatusCard({ summary }: { summary: DashboardSummary }) {
  * reconcile to its own total.
  */
 function CrossTabCard({
-  summary, title, subtitle, columns, labels, rows, totals, otherLabel, otherNote,
+  summary, title, subtitle, columns, labels, rows, totals, otherLabel, otherNote, chart,
 }: {
   summary: DashboardSummary;
   title: string;
@@ -212,15 +330,24 @@ function CrossTabCard({
   totals: CrossTabRow;
   otherLabel: string;
   otherNote?: string;
+  /** Rendered above the table when the graph view is on. */
+  chart?: React.ReactNode;
 }) {
+  const { views, showTable, showChart, onChange } = useCardViews();
   const showUnknown = totals.unknown > 0;
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-base font-medium">{title}</CardTitle>
-        <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>
+      <CardHeader className="flex flex-row items-start justify-between space-y-0 gap-4">
+        <div>
+          <CardTitle className="text-base font-medium">{title}</CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>
+        </div>
+        <ViewToggle views={views} onChange={onChange} />
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-6">
+        {!showTable && !showChart && <NoViews />}
+        {showChart && chart}
+        {showTable && (
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -282,24 +409,49 @@ function CrossTabCard({
             </TableBody>
           </Table>
         </div>
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+function ServiceTypeChart({ summary }: { summary: DashboardSummary }) {
+  const { rows, series } = buildServiceTypeChart(summary);
+  return <StackedBars rows={rows} series={series} height={280} yAxisWidth={110} />;
+}
+
+function InsuranceChart({ summary }: { summary: DashboardSummary }) {
+  const { rows, series } = buildInsuranceChart(summary);
+  return (
+    <StackedBars rows={rows} series={series}
+      height={insuranceChartHeight(rows.length)} yAxisWidth={124} />
   );
 }
 
 /** Card 4 — Location × Origin. The CEO's referral-source ask. */
 function OriginCard({ summary }: { summary: DashboardSummary }) {
   const { columns, labels, rows, totals } = summary.byOrigin;
+  const { views, showTable, showChart, onChange } = useCardViews();
+  const originChart = buildOriginChart(summary);
+
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-base font-medium">Location &times; Referral Origin</CardTitle>
-        <p className="text-xs text-muted-foreground mt-1">
-          How each referral reached us. Every contact falls into exactly one category.
-          Staff-entered records are not separately identifiable and appear under Online RFS Form.
-        </p>
+      <CardHeader className="flex flex-row items-start justify-between space-y-0 gap-4">
+        <div>
+          <CardTitle className="text-base font-medium">Location &times; Referral Origin</CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            How each referral reached us. Every contact falls into exactly one category.
+            Staff-entered records are not separately identifiable and appear under Online RFS Form.
+          </p>
+        </div>
+        <ViewToggle views={views} onChange={onChange} />
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-6">
+        {!showTable && !showChart && <NoViews />}
+        {showChart && (
+          <StackedBars rows={originChart.rows} series={originChart.series} height={260} yAxisWidth={110} />
+        )}
+        {showTable && (
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -341,6 +493,7 @@ function OriginCard({ summary }: { summary: DashboardSummary }) {
             </TableBody>
           </Table>
         </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -434,6 +587,7 @@ export default function Dashboard() {
           rows={summary.byServiceType.rows}
           totals={summary.byServiceType.totals}
           otherLabel="Other / Unmapped"
+          chart={<ServiceTypeChart summary={summary} />}
         />
 
         <CrossTabCard
@@ -450,6 +604,7 @@ export default function Dashboard() {
             `The individual values are not shown: this is a free-text field and some entries ` +
             `contain patient details.`
           }
+          chart={<InsuranceChart summary={summary} />}
         />
 
         <OriginCard summary={summary} />
