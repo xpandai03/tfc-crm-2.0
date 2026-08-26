@@ -13,7 +13,9 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, ExternalLink, Code2, FileText, Inbox } from "lucide-react";
+import { Loader2, ExternalLink, Code2, FileText, Inbox, FileUp } from "lucide-react";
+import { useAuth } from "@/lib/auth-context";
+import { canAccessReferralUpload } from "@shared/access-control";
 
 interface FormSubmission {
   id: number;
@@ -185,6 +187,7 @@ function RawPayloadModal({
 }
 
 export default function Submissions() {
+  const { user } = useAuth();
   const [selectedSubmission, setSelectedSubmission] = useState<FormSubmission | null>(null);
 
   const { data, isLoading } = useQuery<{ submissions: FormSubmission[] }>({
@@ -209,6 +212,29 @@ export default function Submissions() {
               All form submissions · Newest first
             </p>
           </div>
+
+          {/*
+            Entry point for the fax-referral upload, which no longer has its own
+            nav tab. This NAVIGATES to /referral — the page, its components and
+            its flow are unchanged.
+
+            Conditionally rendered on the SAME predicate that gates the page and
+            the nav entry did. Submissions is reachable by any authenticated
+            user while referral upload is a five-person allow-list, so an
+            unconditional button would send most staff to a page that
+            immediately redirects them away.
+
+            Cosmetic, like every client-side gate here: the real boundary is the
+            403 on POST /api/referral/extract.
+          */}
+          {canAccessReferralUpload(user?.email) && (
+            <Link href="/referral">
+              <Button variant="outline" size="sm" className="gap-2" data-testid="button-referral-upload">
+                <FileUp className="h-4 w-4" />
+                Upload Referral
+              </Button>
+            </Link>
+          )}
         </div>
 
         {/* Loading */}
