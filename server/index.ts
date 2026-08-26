@@ -72,27 +72,46 @@ export function log(message: string, source = "express") {
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
+// ============================================================================
+// API request log — METADATA ONLY. Never a response body.
+//
+// This middleware used to monkey-patch res.json to capture every /api response
+// and append it to the log line in full. On a HIPAA-adjacent system that meant
+// every waitlist load wrote the entire contact set — names, emails, phones,
+// dates of birth, addresses — to stdout, and from there to the hosting log
+// stream. Contact detail views, exports and every other client-data response
+// did the same, on every request.
+//
+// Bodies are now not captured at all. The res.json patch is gone rather than
+// made conditional: a capture that exists can be re-enabled by a one-line
+// change under deadline pressure, and the retained closure also held every
+// response in memory until the request finished.
+//
+// TRUNCATION WAS CONSIDERED AND REJECTED. A 200-character prefix of a contact
+// array still contains names and email addresses; it would have reduced the
+// volume of exposure while creating the impression it was solved.
+//
+// QUERY STRINGS: req.path is the pathname only — Express excludes the query
+// string from it, so query values were never logged and still are not. This
+// deliberately does NOT switch to req.originalUrl: search and filter endpoints
+// carry client names in their parameters (?q=, ?search=), so logging the full
+// URL would reintroduce the same class of leak through a different door.
+//
+// ERROR RESPONSES get the same treatment — status code only, no payload. A
+// validation failure is exactly where a route is most likely to echo the
+// submitted record straight back. The error MESSAGES are not lost: routes
+// already log their own via console.error("[route] Error:", message), where a
+// developer chose the string, rather than the middleware serialising whatever
+// the response happened to contain.
+// ============================================================================
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
 
   res.on("finish", () => {
+    if (!path.startsWith("/api")) return;
     const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      log(logLine);
-    }
+    log(`${req.method} ${path} ${res.statusCode} in ${duration}ms`);
   });
 
   next();

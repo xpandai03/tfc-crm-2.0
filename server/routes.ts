@@ -857,7 +857,7 @@ export async function registerRoutes(
               : "unknown";
 
             const notes = parseNotesFromLastNote(syncContact.lastNote || undefined);
-            console.log(`[contact-snapshot] Serving ${syncContact.name} from enriched sync cache`);
+            console.log(`[contact-snapshot] Serving contact ${contactId} from enriched sync cache`);
             return res.json({
               ...syncContact,
               statusCode,
@@ -873,7 +873,7 @@ export async function registerRoutes(
           }
 
           // Sync has board data but no detailed data — fetch from n8n and enrich
-          console.log(`[contact-snapshot] Sync cache has ${syncContact.name} but missing detail fields, enriching from n8n`);
+          console.log(`[contact-snapshot] Sync cache has contact ${contactId} but missing detail fields, enriching from n8n`);
           try {
             const snapshotResponse = await fetch(N8N_ENDPOINTS.contactSnapshot, {
               method: "POST",
@@ -961,7 +961,7 @@ export async function registerRoutes(
                 _source: "sync+n8n",
               };
 
-              console.log(`[contact-snapshot] Returning enriched data for ${syncContact.name}`);
+              console.log(`[contact-snapshot] Returning enriched data for contact ${contactId}`);
               return res.json(merged);
             }
           } catch (enrichError) {
@@ -1032,13 +1032,13 @@ export async function registerRoutes(
 
           // Defensive: Validate required fields exist
           if (contact.statusCode === undefined) {
-            console.warn(`[DATA_INTEGRITY] Contact ${contactId} (${contact.name}) missing statusCode`);
+            console.warn(`[DATA_INTEGRITY] Contact ${contactId} missing statusCode`);
           }
           if (!contact.name) {
             console.warn(`[DATA_INTEGRITY] Contact ${contactId} missing name field`);
           }
 
-          console.log(`[contact-snapshot] Found contact in board: ${contact.name} (ID: ${contactId})`);
+          console.log(`[contact-snapshot] Found contact in board: ID ${contactId}`);
 
           // Step 2: Call n8n contact-snapshot with contactId for detailed data (notes, intake fields)
           // IMPORTANT: n8n workflow expects contactId ONLY - do not send contactName
@@ -1067,7 +1067,7 @@ export async function registerRoutes(
           const detailed = detailedData as Record<string, unknown>;
 
           // Debug: Log assignedTo from all sources
-          console.log(`[contact-snapshot] assignedTo sources for ${contact.name}:`, {
+          console.log(`[contact-snapshot] assignedTo sources for contact ${contactId}:`, {
             "detailed.assignedTo": detailed.assignedTo,
             "detailed['Admin Assigned To Contact']": detailed["Admin Assigned To Contact"],
             "contact.assignedTo": contact.assignedTo,
@@ -1178,10 +1178,10 @@ export async function registerRoutes(
             mergedData.formCompletedBy || mergedData.modality || mergedData.insurancePayer ||
             mergedData.referralSource || mergedData.priorServices;
           if (!hasAnyIntakeField) {
-            console.warn(`[DATA_INTEGRITY] Contact ${contactId} (${contact.name}) has no intake fields - check n8n field mapping`);
+            console.warn(`[DATA_INTEGRITY] Contact ${contactId} has no intake fields - check n8n field mapping`);
           }
 
-          console.log(`[contact-snapshot] Returning merged data for ${contact.name}`);
+          console.log(`[contact-snapshot] Returning merged data for contact ${contactId}`);
           return res.json({ ...mergedData, _source: "live" });
         } catch (liveError) {
           console.error("Live data fetch failed:", liveError);
@@ -4594,7 +4594,7 @@ export async function registerRoutes(
 
       if (localContact && localContact.name) {
         contact = localContact as unknown as Record<string, unknown>;
-        console.log(`[email-preview] contactId=${contactId} found=true source=local email=${localContact.email || "MISSING"}`);
+        console.log(`[email-preview] contactId=${contactId} found=true source=local hasEmail=${Boolean(localContact.email)}`);
       } else if (DATA_MODE === "live") {
         console.warn(`[email-preview] contactId=${contactId} not in local DB, falling back to n8n`);
         try {
@@ -4629,7 +4629,7 @@ export async function registerRoutes(
         eccConsent: contact.eccConsent as boolean | null,
       };
 
-      console.log(`[email-preview] contactForEmail: email=${contactForEmail.email}, requestingFor=${contactForEmail.requestingFor}`);
+      console.log(`[email-preview] contactForEmail: contactId=${contactForEmail.contactId} hasEmail=${Boolean(contactForEmail.email)}`);
 
       // Sanitize dynamicFields: only allow string values, strip HTML
       const sanitizedFields: Record<string, string> = {};
@@ -4689,7 +4689,7 @@ export async function registerRoutes(
 
       if (localContact && localContact.name) {
         contact = localContact as unknown as Record<string, unknown>;
-        console.log(`[send-email] contactId=${contactId} found=true source=local email=${localContact.email || "MISSING"}`);
+        console.log(`[send-email] contactId=${contactId} found=true source=local hasEmail=${Boolean(localContact.email)}`);
       } else if (DATA_MODE === "live") {
         console.warn(`[send-email] contactId=${contactId} not in local DB, falling back to n8n`);
         try {
@@ -5216,7 +5216,7 @@ export async function registerRoutes(
         });
       }
 
-      console.log(`[INTAKE] New contact created: ${contactId} (${b.name.trim()}) source=${intakeSource}`);
+      console.log(`[INTAKE] New contact created: ${contactId} source=${intakeSource}`);
 
       return res.json({ success: true, contactId });
     } catch (error) {
@@ -5748,7 +5748,7 @@ export async function registerRoutes(
             rfs_url: (snapshot.rfsLink as string) || "",
           };
 
-          console.log(`[TN] Payload built: ${firstName} ${lastName}, DOB=${dob}`);
+          console.log(`[TN] Payload built for contact ${contactId}`);
 
           // ---- Step 3: Pre-validate critical fields ----
           const missingFields: string[] = [];
@@ -5799,7 +5799,7 @@ export async function registerRoutes(
               }
 
               if (tnResult.status === "success") {
-                console.log(`[TN] Success: url=${tnResult.tn_patient_url}`);
+                console.log(`[TN] Success: contact ${contactId} linked to TN patient ${tnResult.tn_patient_id}`);
                 await updateTnStatus(contactId, "created", {
                   url: tnResult.tn_patient_url,
                   id: tnResult.tn_patient_id,
@@ -5885,7 +5885,7 @@ export async function registerRoutes(
           });
         }
 
-        console.log(`[TN] Final state:`, JSON.stringify(await getTnRecord(contactId)));
+        console.log(`[TN] Final state for contact ${contactId}: ${(await getTnRecord(contactId))?.tnStatus ?? "none"}`);
       })();
     } catch (error) {
       console.error("[therapy-notes] Error in create endpoint:", error);
@@ -6076,7 +6076,7 @@ export async function registerRoutes(
 
       // Definitive payload log for the next test (X-API-Key is sent as a header,
       // not in the body, so nothing to mask here).
-      console.log(`[tn-v2 trigger] Sending payload to V2: ${JSON.stringify(payload, null, 2)}`);
+      console.log(`[tn-v2 trigger] Sending payload to V2: contact=${contactId} run=${runId} fields=${Object.keys(payload).length}`);
 
       // Pre-validate critical fields (mirrors V1)
       const missing: string[] = [];
@@ -6102,7 +6102,7 @@ export async function registerRoutes(
         entityId: String(contactId), entityName: contactName,
         metadata: { contactId, runId, alertText, warnings, appointmentDatetime: `${payload.appointment_date} ${payload.appointment_time}`.trim() },
       });
-      console.log(`[tn-v2] Started run ${runId} for contact ${contactId}: ${firstName} ${lastName}, alert="${alertText}", clinician="${payload.clinician_name}"`);
+      console.log(`[tn-v2] Started run ${runId} for contact ${contactId}: hasAlert=${Boolean(alertText)}, warnings=${warnings.length}`);
 
       // ---- Fire-and-forget: V2 takes ~100s and reports progress via callbacks ----
       // We do NOT await. The terminal outcome (tn_schedule_completed/failed) is

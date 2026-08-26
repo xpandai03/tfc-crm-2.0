@@ -263,7 +263,7 @@ export async function sendTemplatedEmail(params: {
   }
 
   if (!resend) {
-    console.warn(`[staging] Email send skipped (RESEND_API_KEY not configured) — would have sent "${rendered.templateName}" to ${contact.email}`);
+    console.warn(`[staging] Email send skipped (RESEND_API_KEY not configured) — would have sent "${rendered.templateName}" to contact ${contact.contactId}`);
     return {
       success: true,
       renderedHtml: rendered.bodyHtml,
@@ -310,7 +310,7 @@ export async function sendTemplatedEmail(params: {
 
     console.log(`[email-service] === EMAIL SEND START ===`);
     console.log(`[email-service] FROM: ${sender}`);
-    console.log(`[email-service] TO: ${contact.email}`);
+    console.log(`[email-service] TO: contact ${contact.contactId}`);
     console.log(`[email-service] REPLY-TO: ${REPLY_TO_EMAIL}`);
     console.log(`[email-service] CC: ${uniqueCc.join(", ")}`);
     console.log(`[email-service] Template: ${rendered.templateName}`);
