@@ -72,7 +72,7 @@ export interface DashboardSummary {
     columns: string[];
     rows: CrossTabRow[];
     totals: CrossTabRow;
-    otherBreakdown: { value: string; n: number }[];
+    otherSummary: { distinctValues: number };
   };
   byOrigin: {
     columns: string[];

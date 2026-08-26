@@ -145,7 +145,12 @@ export interface DashboardSummary {
     columns: readonly string[];
     rows: CrossTabRow[];
     totals: CrossTabRow;
-    otherBreakdown: { value: string; n: number }[];
+    /**
+     * COUNT ONLY — never the raw values. insurance_payer is free text and
+     * production contains at least one entry with a patient name and DOB typed
+     * into it, so rendering the distinct values would put PHI on the page.
+     */
+    otherSummary: { distinctValues: number };
   };
   byOrigin: {
     columns: readonly OriginColumn[];
@@ -387,10 +392,7 @@ export function pivotDashboard(
       columns: insuranceColumns,
       rows: locationIds.map((id) => insuranceRows.get(id)!),
       totals: insuranceTotals,
-      otherBreakdown: Array.from(legacyInsurance.entries())
-        .map(([value, n]) => ({ value, n }))
-        .sort((a, b) => b.n - a.n || a.value.localeCompare(b.value))
-        .slice(0, 10),
+      otherSummary: { distinctValues: legacyInsurance.size },
     },
     byOrigin: {
       columns: ORIGIN_COLUMNS,

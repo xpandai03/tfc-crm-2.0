@@ -201,7 +201,7 @@ function StatusCard({ summary }: { summary: DashboardSummary }) {
  * reconcile to its own total.
  */
 function CrossTabCard({
-  summary, title, subtitle, columns, labels, rows, totals, otherLabel, otherTooltip,
+  summary, title, subtitle, columns, labels, rows, totals, otherLabel, otherNote,
 }: {
   summary: DashboardSummary;
   title: string;
@@ -211,7 +211,7 @@ function CrossTabCard({
   rows: CrossTabRow[];
   totals: CrossTabRow;
   otherLabel: string;
-  otherTooltip?: { value: string; n: number }[];
+  otherNote?: string;
 }) {
   const showUnknown = totals.unknown > 0;
   return (
@@ -232,24 +232,16 @@ function CrossTabCard({
                   </TableHead>
                 ))}
                 <TableHead className="text-right whitespace-nowrap">
-                  {otherTooltip && otherTooltip.length > 0 ? (
+                  {otherNote ? (
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger className="underline decoration-dotted underline-offset-4">
                           {otherLabel}
                         </TooltipTrigger>
                         <TooltipContent className="max-w-xs">
-                          <p className="font-medium mb-1">Most common unmapped values</p>
-                          <ul className="text-xs space-y-0.5">
-                            {otherTooltip.map((o) => (
-                              <li key={o.value} className="flex justify-between gap-4">
-                                <span>{o.value}</span>
-                                <span className="tabular-nums">{o.n}</span>
-                              </li>
-                            ))}
-                          </ul>
+                          <p className="text-xs">{otherNote}</p>
                           <p className="text-xs mt-2 text-muted-foreground">
-                            Legacy spellings. Not remapped — cleaning these is a TFC data decision.
+                            Not remapped — cleaning these is a TFC data decision.
                           </p>
                         </TooltipContent>
                       </Tooltip>
@@ -452,7 +444,12 @@ export default function Dashboard() {
           rows={summary.byInsurance.rows}
           totals={summary.byInsurance.totals}
           otherLabel="Other / Unmapped"
-          otherTooltip={summary.byInsurance.otherBreakdown}
+          otherNote={
+            `${summary.byInsurance.totals.other} contacts across ` +
+            `${summary.byInsurance.otherSummary.distinctValues} different non-standard spellings. ` +
+            `The individual values are not shown: this is a free-text field and some entries ` +
+            `contain patient details.`
+          }
         />
 
         <OriginCard summary={summary} />

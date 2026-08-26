@@ -107,8 +107,9 @@ for (const population of ["active", "all"] as const) {
   console.log("  serviceType:", JSON.stringify(s.byServiceType.totals.counts),
     "other=" + s.byServiceType.totals.other, "unknown=" + s.byServiceType.totals.unknown);
   if (population === "active") {
-    console.log("  insurance otherBreakdown (top 5):",
-      JSON.stringify(s.byInsurance.otherBreakdown.slice(0, 5)));
+    // Count only — never the raw values (free-text field, contains PHI).
+    console.log("  insurance distinct unmapped spellings:",
+      s.byInsurance.otherSummary.distinctValues);
     const zero = s.byInsurance.columns.filter((c) => s.byInsurance.totals.counts[c] === 0);
     console.log(`  canonical insurance columns with zero records (${zero.length}):`, JSON.stringify(zero));
   }
