@@ -1,13 +1,17 @@
 /**
  * Monthly report orchestration: build → render → guard → send → record.
  *
- * RECIPIENTS ARE LANE ONLY, hardcoded.
+ * THE AUTOMATIC SEND GOES TO LANE ONLY, hardcoded.
  *
  * Not an oversight and not a placeholder: the client was explicit that every
- * send goes to Lane until the content is approved, so that nothing half-finished
- * reaches the CEO. Adding a recipient is a deliberate one-line edit plus a
- * deploy, made once Lane signs off — not a config toggle someone flips by
- * accident. The cadence/recipient control panel is next week's work.
+ * scheduled send goes to Lane until the content is approved, so that nothing
+ * half-finished reaches the CEO. Adding a production recipient is a deliberate
+ * one-line edit plus a deploy, made once Lane signs off — not a config toggle
+ * someone flips by accident. The cadence/recipient control panel is next week.
+ *
+ * A hand-triggered TEST send is a separate, wider list (see below). It is
+ * subject-prefixed [TEST] and records nothing, so it can never be mistaken for
+ * the real report nor suppress it.
  */
 
 import {
@@ -23,9 +27,27 @@ import {
   type SendTrigger,
 } from "./db";
 
-/** THE recipient list. See the module header before changing this. */
+/** THE production recipient list — the automatic Sept 1 send uses ONLY this. */
 export const MONTHLY_REPORT_RECIPIENTS = [
   "lsego@tfc.health", // Lane — sole recipient until content is approved
+];
+
+/**
+ * Recipients for an explicitly-labelled TEST send, triggered by hand.
+ *
+ * A fixed list in code, NOT free-form addresses from the request body: the
+ * endpoint is gated, but "authenticated user can email a report anywhere" is a
+ * capability worth simply not having.
+ *
+ * A test send is deliberately NOT recorded in report_sends. If it were, testing
+ * a period would claim it, and the real cron would then find the claim and skip
+ * the genuine send — turning a rehearsal into the exact silent failure this
+ * whole build exists to prevent.
+ */
+export const MONTHLY_REPORT_TEST_RECIPIENTS = [
+  "lsego@tfc.health",
+  "raunek@tfc.health",
+  "raunek@xpandai.com",
 ];
 
 export const MONTHLY_REPORT_KIND = "monthly";
@@ -64,11 +86,14 @@ export async function sendMonthlyReport(params: {
   period?: string;
   trigger: SendTrigger;
   actor?: string | null;
+  /** Explicitly-labelled test send: wider recipients, no claim recorded. */
+  test?: boolean;
 }): Promise<SendOutcome> {
   const period = params.period ?? previousPeriod();
   resolvePeriod(period); // validates format, throws on junk
   const key = reportKey(MONTHLY_REPORT_KIND, period);
-  const recipients = MONTHLY_REPORT_RECIPIENTS;
+  const isTest = params.test === true && params.trigger === "manual";
+  const recipients = isTest ? MONTHLY_REPORT_TEST_RECIPIENTS : MONTHLY_REPORT_RECIPIENTS;
   const trigger = params.trigger;
   const actor = params.actor ?? null;
 
@@ -98,7 +123,9 @@ export async function sendMonthlyReport(params: {
   try {
     const report = await buildMonthlyReport(period);
     const html = renderMonthlyReportHtml(report);
-    const subject = renderMonthlyReportSubject(report);
+    const subject = isTest
+      ? `[TEST] ${renderMonthlyReportSubject(report)}`
+      : renderMonthlyReportSubject(report);
     const xlsx = renderMonthlyReportXlsx(report);
 
     console.log(
@@ -121,9 +148,18 @@ export async function sendMonthlyReport(params: {
       return { ok: false, period, recipients, error: result.error };
     }
 
-    if (trigger === "manual") await recordManualSend(key, period, recipients, actor);
+    // A TEST send records nothing: claiming the period here would make the real
+    // cron skip it on the 1st.
+    if (trigger === "manual" && !isTest) {
+      await recordManualSend(key, period, recipients, actor);
+    } else if (isTest) {
+      console.log(
+        `[monthly-report] TEST send for ${period} — deliberately NOT recorded in ` +
+        `report_sends, so the scheduled send for this period is unaffected.`,
+      );
+    }
 
-    console.log(`[monthly-report] SENT ${period} to ${recipients.join(", ")} (${trigger})`);
+    console.log(`[monthly-report] SENT ${period} to ${recipients.join(", ")} (${trigger}${isTest ? "/TEST" : ""})`);
     return { ok: true, period, recipients, emailId: result.emailId };
   } catch (error) {
     if (trigger === "cron") await releaseReportClaim(key);
