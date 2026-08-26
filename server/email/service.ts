@@ -2,7 +2,12 @@
  * Email Service
  *
  * Handles template rendering, ECC checks, and email sending via Resend.
- * All sends are admin-triggered (no automatic emails).
+ *
+ * Most sends are admin-triggered. TWO are automatic and run unattended:
+ * the reminder cron (server/reminders/cron.ts) and the monthly management
+ * report (server/reports/). The previous claim here — "All sends are
+ * admin-triggered (no automatic emails)" — was already untrue when the
+ * reminder cron shipped; do not restore it.
  */
 
 import { Resend } from "resend";
@@ -373,4 +378,81 @@ export function validateEmailServiceConfig(): {
     configured: warnings.length === 0,
     warnings,
   };
+}
+
+// ============================================================================
+// Report emails (monthly management report)
+//
+// Deliberately NOT routed through sendTemplatedEmail: that path is built around
+// a CONTACT (it requires contact.email, does ECC consent checks, and writes an
+// email snapshot against a contact_id). A management report has no contact and
+// must never acquire one — it carries aggregate counts only. Sharing the code
+// path would mean weakening those contact-centric checks to accommodate a
+// recipient that is a staff member, which is exactly how PHI leaks into a
+// surface that was never meant to carry it.
+// ============================================================================
+
+export interface ReportAttachment {
+  filename: string;
+  content: Buffer;
+}
+
+/**
+ * Send an aggregate report to internal staff recipients.
+ * `to` is a staff allow-list decided in code — never derived from contact data.
+ */
+export async function sendReportEmail(params: {
+  to: string[];
+  subject: string;
+  html: string;
+  attachments?: ReportAttachment[];
+}): Promise<SendResult> {
+  const { to, subject, html, attachments } = params;
+
+  if (to.length === 0) {
+    return { success: false, error: "No recipients configured" };
+  }
+
+  if (!resend) {
+    console.warn(
+      `[report-email] Send skipped (RESEND_API_KEY not configured) — would have sent "${subject}" to ${to.join(", ")}`,
+    );
+    return { success: false, error: "RESEND_API_KEY not configured" };
+  }
+
+  try {
+    console.log(`[report-email] Sending "${subject}" to ${to.join(", ")}` +
+      (attachments?.length ? ` with ${attachments.length} attachment(s)` : ""));
+
+    const result = await resend.emails.send({
+      from: `${FROM_NAME} <${FROM_EMAIL}>`,
+      to,
+      replyTo: REPLY_TO_EMAIL,
+      subject,
+      html,
+      attachments: attachments?.map((a) => ({
+        filename: a.filename,
+        content: a.content.toString("base64"),
+      })),
+    });
+
+    if (result.error) {
+      console.error("[report-email] Resend API error:", result.error);
+      return { success: false, error: result.error.message };
+    }
+
+    console.log(`[report-email] Sent, Resend ID: ${result.data?.id}`);
+    return {
+      success: true,
+      emailId: result.data?.id,
+      renderedHtml: html,
+      renderedSubject: subject,
+      senderEmail: FROM_EMAIL,
+      recipientEmail: to.join(", "),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown send error";
+    console.error("[report-email] Send failed:", message);
+    return { success: false, error: message };
+  }
 }

@@ -1062,7 +1062,7 @@ export async function getWaitlistExportData(
 // string conversion). Keep this in sync with status-config.ts:STATUS_LABELS if
 // the spreadsheet labels change. The canonical slug map lives in
 // shared/status-codes.ts (getStatusLabel) and is unaffected.
-const REFERRAL_REPORT_STATUS_LABELS: Record<number, string> = {
+export const REFERRAL_REPORT_STATUS_LABELS: Record<number, string> = {
   100: "New -- No Outreach",
   101: "Left Voicemail",
   102: "Response Received",

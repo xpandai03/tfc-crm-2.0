@@ -6,7 +6,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { configureAuth, authMiddleware } from "./auth";
-import { initRemindersTable, startReminderCron } from "./reminders";
+import { initRemindersTable, startReminderCron, startMonthlyReportCron } from "./reminders";
 import { initTherapyNotesTable } from "./therapy-notes";
 import { initEmailSnapshotsTable } from "./email-snapshots";
 import { initAssignmentsTable } from "./assignments/db";
@@ -14,6 +14,7 @@ import { initSyncTables } from "./sync/db";
 import { initActivityTable } from "./activity/db";
 import { initEmailTemplatesTable } from "./email/templates";
 import { initViewPreferencesTable } from "./view-preferences/db";
+import { initReportSendsTable } from "./reports/db";
 
 const app = express();
 const httpServer = createServer(app);
@@ -204,7 +205,12 @@ app.use((req, res, next) => {
     // Prod creates this via migrations/add-user-view-preferences.sql
     // (schema-before-code, C16); this keeps fresh/non-prod DBs in step.
     await initViewPreferencesTable();
+    await initReportSendsTable();
     startReminderCron();
+    // Monthly management report. Schedule + timezone are logged on the line
+    // below at boot, so the deployed cadence is readable from the startup log
+    // rather than inferred from the code.
+    startMonthlyReportCron();
     // Phase 3: load the crm_providers-derived email-axis directory, then keep it
     // fresh on an interval (mutations also refresh it on write). Sync resolvers
     // fall back to PROVIDER_LIST until/if this populates, so startup is safe.
