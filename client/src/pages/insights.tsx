@@ -21,6 +21,7 @@ import { computeDaysWaiting } from "@/lib/days-waiting";
 import { useDataSource, type DataSource } from "@/lib/data-source-context";
 import { normalizeInsurance } from "@/lib/insurance-utils";
 import { getPrimaryModality } from "@shared/modality-utils";
+import { OPERATIONS_STATUS_CODES, PIPELINE_STATUS_CODES } from "@shared/status-buckets";
 import { useAuth } from "@/lib/auth-context";
 import { isRestrictedUser, canBuildReports, canUseReportAgent } from "@shared/access-control";
 import { ReportBuilderModal } from "@/components/report-builder-modal";
@@ -41,12 +42,23 @@ import { bucketReason } from "@shared/reason-canonicals";
 /** Per-row counts for Insights breakdown cards (operations ⊆ pipeline). */
 type BreakdownDualCounts = { operations: number; pipeline: number };
 
-/** URL `status` query for waitlist drill-down from Insights. */
-const INSIGHTS_OPS_STATUS_QUERY = "100,101,102,200,201";
-const INSIGHTS_PIPELINE_STATUS_QUERY = "100,101,102,200,201,202";
+// Derived from @shared/status-buckets, NOT hand-listed.
+//
+// These were literals — {100,101,102,200,201} and {100,101,102,200,201,202} —
+// and both OMITTED 206 (Rescheduling Initial Appointment), even though 206 is a
+// member of STATUS_UMBRELLAS.PS. Insights therefore reported pipeline as 209
+// while the umbrella definition (and the waitlist board) said 212. Deriving from
+// the shared buckets fixes the count and makes it undriftable: adding a code to
+// an umbrella now updates this page automatically.
+//
+// The drill-down QUERY strings are derived from the same arrays on purpose — a
+// card whose number and whose link disagreed would be worse than either alone.
+const INSIGHTS_OPS_STATUS_SET = new Set(OPERATIONS_STATUS_CODES);
+const INSIGHTS_PIPELINE_STATUS_SET = new Set(PIPELINE_STATUS_CODES);
 
-const INSIGHTS_OPS_STATUS_SET = new Set([100, 101, 102, 200, 201]);
-const INSIGHTS_PIPELINE_STATUS_SET = new Set([100, 101, 102, 200, 201, 202]);
+/** URL `status` query for waitlist drill-down from Insights. */
+const INSIGHTS_OPS_STATUS_QUERY = OPERATIONS_STATUS_CODES.join(",");
+const INSIGHTS_PIPELINE_STATUS_QUERY = PIPELINE_STATUS_CODES.join(",");
 
 function buildInsightWaitlistHref(
   filterType: "insurance" | "modality" | "reason" | "serviceType",

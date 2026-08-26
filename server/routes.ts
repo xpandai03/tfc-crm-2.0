@@ -81,7 +81,8 @@ import {
   getActivityForContact,
   getStatusDurations,
 } from "./activity/db";
-import { isRestrictedUser, canAccessReferralUpload, isTnV2User, canEditEmailTemplates, canBuildReports, canUseReportAgent } from "@shared/access-control";
+import { isRestrictedUser, canAccessReferralUpload, isTnV2User, canEditEmailTemplates, canBuildReports, canUseReportAgent, canAccessDashboard } from "@shared/access-control";
+import { getDashboardSummary } from "./dashboard/db";
 import { ACCEPTED_INSURANCES } from "@shared/insurance-utils";
 import { SERVICE_TYPES } from "@shared/service-types";
 import { PAPERWORK_STATUSES, isValidPaperworkStatus } from "@shared/paperwork-status";
@@ -6893,6 +6894,53 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[activity] Error fetching staff summary:", error);
       return res.status(500).json({ error: "Failed to fetch staff summary" });
+    }
+  });
+
+  // ==========================================================================
+  // Management Dashboard (Build: /dashboard beta)
+  //
+  // Gated to DASHBOARD_BETA_EMAILS via requireDashboard — the SAME shape as
+  // requireReportBuilder below. The client-side nav gate and page <Redirect>
+  // are cosmetic; THIS is the access boundary.
+  //
+  // One endpoint serves every card from one grouped read (server/dashboard/db.ts)
+  // so the cards cannot disagree with each other.
+  // ==========================================================================
+  const requireDashboard = (req: any, res: any): string | null => {
+    if (!(req.isAuthenticated && req.isAuthenticated())) {
+      res.status(401).json({ error: "Authentication required" });
+      return null;
+    }
+    const email = (req.user?.email ?? "").toLowerCase().trim();
+    if (!canAccessDashboard(email)) {
+      res.status(403).json({ error: "Access denied" });
+      return null;
+    }
+    return email;
+  };
+
+  app.get("/api/dashboard/summary", async (req: any, res) => {
+    try {
+      if (!requireDashboard(req, res)) return;
+      // Anything other than an explicit "all" is treated as "active" — an
+      // unrecognised value must never silently widen the counted population.
+      const population = req.query.population === "all" ? "all" : "active";
+      const summary = await getDashboardSummary(population);
+      if (summary.dataQuality.unreconciledRows.length > 0) {
+        console.warn(
+          `[dashboard] UNRECONCILED rows: ${summary.dataQuality.unreconciledRows.join("; ")}`,
+        );
+      }
+      console.log(
+        `[dashboard] population=${population} counted=${summary.totals.counted} ` +
+        `pipeline=${summary.totals.pipeline} active=${summary.totals.active} query=${summary.queryMs}ms`,
+      );
+      return res.json(summary);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Dashboard summary failed";
+      console.error("[dashboard] Error:", message);
+      return res.status(500).json({ error: "Failed to build dashboard summary" });
     }
   });
 

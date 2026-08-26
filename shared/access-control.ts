@@ -182,3 +182,49 @@ export function canUseReportAgent(email: string | null | undefined): boolean {
   if (!email) return false;
   return REPORT_AGENT_EMAILS.includes(email.toLowerCase().trim());
 }
+
+// ============================================================================
+// Management Dashboard access (/dashboard)
+//
+// Same kill-switch shape as TN_V2_OPEN_TO_ALL above: a boolean constant that
+// widens the gate in one line, with no migration and no list surgery.
+//   Wed 2026-08-26 — DASHBOARD_OPEN_TO_MANAGEMENT = false → the 2 beta users.
+//   Fri 2026-08-28 — flip to true → DASHBOARD_MANAGEMENT_EMAILS.
+//
+// WHY THE FRIDAY GATE IS A POSITIVE ALLOW-LIST AND NOT !isRestrictedUser()
+// ------------------------------------------------------------------------
+// Insights is gated by RESTRICTED_EMAILS, a THREE-PERSON DENY-LIST — so every
+// authenticated user except those three can already reach it. "Insights-
+// equivalent" would therefore publish per-clinic performance data to the whole
+// staff. The client believes admin/scheduling staff do NOT have Insights
+// access; that belief is not what the code does, and reconciling it is an open
+// client question. Until it is answered this gate DEFAULTS CLOSED.
+//
+// DASHBOARD_MANAGEMENT_EMAILS ships empty on purpose. Friday's flip is blocked
+// on the client's confirmed roster, which is the correct thing to be blocked
+// on — flipping with an empty list locks everyone out loudly rather than
+// leaking quietly.
+// ============================================================================
+export const DASHBOARD_OPEN_TO_MANAGEMENT = false;
+
+export const DASHBOARD_BETA_EMAILS = [
+  "raunek@tfc.health", // developer
+  "lsego@tfc.health",  // Lane — client ops lead
+];
+
+export const DASHBOARD_MANAGEMENT_EMAILS: string[] = [
+  // Populate from the client's confirmed Friday roster, THEN flip
+  // DASHBOARD_OPEN_TO_MANAGEMENT to true. Empty = nobody passes once flipped.
+];
+
+/**
+ * Whether a user may see the management dashboard.
+ * Server-side (server/routes.ts requireDashboard) is the real boundary; the nav
+ * gate and page redirect are cosmetic.
+ */
+export function canAccessDashboard(email: string | null | undefined): boolean {
+  if (!email) return false;
+  const e = email.toLowerCase().trim();
+  if (DASHBOARD_OPEN_TO_MANAGEMENT) return DASHBOARD_MANAGEMENT_EMAILS.includes(e);
+  return DASHBOARD_BETA_EMAILS.includes(e);
+}

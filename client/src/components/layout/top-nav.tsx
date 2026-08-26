@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Home, Users, BarChart3, UserCheck, FileText, FileUp, Activity, MessageCircleQuestion, Mail } from "lucide-react";
+import { Home, Users, BarChart3, UserCheck, FileText, FileUp, Activity, MessageCircleQuestion, Mail, LayoutDashboard } from "lucide-react";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -8,12 +8,13 @@ import { UniversalSearch } from "./universal-search";
 import { useAuth } from "@/lib/auth-context";
 import { getWaitlistBoard } from "@/lib/api";
 import { FeedbackModal } from "@/components/ui/feedback-modal";
-import { isRestrictedUser, canAccessReferralUpload, canEditEmailTemplates } from "@shared/access-control";
+import { isRestrictedUser, canAccessReferralUpload, canEditEmailTemplates, canAccessDashboard } from "@shared/access-control";
 
 const allNavItems = [
   { href: "/", label: "Today", icon: Home },
   { href: "/waitlist", label: "Waitlist", icon: Users },
   { href: "/insights", label: "Insights", icon: BarChart3 },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, beta: true },
   { href: "/providers", label: "Providers", icon: UserCheck, beta: true },
   { href: "/submissions", label: "Submissions", icon: FileText },
   { href: "/referral", label: "Referrals", icon: FileUp },
@@ -28,6 +29,7 @@ const GATED_HREFS = ["/", "/insights", "/providers"];
 const FEATURE_GATED_HREFS: Record<string, (email: string | null | undefined) => boolean> = {
   "/referral": canAccessReferralUpload,
   "/email-templates": canEditEmailTemplates,
+  "/dashboard": canAccessDashboard,
 };
 
 export function TopNav() {
