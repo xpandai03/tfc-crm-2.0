@@ -193,9 +193,15 @@ export function startMonthlyReportCron(): void {
     `[report-cron] Monthly report scheduled: "${schedule}" (${describeSchedule(schedule)}) ` +
     `timezone=${REPORT_TIMEZONE}${isOverridden ? " [OVERRIDDEN via REPORT_CRON_SCHEDULE]" : " [default]"}`,
   );
+  // Phrased carefully: previousPeriod() is evaluated NOW, so on Aug 25 it reads
+  // "2026-07" even though the next real fire (Sep 1) will report on August.
+  // Saying "next period" here would be actively misleading to someone checking
+  // the boot log to confirm the setup — which is the whole reason it is logged.
   console.log(
-    `[report-cron] Next period on fire would be ${previousPeriod()}; ` +
-    `recipients are set in server/reports/send.ts`,
+    `[report-cron] The period is always the calendar month that just ended in ${REPORT_TIMEZONE}. ` +
+    `A fire at this moment would report on ${previousPeriod()}; the next scheduled fire is ` +
+    `${describeSchedule(schedule)}, which will report on the month ending immediately before it. ` +
+    `Recipients are set in server/reports/send.ts`,
   );
 }
 
