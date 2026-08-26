@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Home, Users, BarChart3, UserCheck, FileText, FileUp, Activity, MessageCircleQuestion, Mail, LayoutDashboard } from "lucide-react";
+import { Home, Users, BarChart3, UserCheck, FileText, Activity, MessageCircleQuestion, Mail, LayoutDashboard } from "lucide-react";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -17,7 +17,6 @@ const allNavItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, beta: true },
   { href: "/providers", label: "Providers", icon: UserCheck, beta: true },
   { href: "/submissions", label: "Submissions", icon: FileText },
-  { href: "/referral", label: "Referrals", icon: FileUp },
   { href: "/email-templates", label: "Templates", icon: Mail },
   { href: "/activity", label: "Activity", icon: Activity },
 ];
@@ -26,6 +25,12 @@ const GATED_HREFS = ["/", "/insights", "/providers"];
 // Items only shown when the user passes a positive feature gate (not just
 // hidden for restricted users). Keep the gate predicates in sync with the
 // allowlists in shared/access-control.ts.
+// "/referral" is KEPT here even though it no longer has a nav entry. The map is
+// keyed by href and consulted by the filter below, so an unmatched key is inert
+// today — but it is the registry a future nav entry would be re-added against,
+// and dropping it would quietly remove the gate from anyone who restores the
+// tab. The entry point now lives on the Submissions page, gated on the same
+// predicate.
 const FEATURE_GATED_HREFS: Record<string, (email: string | null | undefined) => boolean> = {
   "/referral": canAccessReferralUpload,
   "/email-templates": canEditEmailTemplates,
