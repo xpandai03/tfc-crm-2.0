@@ -83,6 +83,8 @@ import {
 } from "./activity/db";
 import { isRestrictedUser, canAccessReferralUpload, isTnV2User, canEditEmailTemplates, canBuildReports, canUseReportAgent, canAccessDashboard } from "@shared/access-control";
 import { getDashboardSummary } from "./dashboard/db";
+import { previewMonthlyReport, sendMonthlyReport } from "./reports/send";
+import { previousPeriod } from "./reports/monthly";
 import { ACCEPTED_INSURANCES } from "@shared/insurance-utils";
 import { SERVICE_TYPES } from "@shared/service-types";
 import { PAPERWORK_STATUSES, isValidPaperworkStatus } from "@shared/paperwork-status";
@@ -6941,6 +6943,57 @@ export async function registerRoutes(
       const message = error instanceof Error ? error.message : "Dashboard summary failed";
       console.error("[dashboard] Error:", message);
       return res.status(500).json({ error: "Failed to build dashboard summary" });
+    }
+  });
+
+  // ==========================================================================
+  // Monthly report — manual trigger (preview + send)
+  //
+  // Gated with canAccessDashboard, the same boundary as the dashboard itself.
+  //
+  // PREVIEW renders the exact HTML the cron would send and returns it WITHOUT
+  // sending, so the content can be iterated on without filling Lane's inbox.
+  // SEND goes through the real send path to the real recipients — not a
+  // simulation, because a "test mode" that skips the thing most likely to break
+  // (Resend, attachments, delivery) proves nothing about Sept 1.
+  // ==========================================================================
+  app.get("/api/reports/monthly/preview", async (req: any, res) => {
+    try {
+      if (!requireDashboard(req, res)) return;
+      const period = typeof req.query.period === "string" && req.query.period
+        ? req.query.period : previousPeriod();
+      const { report, subject, html } = await previewMonthlyReport(period);
+      console.log(
+        `[monthly-report] PREVIEW ${period} by ${req.user?.email} — ` +
+        `cohort=${report.cohort.size} snapshot active=${report.snapshot.totals.active}`,
+      );
+      // Rendered as HTML so it can be eyeballed in a browser tab exactly as it
+      // will arrive. ?format=json returns the underlying figures instead.
+      if (req.query.format === "json") {
+        return res.json({ period, subject, report });
+      }
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.send(html);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Preview failed";
+      console.error("[monthly-report] Preview error:", message);
+      return res.status(400).json({ error: message });
+    }
+  });
+
+  app.post("/api/reports/monthly/send", async (req: any, res) => {
+    try {
+      const email = requireDashboard(req, res);
+      if (!email) return;
+      const period = typeof req.body?.period === "string" && req.body.period
+        ? req.body.period : previousPeriod();
+      console.log(`[monthly-report] MANUAL SEND requested for ${period} by ${email}`);
+      const outcome = await sendMonthlyReport({ period, trigger: "manual", actor: email });
+      return res.status(outcome.ok ? 200 : 500).json(outcome);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Send failed";
+      console.error("[monthly-report] Send error:", message);
+      return res.status(400).json({ error: message });
     }
   });
 
