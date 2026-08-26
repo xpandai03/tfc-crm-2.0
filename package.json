@@ -14,7 +14,8 @@
     "test:modality": "tsx scripts/test-modality.ts",
     "test:insurance-canonical": "tsx scripts/test-insurance-canonical.ts",
     "test:columns": "tsx --tsconfig tsconfig.test.json scripts/test-waitlist-columns.tsx",
-    "test:view-prefs": "tsx scripts/test-view-preferences.ts"
+    "test:view-prefs": "tsx scripts/test-view-preferences.ts",
+    "test:dashboard": "tsx --tsconfig tsconfig.test.json scripts/verify-dashboard.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1034.0",

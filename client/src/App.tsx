@@ -10,6 +10,7 @@ import Home from "@/pages/home";
 import Waitlist from "@/pages/waitlist";
 import ContactDetail from "@/pages/contact-detail";
 import Insights from "@/pages/insights";
+import Dashboard from "@/pages/dashboard";
 import Providers from "@/pages/providers";
 import Submissions from "@/pages/submissions";
 import ActivityPage from "@/pages/activity";
@@ -35,6 +36,7 @@ function Router() {
       <Route path="/waitlist" component={Waitlist} />
       <Route path="/contact/:id" component={ContactDetail} />
       <Route path="/insights" component={Insights} />
+      <Route path="/dashboard" component={Dashboard} />
       <Route path="/providers" component={Providers} />
       <Route path="/submissions" component={Submissions} />
       <Route path="/activity" component={ActivityPage} />
