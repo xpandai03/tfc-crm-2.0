@@ -27,6 +27,12 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { PageLoader } from "@/components/ui/page-loader";
 import {
@@ -41,13 +47,20 @@ import { useAuth } from "@/lib/auth-context";
 import { canAccessDashboard } from "@shared/access-control";
 import {
   buildServiceTypeChart, buildInsuranceChart, buildOriginChart,
+  buildStatusChart, buildServiceTypeInsuranceChart,
   insuranceChartHeight, type ChartSeries, type StackRow,
 } from "@/lib/dashboard-charts";
+import { buildWaitlistHref } from "@/lib/waitlist-href";
+import { PIPELINE_STATUS_CODES, STATUS_BUCKET_CODES } from "@shared/status-buckets";
 import {
   getDashboardSummary,
+  getUnmappedInsuranceContacts,
   type DashboardSummary,
   type CrossTabRow,
+  type CrossTabSet,
+  type CardScope,
   type Population,
+  type UnmappedInsuranceContact,
 } from "@/lib/dashboard-api";
 
 /** Renders 0 rather than a blank cell — an empty cell reads as "no data". */
@@ -167,8 +180,10 @@ function StackTooltip({ active, payload, series }: {
  * other but show no total, so the reconciliation the whole dashboard is built
  * around would become invisible exactly where it is easiest to doubt.
  */
-function StackedBars({ rows, series, height, yAxisWidth }: {
+function StackedBars({ rows, series, height, yAxisWidth, onSegmentClick }: {
   rows: StackRow[]; series: ChartSeries[]; height: number; yAxisWidth: number;
+  /** Click-through. A segment with zero records does not navigate. */
+  onSegmentClick?: (row: StackRow, seriesKey: string) => void;
 }) {
   const config = Object.fromEntries(
     series.map((s) => [s.key, { label: s.label, color: s.color }]),
@@ -185,10 +200,165 @@ function StackedBars({ rows, series, height, yAxisWidth }: {
           content={<StackTooltip series={series} />} />
         <ChartLegend content={<ChartLegendContent />} />
         {series.map((s) => (
-          <Bar key={s.key} dataKey={s.key} stackId="stack" fill={s.color} />
+          <Bar
+            key={s.key} dataKey={s.key} stackId="stack" fill={s.color}
+            cursor={onSegmentClick ? "pointer" : undefined}
+            onClick={onSegmentClick
+              ? (d: unknown) => {
+                  const row = (d as { payload?: StackRow })?.payload;
+                  // A zero segment has nothing to drill into — do not navigate.
+                  if (row && Number(row[s.key] ?? 0) > 0) onSegmentClick(row, s.key);
+                }
+              : undefined}
+          />
         ))}
       </BarChart>
     </ChartContainer>
+  );
+}
+
+// ============================================================================
+// Per-card population scope (Aug 26 review, item 6)
+//
+// Pipeline = Waitlist + Pending + Scheduled. Waitlist = the Waitlist bucket
+// alone. The client's reasoning: a clinic may show twenty people, but sixteen
+// are already scheduled and only four are genuinely waiting.
+//
+// Card 1 does NOT get this toggle — it already breaks out by status, so the
+// control would be redundant. The client said so directly.
+//
+// Per-card, not persisted; persistence belongs to the deferred customization
+// work.
+// ============================================================================
+
+/** Status codes behind each scope, for the waitlist click-through URL. */
+const SCOPE_STATUS_QUERY: Record<CardScope, string> = {
+  pipeline: PIPELINE_STATUS_CODES.join(","),
+  waitlist: STATUS_BUCKET_CODES.waitlist.join(","),
+};
+
+const SCOPE_LABELS: Record<CardScope, string> = {
+  pipeline: "Pipeline",
+  waitlist: "Waitlist",
+};
+
+function useCardScope() {
+  const [scope, setScope] = useState<CardScope>("pipeline");
+  return { scope, setScope };
+}
+
+function ScopeToggle({ scope, onChange, counted }: {
+  scope: CardScope; onChange: (s: CardScope) => void; counted: number;
+}) {
+  return (
+    <ToggleGroup
+      type="single" value={scope} size="sm"
+      onValueChange={(v) => v && onChange(v as CardScope)}
+    >
+      {(["pipeline", "waitlist"] as CardScope[]).map((s) => (
+        <ToggleGroupItem key={s} value={s} className="text-xs px-2">
+          {SCOPE_LABELS[s]}{s === scope ? ` (${counted})` : ""}
+        </ToggleGroupItem>
+      ))}
+    </ToggleGroup>
+  );
+}
+
+/**
+ * The "Other / Unmapped" contact list (Aug 26 review, item 3).
+ *
+ * The highest-value change on the client's list: he wants to FIX these records
+ * and currently has no route to them, because their legacy insurance values no
+ * longer appear in any filter dropdown.
+ *
+ * THIS IS THE ONLY SURFACE THAT RENDERS THE RAW insurance_payer VALUE. It is a
+ * gated modal — a normal CRM surface, no different from the contact card — and
+ * the value must never travel from here to a chart label, axis, tooltip, legend
+ * or log line. A tooltip on this exact card leaked PHI in v189.
+ *
+ * READ-ONLY by design: the client edits through the contact record, as today.
+ */
+function UnmappedInsuranceModal({
+  open, onOpenChange, scope, title, filter,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  scope: CardScope;
+  title: string;
+  /** Narrows the list to the clicked row (a location, or a service type). */
+  filter?: (c: UnmappedInsuranceContact) => boolean;
+}) {
+  const { data, isLoading, error } = useQuery<UnmappedInsuranceContact[]>({
+    queryKey: ["/api/dashboard/unmapped-insurance", scope],
+    queryFn: () => getUnmappedInsuranceContacts(scope),
+    enabled: open,
+  });
+  const rows = (data ?? []).filter((c) => (filter ? filter(c) : true));
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[720px] max-h-[80vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="text-base">{title}</DialogTitle>
+          <p className="text-xs text-muted-foreground">
+            These records hold an insurance value that is not one of the 16 approved
+            payers, so they match no filter elsewhere in the CRM. Open a contact to
+            correct it — this list is read-only.
+          </p>
+        </DialogHeader>
+        <ScrollArea className="flex-1 min-h-0 max-h-[55vh]">
+          {isLoading && (
+            <p className="text-sm text-muted-foreground py-8 text-center">Loading…</p>
+          )}
+          {error && (
+            <p className="text-sm text-destructive py-8 text-center">
+              Could not load the list.
+            </p>
+          )}
+          {!isLoading && !error && rows.length === 0 && (
+            <p className="text-sm text-muted-foreground py-8 text-center">
+              Nothing here — every record in this group has an approved payer.
+            </p>
+          )}
+          {rows.length > 0 && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Contact</TableHead>
+                  <TableHead>Stored insurance value</TableHead>
+                  <TableHead className="w-[70px]"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((c) => (
+                  <TableRow key={c.contactId}>
+                    <TableCell className="font-medium">{c.name}</TableCell>
+                    <TableCell className="text-muted-foreground break-all">
+                      {c.insurancePayer}
+                    </TableCell>
+                    <TableCell>
+                      <Link href={`/contact/${c.contactId}`}>
+                        <span className="text-primary text-sm hover:underline cursor-pointer whitespace-nowrap">
+                          Open →
+                        </span>
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </ScrollArea>
+        <DialogFooter className="justify-between sm:justify-between">
+          <span className="text-xs text-muted-foreground self-center">
+            {rows.length} record{rows.length === 1 ? "" : "s"}
+          </span>
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -216,32 +386,24 @@ function StatusCard({ summary }: { summary: DashboardSummary }) {
       </CardHeader>
       <CardContent className="space-y-6">
         {!showTable && !showChart && <NoViews />}
-        {showChart && (
-          <ChartContainer
-            config={{ pipeline: { label: "Pipeline", color: "hsl(var(--chart-1))" } }}
-            className="h-[260px] w-full"
-          >
-            <BarChart data={chartData} layout="vertical" margin={{ left: 8, right: 24 }}>
-              <CartesianGrid horizontal={false} />
-              <XAxis type="number" allowDecimals={false} />
-              <YAxis type="category" dataKey="name" width={110} tickLine={false} axisLine={false} />
-              <ChartTooltip
-                cursor={{ fillOpacity: 0.1 }}
-                content={({ active, payload, label }) =>
-                  active && payload?.length ? (
-                    <div className="rounded-lg border bg-background px-3 py-2 text-sm shadow-md">
-                      <div className="font-medium">{label}</div>
-                      <div className="text-muted-foreground">
-                        Pipeline: <span className="font-medium text-foreground">{payload[0].value}</span>
-                      </div>
-                    </div>
-                  ) : null
-                }
-              />
-              <Bar dataKey="pipeline" fill="var(--color-pipeline)" radius={[0, 4, 4, 0]} />
-            </BarChart>
-          </ChartContainer>
-        )}
+        {showChart && (() => {
+          // Stacked by status: the colour carries the status, and hovering gives
+          // the per-status breakdown — items 1 and 2 of the Aug 26 review.
+          const spec = buildStatusChart(summary);
+          return (
+            <StackedBars
+              rows={spec.rows} series={spec.series} height={280} yAxisWidth={110}
+              onSegmentClick={(row, bucketKey) => {
+                const loc = summary.locations.find((l) => l.label === row.full);
+                const codes = STATUS_BUCKET_CODES[bucketKey as keyof typeof STATUS_BUCKET_CODES];
+                if (!loc?.modalityP1 || !codes) return;
+                window.location.href = buildWaitlistHref({
+                  modality: loc.modalityP1, status: codes.join(","),
+                });
+              }}
+            />
+          );
+        })()}
         {showTable && (
           <div className="overflow-x-auto">
             <Table>
@@ -320,6 +482,7 @@ function StatusCard({ summary }: { summary: DashboardSummary }) {
  */
 function CrossTabCard({
   summary, title, subtitle, columns, labels, rows, totals, otherLabel, otherNote, chart,
+  scope, onScopeChange, counted, onOtherClick,
 }: {
   summary: DashboardSummary;
   title: string;
@@ -332,6 +495,11 @@ function CrossTabCard({
   otherNote?: string;
   /** Rendered above the table when the graph view is on. */
   chart?: React.ReactNode;
+  scope?: CardScope;
+  onScopeChange?: (s: CardScope) => void;
+  counted?: number;
+  /** When set, the Other / Unmapped header and cells open the contact list. */
+  onOtherClick?: (rowKey?: string) => void;
 }) {
   const { views, showTable, showChart, onChange } = useCardViews();
   const showUnknown = totals.unknown > 0;
@@ -342,7 +510,12 @@ function CrossTabCard({
           <CardTitle className="text-base font-medium">{title}</CardTitle>
           <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>
         </div>
-        <ViewToggle views={views} onChange={onChange} />
+        <div className="flex items-center gap-2">
+          {scope && onScopeChange && (
+            <ScopeToggle scope={scope} onChange={onScopeChange} counted={counted ?? 0} />
+          )}
+          <ViewToggle views={views} onChange={onChange} />
+        </div>
       </CardHeader>
       <CardContent className="space-y-6">
         {!showTable && !showChart && <NoViews />}
@@ -359,7 +532,16 @@ function CrossTabCard({
                   </TableHead>
                 ))}
                 <TableHead className="text-right whitespace-nowrap">
-                  {otherNote ? (
+                  {onOtherClick ? (
+                    <button
+                      type="button"
+                      onClick={() => onOtherClick()}
+                      className="underline decoration-dotted underline-offset-4 hover:text-primary"
+                      title="List these contacts"
+                    >
+                      {otherLabel}
+                    </button>
+                  ) : otherNote ? (
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger className="underline decoration-dotted underline-offset-4">
@@ -391,7 +573,14 @@ function CrossTabCard({
                     {columns.map((c) => (
                       <TableCell key={c} className="text-right tabular-nums">{n(r.counts[c] ?? 0)}</TableCell>
                     ))}
-                    <TableCell className="text-right tabular-nums">{n(r.other)}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {onOtherClick && r.other > 0 ? (
+                        <button type="button" onClick={() => onOtherClick(r.location)}
+                          className="underline decoration-dotted underline-offset-4 hover:text-primary">
+                          {r.other}
+                        </button>
+                      ) : n(r.other)}
+                    </TableCell>
                     {showUnknown && <TableCell className="text-right tabular-nums">{n(r.unknown)}</TableCell>}
                     <TableCell className="text-right tabular-nums font-semibold">{n(r.total)}</TableCell>
                   </TableRow>
@@ -415,24 +604,146 @@ function CrossTabCard({
   );
 }
 
-function ServiceTypeChart({ summary }: { summary: DashboardSummary }) {
-  const { rows, series } = buildServiceTypeChart(summary);
-  return <StackedBars rows={rows} series={series} height={280} yAxisWidth={110} />;
+function ServiceTypeChart({ summary, set, scope }: {
+  summary: DashboardSummary; set: CrossTabSet; scope: CardScope;
+}) {
+  const { rows, series } = buildServiceTypeChart(summary, set);
+  return (
+    <StackedBars rows={rows} series={series} height={280} yAxisWidth={110}
+      onSegmentClick={(row, key) => {
+        const loc = summary.locations.find((l) => l.label === row.full);
+        // Residual segments have no filterable value to drill into.
+        if (!loc?.modalityP1 || key.startsWith("__")) return;
+        window.location.href = buildWaitlistHref({
+          modality: loc.modalityP1, serviceType: key, status: SCOPE_STATUS_QUERY[scope],
+        });
+      }} />
+  );
 }
 
-function InsuranceChart({ summary }: { summary: DashboardSummary }) {
-  const { rows, series } = buildInsuranceChart(summary);
+function InsuranceChart({ summary, set, scope }: {
+  summary: DashboardSummary; set: CrossTabSet; scope: CardScope;
+}) {
+  const { rows, series } = buildInsuranceChart(summary, set);
   return (
     <StackedBars rows={rows} series={series}
-      height={insuranceChartHeight(rows.length)} yAxisWidth={124} />
+      height={insuranceChartHeight(rows.length)} yAxisWidth={124}
+      onSegmentClick={(row, locationId) => {
+        const loc = summary.locations.find((l) => l.id === locationId);
+        // row.full is the CANONICAL payer name (never a stored value): the
+        // residual rows are the two literals below and are not filterable.
+        if (!loc?.modalityP1) return;
+        if (row.full === "Other / Unmapped" || row.full === "Not recorded") return;
+        window.location.href = buildWaitlistHref({
+          modality: loc.modalityP1, insurance: row.full, status: SCOPE_STATUS_QUERY[scope],
+        });
+      }} />
+  );
+}
+
+/** Card 5 — Service Type × Insurance. The only card with no location axis. */
+function ServiceTypeInsuranceCard({ summary, set, scope, onScopeChange, onOtherClick }: {
+  summary: DashboardSummary; set: CrossTabSet; scope: CardScope;
+  onScopeChange: (s: CardScope) => void;
+  onOtherClick: (serviceTypeKey?: string) => void;
+}) {
+  const { views, showTable, showChart, onChange } = useCardViews();
+  const { columns, rows, totals } = set.byServiceTypeInsurance;
+  const spec = buildServiceTypeInsuranceChart(set);
+  const activeColumns = columns.filter((c) => (totals.counts[c] ?? 0) > 0);
+  const showUnknown = totals.unknown > 0;
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between space-y-0 gap-4">
+        <div>
+          <CardTitle className="text-base font-medium">Service Type &times; Insurance</CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            Who the request is for, by payer. The only card with no location axis.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <ScopeToggle scope={scope} onChange={onScopeChange} counted={totals.total} />
+          <ViewToggle views={views} onChange={onChange} />
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {!showTable && !showChart && <NoViews />}
+        {showChart && (
+          <StackedBars rows={spec.rows} series={spec.series} height={260} yAxisWidth={110}
+            onSegmentClick={(row, key) => {
+              const svc = rows.find((r) => r.label === row.full);
+              if (!svc || svc.key === "__other" || key.startsWith("__")) return;
+              window.location.href = buildWaitlistHref({
+                serviceType: svc.key, insurance: key, status: SCOPE_STATUS_QUERY[scope],
+              });
+            }} />
+        )}
+        {showTable && (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="sticky left-0 bg-background">Service type</TableHead>
+                  {activeColumns.map((c) => (
+                    <TableHead key={c} className="text-right whitespace-nowrap">{c}</TableHead>
+                  ))}
+                  <TableHead className="text-right whitespace-nowrap">
+                    <button type="button" onClick={() => onOtherClick()}
+                      className="underline decoration-dotted underline-offset-4 hover:text-primary"
+                      title="List these contacts">
+                      Other / Unmapped
+                    </button>
+                  </TableHead>
+                  {showUnknown && <TableHead className="text-right">Unknown</TableHead>}
+                  <TableHead className="text-right font-semibold">Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((r) => (
+                  <TableRow key={r.key}>
+                    <TableCell className="font-medium sticky left-0 bg-background">{r.label}</TableCell>
+                    {activeColumns.map((c) => (
+                      <TableCell key={c} className="text-right tabular-nums">{n(r.counts[c] ?? 0)}</TableCell>
+                    ))}
+                    <TableCell className="text-right tabular-nums">
+                      {r.other > 0 ? (
+                        <button type="button" onClick={() => onOtherClick(r.key)}
+                          className="underline decoration-dotted underline-offset-4 hover:text-primary">
+                          {r.other}
+                        </button>
+                      ) : n(r.other)}
+                    </TableCell>
+                    {showUnknown && <TableCell className="text-right tabular-nums">{n(r.unknown)}</TableCell>}
+                    <TableCell className="text-right tabular-nums font-semibold">{n(r.total)}</TableCell>
+                  </TableRow>
+                ))}
+                <TableRow className="border-t-2 font-semibold bg-muted/40">
+                  <TableCell className="sticky left-0 bg-muted/40">All service types</TableCell>
+                  {activeColumns.map((c) => (
+                    <TableCell key={c} className="text-right tabular-nums">{totals.counts[c] ?? 0}</TableCell>
+                  ))}
+                  <TableCell className="text-right tabular-nums">{totals.other}</TableCell>
+                  {showUnknown && <TableCell className="text-right tabular-nums">{totals.unknown}</TableCell>}
+                  <TableCell className="text-right tabular-nums">{totals.total}</TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
 /** Card 4 — Location × Origin. The CEO's referral-source ask. */
-function OriginCard({ summary }: { summary: DashboardSummary }) {
-  const { columns, labels, rows, totals } = summary.byOrigin;
+function OriginCard({ summary, set, scope, onScopeChange }: {
+  summary: DashboardSummary; set: CrossTabSet; scope: CardScope;
+  onScopeChange: (s: CardScope) => void;
+}) {
+  const { columns, labels, rows, totals } = set.byOrigin;
   const { views, showTable, showChart, onChange } = useCardViews();
-  const originChart = buildOriginChart(summary);
+  const originChart = buildOriginChart(summary, set);
 
   return (
     <Card>
@@ -444,7 +755,10 @@ function OriginCard({ summary }: { summary: DashboardSummary }) {
             Staff-entered records are not separately identifiable and appear under Online RFS Form.
           </p>
         </div>
-        <ViewToggle views={views} onChange={onChange} />
+        <div className="flex items-center gap-2">
+          <ScopeToggle scope={scope} onChange={onScopeChange} counted={totals.total} />
+          <ViewToggle views={views} onChange={onChange} />
+        </div>
       </CardHeader>
       <CardContent className="space-y-6">
         {!showTable && !showChart && <NoViews />}
@@ -502,6 +816,14 @@ function OriginCard({ summary }: { summary: DashboardSummary }) {
 export default function Dashboard() {
   const { user } = useAuth();
   const [population, setPopulation] = useState<Population>("active");
+  const { scope: svcScope, setScope: setSvcScope } = useCardScope();
+  const { scope: insScope, setScope: setInsScope } = useCardScope();
+  const { scope: stiScope, setScope: setStiScope } = useCardScope();
+  const { scope: originScope, setScope: setOriginScope } = useCardScope();
+  const [modal, setModal] = useState<{
+    scope: CardScope; title: string;
+    filter?: (c: UnmappedInsuranceContact) => boolean;
+  } | null>(null);
 
   if (!canAccessDashboard(user?.email)) return <Redirect to="/waitlist" replace />;
 
@@ -528,6 +850,12 @@ export default function Dashboard() {
   }
 
   const dq = summary.dataQuality;
+
+  // One scope per card — the toggle is per-card, not page-wide.
+  const svcSet = summary.scopes[svcScope];
+  const insSet = summary.scopes[insScope];
+  const stiSet = summary.scopes[stiScope];
+  const originSet = summary.scopes[originScope];
 
   return (
     <PageLayout>
@@ -582,32 +910,51 @@ export default function Dashboard() {
           summary={summary}
           title="Location × Service Type"
           subtitle="Who the request is for. Labels are display-only; stored values are unchanged."
-          columns={summary.byServiceType.columns}
-          labels={summary.byServiceType.labels}
-          rows={summary.byServiceType.rows}
-          totals={summary.byServiceType.totals}
+          columns={svcSet.byServiceType.columns}
+          labels={svcSet.byServiceType.labels}
+          rows={svcSet.byServiceType.rows}
+          totals={svcSet.byServiceType.totals}
           otherLabel="Other / Unmapped"
-          chart={<ServiceTypeChart summary={summary} />}
+          scope={svcScope} onScopeChange={setSvcScope}
+          counted={svcSet.byServiceType.totals.total}
+          chart={<ServiceTypeChart summary={summary} set={svcSet} scope={svcScope} />}
         />
 
         <CrossTabCard
           summary={summary}
           title="Location × Insurance"
           subtitle="The 16 approved payers, plus an explicit column for records holding older spellings."
-          columns={summary.byInsurance.columns}
-          rows={summary.byInsurance.rows}
-          totals={summary.byInsurance.totals}
+          columns={insSet.byInsurance.columns}
+          rows={insSet.byInsurance.rows}
+          totals={insSet.byInsurance.totals}
           otherLabel="Other / Unmapped"
-          otherNote={
-            `${summary.byInsurance.totals.other} contacts across ` +
-            `${summary.byInsurance.otherSummary.distinctValues} different non-standard spellings. ` +
-            `The individual values are not shown: this is a free-text field and some entries ` +
-            `contain patient details.`
-          }
-          chart={<InsuranceChart summary={summary} />}
+          scope={insScope} onScopeChange={setInsScope}
+          counted={insSet.byInsurance.totals.total}
+          onOtherClick={(locationId) => setModal({
+            scope: insScope,
+            title: locationId
+              ? `Unmapped insurance — ${summary.locations.find((l) => l.id === locationId)?.label ?? locationId}`
+              : "Unmapped insurance — all locations",
+            filter: locationId ? (c) => c.locationId === locationId : undefined,
+          })}
+          chart={<InsuranceChart summary={summary} set={insSet} scope={insScope} />}
         />
 
-        <OriginCard summary={summary} />
+        <ServiceTypeInsuranceCard
+          summary={summary} set={stiSet} scope={stiScope} onScopeChange={setStiScope}
+          onOtherClick={(serviceTypeKey) => setModal({
+            scope: stiScope,
+            title: serviceTypeKey && serviceTypeKey !== "__other"
+              ? `Unmapped insurance — ${stiSet.byServiceTypeInsurance.rows.find((r) => r.key === serviceTypeKey)?.label ?? serviceTypeKey}`
+              : "Unmapped insurance — all service types",
+            filter: serviceTypeKey && serviceTypeKey !== "__other"
+              ? (c) => c.serviceType === serviceTypeKey
+              : undefined,
+          })}
+        />
+
+        <OriginCard summary={summary} set={originSet} scope={originScope}
+          onScopeChange={setOriginScope} />
 
         {/* Data-quality footer — this is what makes the beta a verification
             exercise rather than a demo. */}
@@ -642,6 +989,14 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      <UnmappedInsuranceModal
+        open={modal !== null}
+        onOpenChange={(v) => !v && setModal(null)}
+        scope={modal?.scope ?? "pipeline"}
+        title={modal?.title ?? ""}
+        filter={modal?.filter}
+      />
     </PageLayout>
   );
 }

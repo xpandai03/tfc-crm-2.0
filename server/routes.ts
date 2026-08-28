@@ -82,7 +82,7 @@ import {
   getStatusDurations,
 } from "./activity/db";
 import { isRestrictedUser, canAccessReferralUpload, isTnV2User, canEditEmailTemplates, canBuildReports, canUseReportAgent, canAccessDashboard } from "@shared/access-control";
-import { getDashboardSummary } from "./dashboard/db";
+import { getDashboardSummary, getUnmappedInsuranceContacts } from "./dashboard/db";
 import { previewMonthlyReport, sendMonthlyReport } from "./reports/send";
 import { previousPeriod } from "./reports/monthly";
 import { ACCEPTED_INSURANCES } from "@shared/insurance-utils";
@@ -6943,6 +6943,27 @@ export async function registerRoutes(
       const message = error instanceof Error ? error.message : "Dashboard summary failed";
       console.error("[dashboard] Error:", message);
       return res.status(500).json({ error: "Failed to build dashboard summary" });
+    }
+  });
+
+  // Contact list behind the "Other / Unmapped" insurance segment.
+  //
+  // Returns CONTACT ROWS, including the raw insurance_payer value — the only
+  // endpoint in this feature that does. Same gate as the dashboard itself.
+  // The log line carries a COUNT only: the raw values are free text and have
+  // held a patient name and DOB in production.
+  app.get("/api/dashboard/unmapped-insurance", async (req: any, res) => {
+    try {
+      const email = requireDashboard(req, res);
+      if (!email) return;
+      const scope = req.query.scope === "waitlist" ? "waitlist" : "pipeline";
+      const contacts = await getUnmappedInsuranceContacts(scope);
+      console.log(`[dashboard] unmapped-insurance scope=${scope} rows=${contacts.length} by ${email}`);
+      return res.json({ scope, contacts });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed";
+      console.error("[dashboard] unmapped-insurance error:", message);
+      return res.status(500).json({ error: "Failed to load unmapped insurance contacts" });
     }
   });
 

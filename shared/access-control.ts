@@ -212,9 +212,21 @@ export const DASHBOARD_BETA_EMAILS = [
   "lsego@tfc.health",  // Lane — client ops lead
 ];
 
+/**
+ * The Friday roster, confirmed by the client on 2026-08-26. Every address is
+ * taken verbatim from the manager lists already in this file (TN_V2_BETA_EMAILS
+ * / REPORT_BUILDER_EMAILS etc.) — none was guessed.
+ *
+ * The developer address is deliberately included so the person who has to
+ * support this on Friday does not lose access the moment the gate flips.
+ */
 export const DASHBOARD_MANAGEMENT_EMAILS: string[] = [
-  // Populate from the client's confirmed Friday roster, THEN flip
-  // DASHBOARD_OPEN_TO_MANAGEMENT to true. Empty = nobody passes once flipped.
+  "lsego@tfc.health",      // Lane — ops lead
+  "chantel@tfc.health",    // Chantelle
+  "amanda@tfc.health",     // Amanda
+  "sandra@tfc.health",     // Sandra
+  "ebenavidez@tfc.health", // Erica Benavidez
+  "raunek@tfc.health",     // developer
 ];
 
 /**

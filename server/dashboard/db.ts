@@ -117,6 +117,61 @@ export interface OriginRow {
   total: number;
 }
 
+/**
+ * The per-card population scope introduced by the Aug 26 client review.
+ *
+ *   pipeline — Waitlist + Pending + Scheduled (the funnel)
+ *   waitlist — the Waitlist bucket alone
+ *
+ * The client's framing: a clinic may show twenty people, but sixteen are
+ * already scheduled and only four are genuinely waiting. Both numbers matter.
+ *
+ * Card 1 is deliberately excluded from this toggle — it already breaks out by
+ * status, so the control would be redundant.
+ */
+export type CardScope = "pipeline" | "waitlist";
+export const CARD_SCOPES: readonly CardScope[] = ["pipeline", "waitlist"];
+
+/** A cross-tab row keyed by something other than location (Card 5: service type). */
+export interface KeyedCrossTabRow {
+  key: string;
+  label: string;
+  counts: Record<string, number>;
+  other: number;
+  unknown: number;
+  total: number;
+}
+
+/** Every location-keyed cross-tab, computed over one scope. */
+export interface CrossTabSet {
+  counted: number;
+  byServiceType: {
+    columns: readonly string[];
+    labels: Record<string, string>;
+    rows: CrossTabRow[];
+    totals: CrossTabRow;
+  };
+  byInsurance: {
+    columns: readonly string[];
+    rows: CrossTabRow[];
+    totals: CrossTabRow;
+    otherSummary: { distinctValues: number };
+  };
+  byOrigin: {
+    columns: readonly OriginColumn[];
+    labels: Record<string, string>;
+    rows: OriginRow[];
+    totals: OriginRow;
+  };
+  /** Card 5 — Service Type x Insurance. The only card with no location axis. */
+  byServiceTypeInsurance: {
+    columns: readonly string[];
+    rows: KeyedCrossTabRow[];
+    totals: KeyedCrossTabRow;
+    otherSummary: { distinctValues: number };
+  };
+}
+
 export interface DashboardSummary {
   generatedAt: string;
   population: Population;
@@ -158,6 +213,13 @@ export interface DashboardSummary {
     rows: OriginRow[];
     totals: OriginRow;
   };
+  /**
+   * ADDITIVE (Aug 26 review). The existing top-level cross-tabs above are
+   * untouched and still reflect `population`; these are the per-scope sets the
+   * cards now render. Kept separate precisely so the verified numbers above
+   * cannot move.
+   */
+  scopes: Record<CardScope, CrossTabSet>;
   dataQuality: {
     nonCanonicalInsurance: number;
     nonCanonicalServiceType: number;
@@ -222,6 +284,145 @@ export async function getDashboardSummary(population: Population): Promise<Dashb
  * production code against a real snapshot of production rows, rather than a
  * reimplementation that could agree with itself while both are wrong.
  */
+/**
+ * Build every cross-tab for ONE scope, from the same grouped rows.
+ *
+ * Reads the same source tuples the main pivot uses, so a scoped card can never
+ * disagree with the unscoped one about a contact it shares — there is one query
+ * and one snapshot behind all of it.
+ *
+ * `include` decides membership. Rows failing it are not counted anywhere in the
+ * returned set, which is what makes "waitlist" genuinely narrower rather than a
+ * re-labelling of the same numbers.
+ */
+function buildCrossTabSet(
+  rows: GroupRow[],
+  include: (bucket: StatusBucket | null) => boolean,
+): CrossTabSet {
+  const locationIds = DASHBOARD_LOCATIONS.map((l) => l.id);
+  const insuranceColumns = [...CANONICAL_INSURANCES];
+
+  const serviceRows = new Map(locationIds.map((id) => [id, emptyCrossTabRow(id, SERVICE_TYPE_COLUMNS)]));
+  const insuranceRows = new Map(locationIds.map((id) => [id, emptyCrossTabRow(id, insuranceColumns)]));
+  const originRows = new Map(locationIds.map((id) => [id, emptyOriginRow(id)]));
+
+  // Card 5 — service type on the category axis, insurance stacked within.
+  // Keyed by the STORED service-type value; the label is display-only.
+  const stiRows = new Map<string, KeyedCrossTabRow>(
+    SERVICE_TYPE_COLUMNS.map((v) => [v, {
+      key: v, label: SERVICE_TYPE_LABELS[v] ?? v,
+      counts: Object.fromEntries(insuranceColumns.map((c) => [c, 0])),
+      other: 0, unknown: 0, total: 0,
+    }]),
+  );
+  // Non-canonical service types get one shared row rather than vanishing.
+  const STI_OTHER_KEY = "__other";
+  stiRows.set(STI_OTHER_KEY, {
+    key: STI_OTHER_KEY, label: "Other / Unmapped",
+    counts: Object.fromEntries(insuranceColumns.map((c) => [c, 0])),
+    other: 0, unknown: 0, total: 0,
+  });
+
+  const legacyInsurance = new Map<string, number>();
+  let counted = 0;
+
+  for (const row of rows) {
+    if (!include(getStatusBucket(row.status_code))) continue;
+    const n = row.n;
+    counted += n;
+
+    const locationId = locationIdForContact({
+      modalityP1: row.modality_p1, modality: row.modality,
+    });
+    const svc = (row.requesting_for ?? "").trim();
+    const svcIsCanonical = svc in SERVICE_TYPE_LABELS;
+    const ins = (row.insurance_payer ?? "").trim();
+    const insIsCanonical = !!ins && isCanonicalInsurance(ins);
+
+    // --- service type x location ---
+    const svcRow = serviceRows.get(locationId)!;
+    if (!svc) svcRow.unknown += n;
+    else if (svcIsCanonical) svcRow.counts[svc] += n;
+    else svcRow.other += n;
+    svcRow.total += n;
+
+    // --- insurance x location ---
+    const insRow = insuranceRows.get(locationId)!;
+    if (!ins) insRow.unknown += n;
+    else if (insIsCanonical) insRow.counts[ins] += n;
+    else {
+      insRow.other += n;
+      legacyInsurance.set(ins, (legacyInsurance.get(ins) ?? 0) + n);
+    }
+    insRow.total += n;
+
+    // --- origin x location ---
+    const oRow = originRows.get(locationId)!;
+    oRow[originFor(row.intake_source, row.legacy_sheet)] += n;
+    oRow.total += n;
+
+    // --- Card 5: service type x insurance ---
+    const stiRow = stiRows.get(svcIsCanonical ? svc : STI_OTHER_KEY)!;
+    if (!ins) stiRow.unknown += n;
+    else if (insIsCanonical) stiRow.counts[ins] += n;
+    else stiRow.other += n;
+    stiRow.total += n;
+  }
+
+  const sumCrossTab = (m: Map<string, CrossTabRow>, columns: readonly string[]): CrossTabRow => {
+    const t = emptyCrossTabRow("__total__", columns);
+    for (const r of Array.from(m.values())) {
+      for (const c of columns) t.counts[c] += r.counts[c];
+      t.other += r.other; t.unknown += r.unknown; t.total += r.total;
+    }
+    return t;
+  };
+  const originTotals = (() => {
+    const t = emptyOriginRow("__total__");
+    for (const r of Array.from(originRows.values())) {
+      for (const c of ORIGIN_COLUMNS) t[c] += r[c];
+      t.total += r.total;
+    }
+    return t;
+  })();
+  const stiList = Array.from(stiRows.values()).filter((r) => r.total > 0 || r.key !== STI_OTHER_KEY);
+  const stiTotals: KeyedCrossTabRow = {
+    key: "__total__", label: "All service types",
+    counts: Object.fromEntries(insuranceColumns.map((c) => [c, 0])),
+    other: 0, unknown: 0, total: 0,
+  };
+  for (const r of stiList) {
+    for (const c of insuranceColumns) stiTotals.counts[c] += r.counts[c];
+    stiTotals.other += r.other; stiTotals.unknown += r.unknown; stiTotals.total += r.total;
+  }
+
+  return {
+    counted,
+    byServiceType: {
+      columns: SERVICE_TYPE_COLUMNS, labels: SERVICE_TYPE_LABELS,
+      rows: locationIds.map((id) => serviceRows.get(id)!),
+      totals: sumCrossTab(serviceRows, SERVICE_TYPE_COLUMNS),
+    },
+    byInsurance: {
+      columns: insuranceColumns,
+      rows: locationIds.map((id) => insuranceRows.get(id)!),
+      totals: sumCrossTab(insuranceRows, insuranceColumns),
+      otherSummary: { distinctValues: legacyInsurance.size },
+    },
+    byOrigin: {
+      columns: ORIGIN_COLUMNS, labels: ORIGIN_LABELS,
+      rows: locationIds.map((id) => originRows.get(id)!),
+      totals: originTotals,
+    },
+    byServiceTypeInsurance: {
+      columns: insuranceColumns,
+      rows: stiList,
+      totals: stiTotals,
+      otherSummary: { distinctValues: legacyInsurance.size },
+    },
+  };
+}
+
 export function pivotDashboard(
   rows: GroupRow[],
   population: Population,
@@ -400,6 +601,10 @@ export function pivotDashboard(
       rows: locationIds.map((id) => originRows.get(id)!),
       totals: originTotals,
     },
+    scopes: {
+      pipeline: buildCrossTabSet(rows, (b) => b !== null && (PIPELINE_BUCKETS as readonly string[]).includes(b)),
+      waitlist: buildCrossTabSet(rows, (b) => b === "waitlist"),
+    },
     dataQuality: {
       nonCanonicalInsurance,
       nonCanonicalServiceType,
@@ -408,4 +613,67 @@ export function pivotDashboard(
       note: "Counts are per contact, by first-choice modality (P1) only.",
     },
   };
+}
+
+// ============================================================================
+// Unmapped-insurance contact list (the "Other / Unmapped" modal)
+//
+// The ONLY place in this feature that returns contact rows rather than counts.
+//
+// WHY IT HAS TO. The client wants to FIX these records, and today he cannot
+// find them: their legacy insurance values no longer appear in any filter
+// dropdown, so the CRM offers no route to them. A count tells him 37 exist; it
+// does not tell him which.
+//
+// PHI BOUNDARY. This returns names AND the raw stored insurance_payer, which is
+// free text and has held a patient name and date of birth in production. That
+// is acceptable in a gated modal — it is a normal CRM surface, no different
+// from the contact card — and NOT acceptable anywhere else. The raw value must
+// never reach a chart label, axis, tooltip, legend or log line: that is exactly
+// the v189 leak. The route logs a COUNT only.
+//
+// READ-ONLY. One SELECT, no writes; the client edits via the contact record.
+// ============================================================================
+
+export interface UnmappedInsuranceContact {
+  contactId: number;
+  name: string;
+  /** RAW stored value. Modal only — never a chart surface. */
+  insurancePayer: string;
+  locationId: string;
+  serviceType: string | null;
+  statusBucket: StatusBucket | null;
+}
+
+export async function getUnmappedInsuranceContacts(
+  scope: CardScope,
+): Promise<UnmappedInsuranceContact[]> {
+  const { rows } = await getPool().query<{
+    contact_id: number; name: string; insurance_payer: string;
+    modality_p1: string | null; modality: string | null;
+    requesting_for: string | null; status_code: number | null;
+  }>(
+    `SELECT contact_id, name, insurance_payer, modality_p1, modality,
+            requesting_for, status_code
+       FROM sync_contacts
+      WHERE insurance_payer IS NOT NULL AND TRIM(insurance_payer) <> ''
+      ORDER BY name ASC`,
+  );
+
+  const inScope = (b: StatusBucket | null) =>
+    scope === "waitlist"
+      ? b === "waitlist"
+      : b !== null && (PIPELINE_BUCKETS as readonly string[]).includes(b);
+
+  return rows
+    .filter((r) => !isCanonicalInsurance(r.insurance_payer.trim()))
+    .filter((r) => inScope(getStatusBucket(r.status_code)))
+    .map((r) => ({
+      contactId: r.contact_id,
+      name: r.name,
+      insurancePayer: r.insurance_payer.trim(),
+      locationId: locationIdForContact({ modalityP1: r.modality_p1, modality: r.modality }),
+      serviceType: (r.requesting_for ?? "").trim() || null,
+      statusBucket: getStatusBucket(r.status_code),
+    }));
 }

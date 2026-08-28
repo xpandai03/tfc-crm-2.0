@@ -17,7 +17,8 @@
     "test:view-prefs": "tsx scripts/test-view-preferences.ts",
     "test:dashboard": "tsx --tsconfig tsconfig.test.json scripts/verify-dashboard.ts",
     "test:monthly-report": "tsx --tsconfig tsconfig.test.json scripts/verify-monthly-report.ts",
-    "test:dashboard-charts": "tsx --tsconfig tsconfig.test.json scripts/verify-dashboard-charts.ts"
+    "test:dashboard-charts": "tsx --tsconfig tsconfig.test.json scripts/verify-dashboard-charts.ts",
+    "test:dashboard-scopes": "tsx --tsconfig tsconfig.test.json scripts/verify-dashboard-scopes.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1034.0",

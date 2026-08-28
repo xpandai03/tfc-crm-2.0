@@ -13,7 +13,7 @@
  */
 
 import { abbreviateInsurance } from "@shared/insurance";
-import type { DashboardSummary } from "./dashboard-api";
+import type { DashboardSummary, CrossTabSet } from "./dashboard-api";
 
 export interface ChartSeries {
   key: string;
@@ -45,8 +45,8 @@ export const SERIES_COLORS = [1, 2, 3, 4, 5].map((i) => `hsl(var(--chart-${i}))`
 export const RESIDUAL_COLOR = "hsl(var(--muted-foreground))";
 
 /** Card 2 — location on the category axis, service types stacked within. */
-export function buildServiceTypeChart(summary: DashboardSummary): ChartSpec {
-  const { columns, labels, rows, totals } = summary.byServiceType;
+export function buildServiceTypeChart(summary: DashboardSummary, set: CrossTabSet): ChartSpec {
+  const { columns, labels, rows, totals } = set.byServiceType;
 
   const series: ChartSeries[] = [
     ...columns.map((c, i) => ({
@@ -94,8 +94,8 @@ export function buildServiceTypeChart(summary: DashboardSummary): ChartSpec {
  * field value is rendered: insurance_payer is free text and has held a patient
  * name and DOB in production.
  */
-export function buildInsuranceChart(summary: DashboardSummary): ChartSpec {
-  const { columns, rows, totals } = summary.byInsurance;
+export function buildInsuranceChart(summary: DashboardSummary, set: CrossTabSet): ChartSpec {
+  const { columns, rows, totals } = set.byInsurance;
 
   const series: ChartSeries[] = summary.locations.map((loc, i) => ({
     key: loc.id, label: loc.label, color: SERIES_COLORS[i % SERIES_COLORS.length],
@@ -132,8 +132,8 @@ export function buildInsuranceChart(summary: DashboardSummary): ChartSpec {
 }
 
 /** Card 4 — location on the category axis, origin stacked within. */
-export function buildOriginChart(summary: DashboardSummary): ChartSpec {
-  const { columns, labels, rows } = summary.byOrigin;
+export function buildOriginChart(summary: DashboardSummary, set: CrossTabSet): ChartSpec {
+  const { columns, labels, rows } = set.byOrigin;
 
   const series: ChartSeries[] = columns.map((c, i) => ({
     key: c, label: labels[c] ?? c, color: SERIES_COLORS[i % SERIES_COLORS.length],
@@ -157,4 +157,77 @@ export function buildOriginChart(summary: DashboardSummary): ChartSpec {
  */
 export function insuranceChartHeight(rowCount: number): number {
   return Math.max(240, rowCount * 30 + 60);
+}
+
+/**
+ * Card 1 — Location x Status.
+ *
+ * Now STACKED BY STATUS, per the Aug 26 review: the client was explicit that the
+ * status is what should carry the colour. Stacking also gives the per-status
+ * hover breakdown for free, through the same tooltip every other card uses, so
+ * items 1 and 2 of the review are one change rather than two.
+ *
+ * Colours are the shared themed tokens, so the four cards still read as one
+ * surface: Waitlist chart-1 (blue), Pending chart-5 (green), Scheduled chart-3,
+ * Other Active chart-4.
+ */
+export function buildStatusChart(summary: DashboardSummary): ChartSpec {
+  const { buckets, labels, rows } = summary.byStatus;
+  const STATUS_COLORS: Record<string, string> = {
+    waitlist: SERIES_COLORS[0],
+    pending: SERIES_COLORS[4],
+    scheduled: SERIES_COLORS[2],
+    otherActive: SERIES_COLORS[3],
+  };
+  const series: ChartSeries[] = buckets.map((b, i) => ({
+    key: b,
+    label: labels[b] ?? b,
+    color: STATUS_COLORS[b] ?? SERIES_COLORS[i % SERIES_COLORS.length],
+  }));
+
+  const chartRows: StackRow[] = summary.locations.map((loc) => {
+    const r = rows.find((x) => x.location === loc.id);
+    const out: StackRow = { name: loc.label, full: loc.label, __total: r?.active ?? 0 };
+    for (const b of buckets) {
+      out[b] = (r as unknown as Record<string, number> | undefined)?.[b] ?? 0;
+    }
+    return out;
+  });
+
+  return { rows: chartRows, series };
+}
+
+/**
+ * Card 5 — Service Type x Insurance. The only card with no location axis.
+ *
+ * Service type on the category axis (four values) rather than insurance
+ * (seventeen), for the same reason Card 3 is inverted: four bars split
+ * seventeen ways is illegible and no palette survives seventeen series.
+ *
+ * Payers with zero records across every service type are dropped; the Other /
+ * Unmapped and Not-recorded buckets are appended last so they read as residuals.
+ */
+export function buildServiceTypeInsuranceChart(set: CrossTabSet): ChartSpec {
+  const { columns, rows, totals } = set.byServiceTypeInsurance;
+
+  const active = columns.filter((c) => (totals.counts[c] ?? 0) > 0);
+  const series: ChartSeries[] = [
+    ...active.map((c, i) => ({
+      key: c, label: c, color: SERIES_COLORS[i % SERIES_COLORS.length],
+    })),
+    ...(totals.other > 0
+      ? [{ key: "__other", label: "Other / Unmapped", color: RESIDUAL_COLOR }] : []),
+    ...(totals.unknown > 0
+      ? [{ key: "__unknown", label: "Not recorded", color: RESIDUAL_COLOR }] : []),
+  ];
+
+  const chartRows: StackRow[] = rows.map((r) => {
+    const out: StackRow = { name: r.label, full: r.label, __total: r.total };
+    for (const c of active) out[c] = r.counts[c] ?? 0;
+    out.__other = r.other;
+    out.__unknown = r.unknown;
+    return out;
+  });
+
+  return { rows: chartRows, series };
 }

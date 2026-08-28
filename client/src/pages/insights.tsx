@@ -22,6 +22,7 @@ import { useDataSource, type DataSource } from "@/lib/data-source-context";
 import { normalizeInsurance } from "@/lib/insurance-utils";
 import { getPrimaryModality } from "@shared/modality-utils";
 import { OPERATIONS_STATUS_CODES, PIPELINE_STATUS_CODES } from "@shared/status-buckets";
+import { buildInsightWaitlistHref } from "@/lib/waitlist-href";
 import { useAuth } from "@/lib/auth-context";
 import { isRestrictedUser, canBuildReports, canUseReportAgent } from "@shared/access-control";
 import { ReportBuilderModal } from "@/components/report-builder-modal";
@@ -60,16 +61,8 @@ const INSIGHTS_PIPELINE_STATUS_SET = new Set(PIPELINE_STATUS_CODES);
 const INSIGHTS_OPS_STATUS_QUERY = OPERATIONS_STATUS_CODES.join(",");
 const INSIGHTS_PIPELINE_STATUS_QUERY = PIPELINE_STATUS_CODES.join(",");
 
-function buildInsightWaitlistHref(
-  filterType: "insurance" | "modality" | "reason" | "serviceType",
-  value: string,
-  statusList: string,
-): string {
-  const params = new URLSearchParams();
-  params.set(filterType, value);
-  params.set("status", statusList);
-  return `/waitlist?${params.toString()}`;
-}
+// buildInsightWaitlistHref now lives in @/lib/waitlist-href so the dashboard
+// click-through uses the same builder instead of a second, drifting copy.
 
 /**
  * Insights Page
