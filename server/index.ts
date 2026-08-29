@@ -15,6 +15,8 @@ import { initActivityTable } from "./activity/db";
 import { initEmailTemplatesTable } from "./email/templates";
 import { initViewPreferencesTable } from "./view-preferences/db";
 import { initReportSendsTable } from "./reports/db";
+import { initReportSendLogTable } from "./reports/send-log";
+import { verifySvixSignature, handleDeliveryEvent } from "./reports/webhook";
 
 const app = express();
 const httpServer = createServer(app);
@@ -207,6 +209,50 @@ app.use((req, res, next) => {
     res.sendFile(roadmapPath);
   });
 
+  // ==========================================================================
+  // PUBLIC: Resend delivery-event webhook.
+  //
+  // Mounted HERE — before app.use(authMiddleware) — for the same reason the
+  // roadmap page is: the provider posts with no session and no bearer token.
+  // Its authentication is the Svix SIGNATURE, verified inside the handler, and
+  // it fails closed when no secret is configured. auth.ts is untouched.
+  //
+  // Always 200s on a verified event, even an unrecognised one: a provider that
+  // gets a 4xx/5xx retries, and retrying an event we deliberately ignore is
+  // noise. Rejection is reserved for signature failures.
+  // ==========================================================================
+  app.post("/api/webhooks/resend", async (req: any, res) => {
+    const verification = verifySvixSignature({
+      secret: process.env.RESEND_WEBHOOK_SECRET,
+      id: req.headers["svix-id"] as string | undefined,
+      timestamp: req.headers["svix-timestamp"] as string | undefined,
+      signatureHeader: req.headers["svix-signature"] as string | undefined,
+      rawBody: req.rawBody ? Buffer.from(req.rawBody).toString("utf8") : "",
+    });
+    if (!verification.ok) {
+      // Reason only — never the body, which carries recipient addresses.
+      console.warn(`[resend-webhook] REJECTED: ${verification.reason}`);
+      return res.status(401).json({ error: "Invalid signature" });
+    }
+    try {
+      const result = await handleDeliveryEvent(req.body);
+      if (result.matched > 0) {
+        console.log(
+          `[resend-webhook] ${result.status} applied to ${result.matched} send record(s)`,
+        );
+      } else {
+        // Every message on the Resend account emits events, including
+        // client-facing template emails. Unmatched is normal, not an error.
+        console.log(`[resend-webhook] event ignored (no matching report send)`);
+      }
+      return res.json({ ok: true, matched: result.matched });
+    } catch (error) {
+      console.error("[resend-webhook] Handler error:",
+        error instanceof Error ? error.message : "unknown");
+      return res.status(200).json({ ok: false }); // 200: do not trigger retries
+    }
+  });
+
   // Apply auth middleware to protect all routes except /auth/*
   app.use(authMiddleware);
 
@@ -225,6 +271,7 @@ app.use((req, res, next) => {
     // (schema-before-code, C16); this keeps fresh/non-prod DBs in step.
     await initViewPreferencesTable();
     await initReportSendsTable();
+    await initReportSendLogTable();
     startReminderCron();
     // Monthly management report. Schedule + timezone are logged on the line
     // below at boot, so the deployed cadence is readable from the startup log

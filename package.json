@@ -19,7 +19,8 @@
     "test:monthly-report": "tsx --tsconfig tsconfig.test.json scripts/verify-monthly-report.ts",
     "test:dashboard-charts": "tsx --tsconfig tsconfig.test.json scripts/verify-dashboard-charts.ts",
     "test:dashboard-scopes": "tsx --tsconfig tsconfig.test.json scripts/verify-dashboard-scopes.ts",
-    "test:dashboard-export": "tsx --tsconfig tsconfig.test.json scripts/verify-dashboard-export.ts"
+    "test:dashboard-export": "tsx --tsconfig tsconfig.test.json scripts/verify-dashboard-export.ts",
+    "test:report-delivery": "tsx --tsconfig tsconfig.test.json scripts/verify-report-delivery.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1034.0",

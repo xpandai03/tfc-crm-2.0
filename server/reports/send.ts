@@ -26,6 +26,7 @@ import {
   reportKey, claimReportSend, releaseReportClaim, recordManualSend, wasReportSent,
   type SendTrigger,
 } from "./db";
+import { recordSendAttempt } from "./send-log";
 
 /** THE production recipient list — the automatic Sept 1 send uses ONLY this. */
 export const MONTHLY_REPORT_RECIPIENTS = [
@@ -142,28 +143,53 @@ export async function sendMonthlyReport(params: {
     });
 
     if (!result.success) {
+      // Record the attempt BEFORE releasing the claim: "we tried and the
+      // provider refused" must be distinguishable from "we never tried", which
+      // is exactly the question the Aug 25 send could not answer.
+      await recordSendAttempt({
+        reportKind: MONTHLY_REPORT_KIND, period, isTest, trigger, actor,
+        recipients, outcome: "failed", messageId: null,
+        providerError: result.error ?? "unknown error",
+      });
       // Release the claim so the next cron tick can retry a transient failure.
       if (trigger === "cron") await releaseReportClaim(key);
       console.error(`[monthly-report] SEND FAILED for ${period}: ${result.error}`);
       return { ok: false, period, recipients, error: result.error };
     }
 
-    // A TEST send records nothing: claiming the period here would make the real
-    // cron skip it on the 1st.
+    // EVERY send is recorded in report_send_log — test or real, cron or manual —
+    // with the provider's message id, which is the join key to their dashboard.
+    const logId = await recordSendAttempt({
+      reportKind: MONTHLY_REPORT_KIND, period, isTest, trigger, actor,
+      recipients, outcome: "accepted",
+      messageId: result.emailId ?? null, providerError: null,
+    });
+
+    // A TEST send still does NOT claim the period in report_sends. That table is
+    // the duplicate-send guard and is deliberately untouched by this build: a
+    // test row there could make the Sept 1 cron find a claim and silently skip.
+    // Recording and claiming are now two different things.
     if (trigger === "manual" && !isTest) {
       await recordManualSend(key, period, recipients, actor);
     } else if (isTest) {
       console.log(
-        `[monthly-report] TEST send for ${period} — deliberately NOT recorded in ` +
-        `report_sends, so the scheduled send for this period is unaffected.`,
+        `[monthly-report] TEST send for ${period} — logged (id=${logId}) but NOT ` +
+        `claimed in report_sends, so the scheduled send for this period still fires.`,
       );
     }
 
-    console.log(`[monthly-report] SENT ${period} to ${recipients.join(", ")} (${trigger}${isTest ? "/TEST" : ""})`);
+    console.log(
+      `[monthly-report] SENT ${period} to ${recipients.join(", ")} ` +
+      `(${trigger}${isTest ? "/TEST" : ""}) messageId=${result.emailId ?? "none"} logId=${logId}`,
+    );
     return { ok: true, period, recipients, emailId: result.emailId };
   } catch (error) {
-    if (trigger === "cron") await releaseReportClaim(key);
     const message = error instanceof Error ? error.message : "Unknown error";
+    await recordSendAttempt({
+      reportKind: MONTHLY_REPORT_KIND, period, isTest, trigger, actor,
+      recipients, outcome: "failed", messageId: null, providerError: message,
+    });
+    if (trigger === "cron") await releaseReportClaim(key);
     console.error(`[monthly-report] BUILD/SEND ERROR for ${period}: ${message}`);
     return { ok: false, period, recipients, error: message };
   }

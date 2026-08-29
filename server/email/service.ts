@@ -29,7 +29,13 @@ const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KE
 // From email configuration
 // Uses verified domain hipaacheck.ai for production sends
 const FROM_EMAIL = process.env.EMAIL_FROM_ADDRESS || process.env.RESEND_FROM_EMAIL || "no-reply@hipaacheck.ai";
-const FROM_NAME = "The Family Connection";
+// Configurable so the sending identity can be moved without a code change once
+// the client's IT publishes DNS for a TFC-owned domain. Defaults are today's
+// values, so behaviour is unchanged until someone sets the variables.
+const FROM_NAME = process.env.EMAIL_FROM_NAME || "The Family Connection";
+/** Report emails go to STAFF and may use their own identity. */
+const REPORT_FROM_EMAIL = process.env.REPORT_FROM_ADDRESS || FROM_EMAIL;
+const REPORT_FROM_NAME = process.env.REPORT_FROM_NAME || FROM_NAME;
 
 // Reply-To configuration (v1: hardcoded, not admin-editable)
 // All client replies go to the human-monitored admin inbox
@@ -424,10 +430,15 @@ export async function sendReportEmail(params: {
     console.log(`[report-email] Sending "${subject}" to ${to.join(", ")}` +
       (attachments?.length ? ` with ${attachments.length} attachment(s)` : ""));
 
+    // NO replyTo. The From sits on one domain and REPLY_TO_EMAIL on an unrelated
+    // third domain; that mismatch is a standard phishing heuristic, and the
+    // reminder emails — which arrive reliably — set no reply-to at all. These
+    // go to staff, who can reply to the sender or simply open the CRM.
+    // The client-facing sendTemplatedEmail path above KEEPS its reply-to: those
+    // go to clients, who genuinely need a monitored inbox to answer.
     const result = await resend.emails.send({
-      from: `${FROM_NAME} <${FROM_EMAIL}>`,
+      from: `${REPORT_FROM_NAME} <${REPORT_FROM_EMAIL}>`,
       to,
-      replyTo: REPLY_TO_EMAIL,
       subject,
       html,
       attachments: attachments?.map((a) => ({
@@ -437,8 +448,13 @@ export async function sendReportEmail(params: {
     });
 
     if (result.error) {
-      console.error("[report-email] Resend API error:", result.error);
-      return { success: false, error: result.error.message };
+      // Keep the provider's own wording: it is what makes a rejection traceable
+      // in their dashboard later.
+      const detail = result.error.name
+        ? `${result.error.name}: ${result.error.message}`
+        : result.error.message;
+      console.error("[report-email] Resend API error:", detail);
+      return { success: false, error: detail };
     }
 
     console.log(`[report-email] Sent, Resend ID: ${result.data?.id}`);
@@ -447,7 +463,7 @@ export async function sendReportEmail(params: {
       emailId: result.data?.id,
       renderedHtml: html,
       renderedSubject: subject,
-      senderEmail: FROM_EMAIL,
+      senderEmail: REPORT_FROM_EMAIL,
       recipientEmail: to.join(", "),
     };
   } catch (error) {
