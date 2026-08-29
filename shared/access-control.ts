@@ -189,7 +189,10 @@ export function canUseReportAgent(email: string | null | undefined): boolean {
 // Same kill-switch shape as TN_V2_OPEN_TO_ALL above: a boolean constant that
 // widens the gate in one line, with no migration and no list surgery.
 //   Wed 2026-08-26 — DASHBOARD_OPEN_TO_MANAGEMENT = false → the 2 beta users.
-//   Fri 2026-08-28 — flip to true → DASHBOARD_MANAGEMENT_EMAILS.
+//   Sat 2026-08-29 — FLIPPED to true → DASHBOARD_MANAGEMENT_EMAILS (v199).
+//
+// ROLLBACK IS THIS ONE LINE. Setting it back to false returns access to the two
+// beta users immediately; no migration, no data change, nothing else to undo.
 //
 // WHY THE FRIDAY GATE IS A POSITIVE ALLOW-LIST AND NOT !isRestrictedUser()
 // ------------------------------------------------------------------------
@@ -205,7 +208,7 @@ export function canUseReportAgent(email: string | null | undefined): boolean {
 // on — flipping with an empty list locks everyone out loudly rather than
 // leaking quietly.
 // ============================================================================
-export const DASHBOARD_OPEN_TO_MANAGEMENT = false;
+export const DASHBOARD_OPEN_TO_MANAGEMENT = true;
 
 export const DASHBOARD_BETA_EMAILS = [
   "raunek@tfc.health", // developer
