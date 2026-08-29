@@ -83,6 +83,7 @@ import {
 } from "./activity/db";
 import { isRestrictedUser, canAccessReferralUpload, isTnV2User, canEditEmailTemplates, canBuildReports, canUseReportAgent, canAccessDashboard } from "@shared/access-control";
 import { getDashboardSummary, getUnmappedInsuranceContacts } from "./dashboard/db";
+import { buildDashboardWorkbook } from "./dashboard/export";
 import { previewMonthlyReport, sendMonthlyReport } from "./reports/send";
 import { previousPeriod } from "./reports/monthly";
 import { ACCEPTED_INSURANCES } from "@shared/insurance-utils";
@@ -6943,6 +6944,42 @@ export async function registerRoutes(
       const message = error instanceof Error ? error.message : "Dashboard summary failed";
       console.error("[dashboard] Error:", message);
       return res.status(500).json({ error: "Failed to build dashboard summary" });
+    }
+  });
+
+  // Excel export of the dashboard, as currently displayed.
+  //
+  // POST because the browser supplies the rendered chart images; the NUMBERS
+  // are never sent from the client — the server re-reads them from the same
+  // pivot the cards render, so the file cannot disagree with the screen.
+  //
+  // Aggregate counts only. Same gate as the dashboard.
+  app.post("/api/dashboard/export.xlsx", async (req: any, res) => {
+    try {
+      const email = requireDashboard(req, res);
+      if (!email) return;
+      const population = req.body?.population === "all" ? "all" : "active";
+      const scopes = (req.body?.scopes ?? {}) as Record<string, "pipeline" | "waitlist">;
+      const images = Array.isArray(req.body?.images) ? req.body.images : [];
+
+      const { buffer, filename, imagesEmbedded, warnings } =
+        await buildDashboardWorkbook({ population, scopes, images });
+
+      console.log(
+        `[dashboard] export population=${population} images=${imagesEmbedded}/${images.length} ` +
+        `bytes=${buffer.length} by ${email}` +
+        (warnings.length ? ` warnings=${warnings.length}` : ""),
+      );
+      for (const w of warnings) console.warn(`[dashboard] export warning: ${w}`);
+
+      res.setHeader("Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      return res.send(buffer);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Export failed";
+      console.error("[dashboard] export error:", message);
+      return res.status(500).json({ error: "Failed to build the dashboard export" });
     }
   });
 

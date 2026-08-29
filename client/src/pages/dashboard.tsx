@@ -42,7 +42,7 @@ import {
   ChartContainer, ChartTooltip, ChartLegend, ChartLegendContent,
 } from "@/components/ui/chart";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
-import { AlertCircle, BarChart3, TableIcon } from "lucide-react";
+import { AlertCircle, BarChart3, TableIcon, Download } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessDashboard } from "@shared/access-control";
 import {
@@ -51,6 +51,7 @@ import {
   insuranceChartHeight, type ChartSeries, type StackRow,
 } from "@/lib/dashboard-charts";
 import { buildWaitlistHref } from "@/lib/waitlist-href";
+import { exportDashboardWorkbook } from "@/lib/dashboard-export";
 import { PIPELINE_STATUS_CODES, STATUS_BUCKET_CODES } from "@shared/status-buckets";
 import {
   getDashboardSummary,
@@ -180,16 +181,19 @@ function StackTooltip({ active, payload, series }: {
  * other but show no total, so the reconciliation the whole dashboard is built
  * around would become invisible exactly where it is easiest to doubt.
  */
-function StackedBars({ rows, series, height, yAxisWidth, onSegmentClick }: {
+function StackedBars({ rows, series, height, yAxisWidth, onSegmentClick, exportKey }: {
   rows: StackRow[]; series: ChartSeries[]; height: number; yAxisWidth: number;
   /** Click-through. A segment with zero records does not navigate. */
   onSegmentClick?: (row: StackRow, seriesKey: string) => void;
+  /** Tags this chart so the Excel exporter can find its SVG. */
+  exportKey?: string;
 }) {
   const config = Object.fromEntries(
     series.map((s) => [s.key, { label: s.label, color: s.color }]),
   );
   return (
-    <ChartContainer config={config} className="aspect-auto w-full" style={{ height }}>
+    <ChartContainer config={config} className="aspect-auto w-full" style={{ height }}
+      data-chart-card={exportKey}>
       <BarChart data={rows} layout="vertical"
         margin={{ left: 4, right: 28, top: 4, bottom: 4 }}>
         <CartesianGrid horizontal={false} />
@@ -393,6 +397,7 @@ function StatusCard({ summary }: { summary: DashboardSummary }) {
           return (
             <StackedBars
               rows={spec.rows} series={spec.series} height={280} yAxisWidth={110}
+              exportKey="status"
               onSegmentClick={(row, bucketKey) => {
                 const loc = summary.locations.find((l) => l.label === row.full);
                 const codes = STATUS_BUCKET_CODES[bucketKey as keyof typeof STATUS_BUCKET_CODES];
@@ -610,6 +615,7 @@ function ServiceTypeChart({ summary, set, scope }: {
   const { rows, series } = buildServiceTypeChart(summary, set);
   return (
     <StackedBars rows={rows} series={series} height={280} yAxisWidth={110}
+      exportKey="serviceType"
       onSegmentClick={(row, key) => {
         const loc = summary.locations.find((l) => l.label === row.full);
         // Residual segments have no filterable value to drill into.
@@ -628,6 +634,7 @@ function InsuranceChart({ summary, set, scope }: {
   return (
     <StackedBars rows={rows} series={series}
       height={insuranceChartHeight(rows.length)} yAxisWidth={124}
+      exportKey="insurance"
       onSegmentClick={(row, locationId) => {
         const loc = summary.locations.find((l) => l.id === locationId);
         // row.full is the CANONICAL payer name (never a stored value): the
@@ -671,6 +678,7 @@ function ServiceTypeInsuranceCard({ summary, set, scope, onScopeChange, onOtherC
         {!showTable && !showChart && <NoViews />}
         {showChart && (
           <StackedBars rows={spec.rows} series={spec.series} height={260} yAxisWidth={110}
+            exportKey="serviceTypeInsurance"
             onSegmentClick={(row, key) => {
               const svc = rows.find((r) => r.label === row.full);
               if (!svc || svc.key === "__other" || key.startsWith("__")) return;
@@ -763,7 +771,8 @@ function OriginCard({ summary, set, scope, onScopeChange }: {
       <CardContent className="space-y-6">
         {!showTable && !showChart && <NoViews />}
         {showChart && (
-          <StackedBars rows={originChart.rows} series={originChart.series} height={260} yAxisWidth={110} />
+          <StackedBars rows={originChart.rows} series={originChart.series} height={260} yAxisWidth={110}
+            exportKey="origin" />
         )}
         {showTable && (
         <div className="overflow-x-auto">
@@ -820,6 +829,7 @@ export default function Dashboard() {
   const { scope: insScope, setScope: setInsScope } = useCardScope();
   const { scope: stiScope, setScope: setStiScope } = useCardScope();
   const { scope: originScope, setScope: setOriginScope } = useCardScope();
+  const [exporting, setExporting] = useState(false);
   const [modal, setModal] = useState<{
     scope: CardScope; title: string;
     filter?: (c: UnmappedInsuranceContact) => boolean;
@@ -871,15 +881,45 @@ export default function Dashboard() {
               Per-clinic performance. Location is the client&rsquo;s first-choice modality.
             </p>
           </div>
-          <ToggleGroup
-            type="single"
-            value={population}
-            onValueChange={(v) => v && setPopulation(v as Population)}
-            size="sm"
-          >
-            <ToggleGroupItem value="active">Active ({summary.totals.active})</ToggleGroupItem>
-            <ToggleGroupItem value="all">All ({summary.totals.all})</ToggleGroupItem>
-          </ToggleGroup>
+          <div className="flex items-center gap-2">
+            <ToggleGroup
+              type="single"
+              value={population}
+              onValueChange={(v) => v && setPopulation(v as Population)}
+              size="sm"
+            >
+              <ToggleGroupItem value="active">Active ({summary.totals.active})</ToggleGroupItem>
+              <ToggleGroupItem value="all">All ({summary.totals.all})</ToggleGroupItem>
+            </ToggleGroup>
+            {/*
+              Exports EXACTLY what is on screen — the population above and each
+              card's own Pipeline/Waitlist setting. Charts go in as pictures, so
+              nothing in the file can recalculate.
+            */}
+            <Button
+              variant="outline" size="sm" disabled={exporting}
+              data-testid="button-export-dashboard"
+              onClick={async () => {
+                setExporting(true);
+                try {
+                  await exportDashboardWorkbook({
+                    population,
+                    scopes: {
+                      serviceType: svcScope,
+                      insurance: insScope,
+                      serviceTypeInsurance: stiScope,
+                      origin: originScope,
+                    },
+                  });
+                } finally {
+                  setExporting(false);
+                }
+              }}
+            >
+              <Download className="h-4 w-4 mr-2" />
+              {exporting ? "Preparing…" : "Export Excel"}
+            </Button>
+          </div>
         </div>
 
         {/* The page explains its own arithmetic, so a CEO reading it alone can
