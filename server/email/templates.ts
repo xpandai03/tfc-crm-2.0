@@ -76,7 +76,28 @@ export function extractFirstName(fullName: string | null | undefined): string {
 
 const APP_URL = process.env.APP_URL || "https://tfc-crm-2-0.fly.dev";
 const LOGO_URL = `${APP_URL}/tfc-logo.jpg`;
+// The THIRD-PARTY form the original "Initial Appointment Survey" template has
+// always pointed at. LEFT EXACTLY AS IS. Repointing this is the cutover, and it
+// is a deliberate separate action taken after the client walks the new forms —
+// not part of adding the new templates below.
 const SURVEY_URL = process.env.SURVEY_URL || "https://customer-feedback-tfc.replit.app";
+
+// ---------------------------------------------------------------------------
+// The CRM's own survey forms (shipped v206, live at /survey/:variant).
+//
+// Configurable in the same shape as SURVEY_URL above, so the host can be moved
+// — to a custom domain, say — without editing template copy. It defaults to
+// APP_URL because the forms are served by this application, so the templates
+// work with no configuration at all.
+//
+// The per-modality paths are NOT env-configurable: they are routes in this
+// codebase (server/survey/routes.ts) and the variant is what distinguishes the
+// two templates. Making them settable would let a misconfiguration silently
+// send an in-person client to the telehealth form.
+// ---------------------------------------------------------------------------
+const SURVEY_FORM_BASE_URL = (process.env.SURVEY_FORM_BASE_URL || APP_URL).replace(/\/+$/, "");
+const SURVEY_IN_PERSON_URL = `${SURVEY_FORM_BASE_URL}/survey/in-person`;
+const SURVEY_TELEHEALTH_URL = `${SURVEY_FORM_BASE_URL}/survey/telehealth`;
 
 // Shared email wrapper for consistent branding
 export function wrapEmailContent(content: string): string {
@@ -528,9 +549,153 @@ Albuquerque, New Mexico
     variables: ["firstName"],
     requiredFields: [],
   },
+  // -------------------------------------------------------------------------
+  // Client Survey — In Person
+  //
+  // APPENDED AT THE END OF THE ARRAY ON PURPOSE. initEmailTemplatesTable() seeds
+  // sort_order = array index and then never rewrites it (ON CONFLICT DO NOTHING),
+  // so inserting mid-array would give these rows indices that disagree with the
+  // sort_order the existing rows already hold in the database.
+  //
+  // Structure, wrapper, button markup and plain-text twin all copied from
+  // "post-appointment-survey" above. Nothing about the styling is new.
+  // -------------------------------------------------------------------------
+  {
+    id: "survey-in-person",
+    name: "Client Survey — In Person",
+    description: "Feedback request after an in-person session (CRM survey form)",
+    subject: "How was your visit? -- The Family Connection",
+    bodyContent: `
+      <p style="margin: 0 0 20px 0;">
+        Hello {{firstName}},
+      </p>
+
+      <p style="margin: 0 0 20px 0;">
+        Thank you for coming in to see us. We would like to know how your visit went.
+      </p>
+
+      <p style="margin: 0 0 20px 0;">
+        Your answers go to our care team and help us take better care of the people we see.
+      </p>
+
+      <!-- Outlook-safe button: table wrapper + anchor with inline styles -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 20px 0;">
+        <tr>
+          <td align="center" bgcolor="#1e3a5f" style="border-radius: 6px;">
+            <a href="${SURVEY_IN_PERSON_URL}" target="_blank"
+               style="display: inline-block; padding: 12px 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 15px; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600;">
+              Share your feedback
+            </a>
+          </td>
+        </tr>
+      </table>
+
+      <p style="margin: 0 0 20px 0;">
+        The form asks for your name and date of birth so we can add your feedback
+        to your record, and it takes about two minutes.
+      </p>
+
+      <p style="margin: 0;">
+        Warm regards,<br>
+        <strong>The Family Connection Team</strong>
+      </p>
+    `,
+    bodyText: `
+Hello {{firstName}},
+
+Thank you for coming in to see us. We would like to know how your visit went.
+
+Your answers go to our care team and help us take better care of the people we see.
+
+Share your feedback: ${SURVEY_IN_PERSON_URL}
+
+The form asks for your name and date of birth so we can add your feedback to your record, and it takes about two minutes.
+
+Warm regards,
+The Family Connection Team
+
+---
+The Family Connection
+Albuquerque, New Mexico
+    `.trim(),
+    variables: ["firstName"],
+    requiredFields: [],
+  },
+  // -------------------------------------------------------------------------
+  // Client Survey — Telehealth
+  //
+  // APPENDED AT THE END OF THE ARRAY ON PURPOSE. initEmailTemplatesTable() seeds
+  // sort_order = array index and then never rewrites it (ON CONFLICT DO NOTHING),
+  // so inserting mid-array would give these rows indices that disagree with the
+  // sort_order the existing rows already hold in the database.
+  //
+  // Structure, wrapper, button markup and plain-text twin all copied from
+  // "post-appointment-survey" above. Nothing about the styling is new.
+  // -------------------------------------------------------------------------
+  {
+    id: "survey-telehealth",
+    name: "Client Survey — Telehealth",
+    description: "Feedback request after a telehealth session (CRM survey form)",
+    subject: "How was your session? -- The Family Connection",
+    bodyContent: `
+      <p style="margin: 0 0 20px 0;">
+        Hello {{firstName}},
+      </p>
+
+      <p style="margin: 0 0 20px 0;">
+        Thank you for meeting with us by video or phone. We would like to know how your session went.
+      </p>
+
+      <p style="margin: 0 0 20px 0;">
+        Your answers go to our care team and help us take better care of the people we see.
+      </p>
+
+      <!-- Outlook-safe button: table wrapper + anchor with inline styles -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 20px 0;">
+        <tr>
+          <td align="center" bgcolor="#1e3a5f" style="border-radius: 6px;">
+            <a href="${SURVEY_TELEHEALTH_URL}" target="_blank"
+               style="display: inline-block; padding: 12px 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 15px; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600;">
+              Share your feedback
+            </a>
+          </td>
+        </tr>
+      </table>
+
+      <p style="margin: 0 0 20px 0;">
+        The form asks for your name and date of birth so we can add your feedback
+        to your record, and it takes about two minutes.
+      </p>
+
+      <p style="margin: 0;">
+        Warm regards,<br>
+        <strong>The Family Connection Team</strong>
+      </p>
+    `,
+    bodyText: `
+Hello {{firstName}},
+
+Thank you for meeting with us by video or phone. We would like to know how your session went.
+
+Your answers go to our care team and help us take better care of the people we see.
+
+Share your feedback: ${SURVEY_TELEHEALTH_URL}
+
+The form asks for your name and date of birth so we can add your feedback to your record, and it takes about two minutes.
+
+Warm regards,
+The Family Connection Team
+
+---
+The Family Connection
+Albuquerque, New Mexico
+    `.trim(),
+    variables: ["firstName"],
+    requiredFields: [],
+  },
 ];
 
-// All 6 system templates are HTML-authored (their bodyContent has <p> markup).
+// All 8 system templates are HTML-authored (their bodyContent has <p> markup).
 // renderBodyContentToHtml(content, "html") is the identity, so bodyHtml stays
 // byte-identical to the prior wrapEmailContent(bodyContent) form (verified by
 // the equivalence test).
