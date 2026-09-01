@@ -95,31 +95,55 @@ body {
 
 .shell__header {
   background: var(--navy);
-  padding: 18px 20px 16px;
+  padding: 20px 20px 16px;
 }
 
+/* Stacked and centred: wordmark, then modality. */
 .shell__header-inner {
   max-width: 720px;
   margin: 0 auto;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  gap: 9px;
 }
 
+/*
+  The white-on-transparent wordmark is 1500x465 (ratio 3.226) and the artwork
+  fills that box with almost no transparent margin, so this height is the height
+  you actually see.
+
+  SIZE IS SET BY THE SMALLEST TEXT IN THE MARK — the word "THE" tucked into the
+  ligature. Below about 34px it starts to fill in. 42px clears it comfortably on
+  a phone at 135px wide, well inside the 350px of usable width at a 390px
+  viewport. Desktop gets 52px (168px wide): larger than the old 34px because the
+  logo now carries the header on its own, still a masthead rather than a hero.
+
+  NOTE: this file does NOT contain the "CHANGING MENTAL HEALTH" tagline that the
+  blue-on-white version carries — it is the mark plus the wordmark only. So the
+  tagline could not be the sizing constraint here; the wordmark is.
+*/
 .shell__logo {
-  height: 34px;
+  height: 42px;
   width: auto;
+  max-width: 100%;
   display: block;
 }
 
+@media (min-width: 640px) {
+  .shell__logo {
+    height: 52px;
+  }
+}
+
 .shell__modality {
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.13em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.78);
+  color: rgba(255, 255, 255, 0.72);
   white-space: nowrap;
+  text-align: center;
 }
 
 .shell__main {

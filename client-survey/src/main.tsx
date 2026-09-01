@@ -42,6 +42,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { variantFromPath } from "@shared/survey-questions";
 import { SurveyForm } from "./SurveyForm";
+import logoUrl from "./assets/tfc-logo-white.png";
 import "./survey.css";
 
 /** /survey/in-person -> "in-person". Anything else renders the notice below. */
@@ -54,9 +55,11 @@ function variantFromLocation(): ReturnType<typeof variantFromPath> {
 function UnknownForm() {
   return (
     <div className="shell">
+      {/* Same centred masthead as the wizard, minus the modality — this page is
+          reached when the URL names no valid variant, so there is none to name. */}
       <header className="shell__header">
         <div className="shell__header-inner">
-          <img className="shell__logo" src="/tfc-logo.jpg" alt="The Family Connection" />
+          <img className="shell__logo" src={logoUrl} alt="The Family Connection" />
         </div>
       </header>
       <main className="shell__main">
