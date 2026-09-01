@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, ExternalLink, Code2, FileText, Inbox, FileUp } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessReferralUpload } from "@shared/access-control";
+import { SURVEY_FORM_TYPE, SURVEY_SOURCE } from "@shared/survey-questions";
 
 interface FormSubmission {
   id: number;
@@ -59,6 +60,8 @@ function getSourceLabel(source: string): { label: string; variant: "secondary" |
       return { label: "Consent", variant: "secondary" };
     case "feedback_form_v1":
       return { label: "Feedback", variant: "outline" };
+    case SURVEY_SOURCE:
+      return { label: "Client Survey", variant: "secondary" };
     default:
       return { label: source || "Unknown", variant: "outline" };
   }
@@ -72,9 +75,23 @@ function getFormTypeBadge(formType: string): { label: string; variant: "secondar
       return { label: "Consent", variant: "secondary" };
     case "Feedback":
       return { label: "Feedback", variant: "outline" };
+    case SURVEY_FORM_TYPE:
+      return { label: "Survey", variant: "default" };
     default:
       return { label: formType || "Unknown", variant: "outline" };
   }
+}
+
+/**
+ * A survey row's payload holds free text a client typed — the "Additional
+ * Comments" box and up to four "If no, please explain" boxes. Those five fields
+ * can contain anything, including clinical detail about someone who is not the
+ * submitter, so they are kept out of the list summary AND out of the raw-payload
+ * viewer. This predicate is the single gate for both; see the note above
+ * RawPayloadModal.
+ */
+function isSurveySubmission(sub: FormSubmission): boolean {
+  return sub.formType === SURVEY_FORM_TYPE || sub.source === SURVEY_SOURCE;
 }
 
 /** Extract a human-readable summary from submission payload based on form type. */
@@ -99,6 +116,31 @@ function getSubmissionSummary(sub: FormSubmission): { title: string; subtitle: s
     }
 
     return { title: patient || "Unknown Patient", subtitle: label, meta: secondary };
+  }
+
+  // Client survey (in person / telehealth)
+  //
+  // Shows therapist, modality, the overall score and whether follow-up was
+  // requested — enough to triage from the list. It deliberately does NOT show
+  // any free text: the Feedback branch below puts an 80-character comment
+  // excerpt straight into `meta`, and that is exactly what must not happen for
+  // a survey. See isSurveySubmission().
+  if (isSurveySubmission(sub)) {
+    const answers = (p.answers ?? {}) as Record<string, unknown>;
+    const modality = s(p.modality) || "Survey";
+    const therapist = s(answers.therapist);
+    const overall = answers.overallRating;
+    const followUp = s(answers.followUpRequested) === "Yes";
+
+    const parts: string[] = [modality];
+    if (therapist) parts.push(therapist);
+    if (typeof overall === "number") parts.push(`Overall ${overall}/10`);
+
+    return {
+      title: s(p.name) || sub.name || "Client",
+      subtitle: parts.join(" · "),
+      meta: followUp ? "Follow-up requested" : "",
+    };
   }
 
   // Feedback forms
@@ -148,6 +190,18 @@ function getSubmissionSummary(sub: FormSubmission): { title: string; subtitle: s
   };
 }
 
+/**
+ * Raw payload viewer.
+ *
+ * NOT AVAILABLE FOR SURVEY ROWS. A survey payload contains the client's own
+ * free text — "Additional Comments" plus up to four "If no, please explain"
+ * boxes — which can carry anything they chose to write, including clinical
+ * detail about a third party. Keeping that text out of the list row while
+ * leaving a one-click JSON dump beside it would be theatre.
+ *
+ * The gate is here as well as on the button so a survey row cannot reach this
+ * modal through any future call site.
+ */
 function RawPayloadModal({
   isOpen,
   onClose,
@@ -158,6 +212,7 @@ function RawPayloadModal({
   submission: FormSubmission | null;
 }) {
   if (!submission) return null;
+  if (isSurveySubmission(submission)) return null;
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -309,15 +364,18 @@ export default function Submissions() {
                           </Button>
                         </Link>
                       )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 text-xs"
-                        onClick={() => setSelectedSubmission(sub)}
-                      >
-                        <Code2 className="h-3 w-3 mr-1" />
-                        View Raw
-                      </Button>
+                      {/* Absent for survey rows — see RawPayloadModal. */}
+                      {!isSurveySubmission(sub) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => setSelectedSubmission(sub)}
+                        >
+                          <Code2 className="h-3 w-3 mr-1" />
+                          View Raw
+                        </Button>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
