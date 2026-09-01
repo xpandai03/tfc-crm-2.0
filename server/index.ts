@@ -18,6 +18,7 @@ import { initReportSendsTable } from "./reports/db";
 import { initReportSendLogTable } from "./reports/send-log";
 import { verifySvixSignature, handleDeliveryEvent } from "./reports/webhook";
 import { registerSurveyPublicRoutes } from "./survey/routes";
+import { initSurveyMatchTable } from "./survey/match-db";
 
 const app = express();
 const httpServer = createServer(app);
@@ -294,6 +295,8 @@ app.use((req, res, next) => {
     await initViewPreferencesTable();
     await initReportSendsTable();
     await initReportSendLogTable();
+    // Survey → contact match state. A SIDE table; form_submissions is untouched.
+    await initSurveyMatchTable();
     startReminderCron();
     // Monthly management report. Schedule + timezone are logged on the line
     // below at boot, so the deployed cadence is readable from the startup log

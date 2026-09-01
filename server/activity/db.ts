@@ -13,6 +13,8 @@ import { getPool } from "../db/pool";
 
 export type ActivityType =
   | "submission_received"
+  // Staff confirmed (or explicitly declined) a survey→contact identity link.
+  | "survey_match_resolved"
   | "status_changed"
   | "note_added"
   | "note_deleted"

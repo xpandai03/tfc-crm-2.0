@@ -6879,6 +6879,172 @@ export async function registerRoutes(
     }
   });
 
+  // ============================================================================
+  // Survey → contact matching and the review queue.
+  //
+  // All session-gated (none of these paths are in server/auth.ts's publicPaths),
+  // so a logged-in CRM user is required. Nothing here modifies a contact record:
+  // the only writes are form_submissions.contact_id and the survey_match_reviews
+  // side table.
+  //
+  // LOGGING: submission ids, counts and reason codes only. Never a name, a date
+  // of birth, an email or an answer.
+  // ============================================================================
+
+  /** Re-run matching over every survey submission. Idempotent; skips anything a
+   *  human has resolved. Safe to call repeatedly — e.g. after a contact sync. */
+  app.post("/api/survey/matching/run", async (req: any, res) => {
+    try {
+      const { runSurveyMatching } = await import("./survey/match-runner");
+      const summary = await runSurveyMatching();
+      console.log(
+        `[survey-match] run by ${req.user?.email || "unknown"}: ` +
+          `considered=${summary.considered} matched=${summary.matched} ` +
+          `review=${summary.review} skipped(human-resolved)=${summary.skippedHumanResolved}`,
+      );
+      return res.json({ success: true, summary });
+    } catch (error) {
+      console.error(
+        "[survey-match] run failed:",
+        error instanceof Error ? error.message : "unknown",
+      );
+      return res.status(500).json({ error: "Matching run failed" });
+    }
+  });
+
+  /** Match state for every survey submission, plus counts for the filter chips. */
+  app.get("/api/survey/matching/states", async (_req, res) => {
+    try {
+      const { getMatchStates, getMatchCounts } = await import("./survey/match-db");
+      const [states, counts] = await Promise.all([getMatchStates(), getMatchCounts()]);
+      return res.json({
+        counts,
+        states: Object.fromEntries(states),
+      });
+    } catch (error) {
+      console.error(
+        "[survey-match] states lookup failed:",
+        error instanceof Error ? error.message : "unknown",
+      );
+      return res.status(500).json({ error: "Failed to load match states" });
+    }
+  });
+
+  /**
+   * What a person needs to decide one submission: the identity the client
+   * typed, and the candidate contacts.
+   *
+   * DELIBERATELY RETURNS NO SURVEY ANSWERS. The queue is about identity. A
+   * reviewer deciding who someone is has no need of what they said about their
+   * therapist, and the comment fields can contain anything.
+   */
+  app.get("/api/survey/matching/review/:submissionId", async (req, res) => {
+    const submissionId = parseInt(req.params.submissionId, 10);
+    try {
+      if (isNaN(submissionId)) {
+        return res.status(400).json({ error: "submissionId must be a number" });
+      }
+      const submission = await getSubmissionById(submissionId);
+      if (!submission || submission.formType !== SURVEY_FORM_TYPE) {
+        return res.status(404).json({ error: "Survey submission not found" });
+      }
+      const { getMatchState, getContactIdentities } = await import("./survey/match-db");
+      const state = await getMatchState(submissionId);
+      const candidates = await getContactIdentities(state?.candidateIds ?? []);
+
+      const payload = submission.payload as {
+        client?: { name?: string; dateOfBirth?: string; email?: string };
+        answers?: Record<string, unknown>;
+        modality?: string;
+      };
+
+      return res.json({
+        submissionId,
+        submittedAt: submission.submittedAt ?? submission.createdAt,
+        // Identity fields only — plus therapist and modality, which are context
+        // for a reviewer, not survey content.
+        typed: {
+          name: payload.client?.name ?? submission.name ?? "",
+          dateOfBirth: payload.client?.dateOfBirth ?? null,
+          email: payload.client?.email ?? null,
+        },
+        modality: payload.modality ?? null,
+        therapist: typeof payload.answers?.therapist === "string" ? payload.answers.therapist : null,
+        state,
+        candidates,
+      });
+    } catch (error) {
+      console.error(
+        `[survey-match] review lookup failed for id=${submissionId}:`,
+        error instanceof Error ? error.message : "unknown",
+      );
+      return res.status(500).json({ error: "Failed to load the review" });
+    }
+  });
+
+  /**
+   * A person's decision. `contactId` names a contact, or null means "there is
+   * no contact for this submission" — both are explicit choices, and both are
+   * recorded with who made them and when.
+   */
+  app.post("/api/survey/matching/resolve", async (req: any, res) => {
+    const submissionId = typeof req.body?.submissionId === "number" ? req.body.submissionId : NaN;
+    try {
+      if (isNaN(submissionId)) {
+        return res.status(400).json({ error: "submissionId (number) is required" });
+      }
+      const raw = req.body?.contactId;
+      // Only a number or an explicit null. Undefined is not a decision.
+      if (raw !== null && typeof raw !== "number") {
+        return res.status(400).json({
+          error: "contactId must be a contact id, or null for 'no contact'",
+        });
+      }
+      const contactId: number | null = raw;
+
+      const submission = await getSubmissionById(submissionId);
+      if (!submission || submission.formType !== SURVEY_FORM_TYPE) {
+        return res.status(404).json({ error: "Survey submission not found" });
+      }
+
+      // A named contact must exist. Confirming onto a contact that is not there
+      // would create exactly the wrong-chart link this build exists to prevent.
+      if (contactId !== null) {
+        const contact = await getSyncContactById(contactId);
+        if (!contact) {
+          return res.status(400).json({ error: "That contact does not exist" });
+        }
+      }
+
+      const actor = req.user?.email || "unknown";
+      const { recordHumanResolution, setSubmissionContactId } = await import("./survey/match-db");
+      await recordHumanResolution({ submissionId, contactId, actorEmail: actor });
+      await setSubmissionContactId(submissionId, contactId);
+
+      await logActivity({
+        type: "survey_match_resolved",
+        actorEmail: actor,
+        entityType: "submission",
+        entityId: String(submissionId),
+        // No client name — the same reasoning as the survey ingest path.
+        entityName: contactId === null ? "Survey marked as no contact" : "Survey matched to contact",
+        metadata: { submissionId, contactId },
+      });
+
+      console.log(
+        `[survey-match] resolved id=${submissionId} -> ` +
+          `${contactId === null ? "no_contact" : `contact=${contactId}`} by ${actor}`,
+      );
+      return res.json({ success: true });
+    } catch (error) {
+      console.error(
+        `[survey-match] resolve failed for id=${submissionId}:`,
+        error instanceof Error ? error.message : "unknown",
+      );
+      return res.status(500).json({ error: "Failed to record the resolution" });
+    }
+  });
+
   // Insights PDF report
   app.get("/api/export/insights.pdf", async (_req, res) => {
     try {
