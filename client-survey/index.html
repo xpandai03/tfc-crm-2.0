@@ -1,0 +1,44 @@
+<!doctype html>
+<!--
+  ============================================================================
+  Public client survey — entry document for the SEPARATE survey bundle.
+  ============================================================================
+
+  Served by server/survey/routes.ts at /survey/in-person and /survey/telehealth,
+  mounted ABOVE app.use(authMiddleware) in server/index.ts. Its script and
+  stylesheet load from /survey-assets/, a prefix that cannot collide with the
+  CRM client's /assets/ path — see client-survey/src/main.tsx for why that
+  separation exists at all.
+
+  Only one font family is requested here. The CRM's own client/index.html loads
+  twenty-odd families for its theme picker; a public form on a phone in a
+  waiting room should not pay for that.
+
+  No analytics, no third-party script, no tag manager. The only outbound
+  requests this page makes are the Google Fonts stylesheet below and its own two
+  API calls.
+  ============================================================================
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Client Survey — The Family Connection</title>
+    <!-- Belt and braces with the X-Robots-Tag header the route sets. -->
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <!-- No description meta: nothing about this page should be worth indexing
+         or previewing in a link unfurl. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="survey-root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

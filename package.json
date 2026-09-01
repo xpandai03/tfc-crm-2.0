@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "NODE_ENV=development tsx server/index.ts",
     "build": "tsx script/build.ts",
+    "build:survey": "rm -rf dist/public/survey-app && vite build --config vite.survey.config.ts",
+    "dev:survey": "rm -rf dist/public/survey-app && vite build --config vite.survey.config.ts --watch",
+    "check:survey-bundle": "tsx script/assert-survey-bundle.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "test:insurance": "tsx client/src/lib/insurance-utils.test.ts",

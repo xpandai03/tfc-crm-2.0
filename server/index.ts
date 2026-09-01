@@ -17,6 +17,7 @@ import { initViewPreferencesTable } from "./view-preferences/db";
 import { initReportSendsTable } from "./reports/db";
 import { initReportSendLogTable } from "./reports/send-log";
 import { verifySvixSignature, handleDeliveryEvent } from "./reports/webhook";
+import { registerSurveyPublicRoutes } from "./survey/routes";
 
 const app = express();
 const httpServer = createServer(app);
@@ -252,6 +253,27 @@ app.use((req, res, next) => {
       return res.status(200).json({ ok: false }); // 200: do not trigger retries
     }
   });
+
+  // ==========================================================================
+  // PUBLIC: client survey forms (/survey/in-person, /survey/telehealth).
+  //
+  // Mounted HERE — before app.use(authMiddleware) — for the same reason as the
+  // roadmap page and the Resend webhook above: a client filling in a survey has
+  // no session and no bearer token. Nothing in server/auth.ts was touched; no
+  // path was added to its publicPaths or publicPostPaths lists, and every other
+  // route keeps its guard.
+  //
+  // Unlike the roadmap, this surface WRITES. Its protections live in the
+  // handler, not in the mount: a closed Zod schema built from the shared
+  // question definition, a honeypot, per-IP rate limiting (the first in this
+  // codebase), length caps and a minimum completion time. See
+  // server/survey/routes.ts.
+  //
+  // The bundle it serves is built separately from the CRM client, so making it
+  // public does not publish the CRM's bundle — the failure mode that led to
+  // client/public/roadmap.html being a standalone file.
+  // ==========================================================================
+  registerSurveyPublicRoutes(app);
 
   // Apply auth middleware to protect all routes except /auth/*
   app.use(authMiddleware);
