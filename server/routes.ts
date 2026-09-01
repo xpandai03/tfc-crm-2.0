@@ -105,6 +105,11 @@ import {
 import { invokeMessages } from "./ai/bedrock";
 import { normalizeReasonForTherapy } from "@shared/reason-canonicals";
 import { getStatusLabel } from "@shared/status-codes";
+import { SURVEY_FORM_TYPE } from "@shared/survey-questions";
+// Payload-shape guard for the survey PDF route. Imported statically (the doc
+// builder itself stays a dynamic import, matching the other PDF routes) because
+// it is a cheap pure predicate used before deciding to build anything.
+import { isSurveyPayload } from "./pdf/survey-template";
 import { extractReferralData } from "./referral/extract";
 import * as XLSX from "xlsx";
 import * as path from "path";
@@ -6785,6 +6790,92 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[intake-pdf] Error generating submission PDF:", error);
       return res.status(500).json({ error: "Failed to generate intake PDF" });
+    }
+  });
+
+  // ============================================================================
+  // Client survey PDF — staff download, for filing to the EHR by hand.
+  //
+  // SESSION-GATED, exactly like the per-submission intake PDF above: it is not
+  // listed in server/auth.ts's publicPaths, so authMiddleware requires a logged-in
+  // session. That is deliberate — this is the ONLY route that serves survey
+  // content, and survey answers include free text a client typed. No auth.ts
+  // change and no new public path.
+  //
+  // The manual download is the primary route to the chart, not a fallback: the
+  // browser agent cannot yet verify whose chart it is on, and 87% of contacts
+  // have no stored EHR link at all. This works for every contact today.
+  //
+  // LOGGING: submission id and outcome only. No client name, no answer, no
+  // filename (the filename contains the name). Same discipline as the hardened
+  // request logger in server/index.ts:77-107.
+  // ============================================================================
+  app.get("/api/survey/pdf/:submissionId", async (req, res) => {
+    const submissionId = parseInt(req.params.submissionId, 10);
+    try {
+      if (isNaN(submissionId)) {
+        console.warn("[survey-pdf] REJECTED: non-numeric submission id");
+        return res.status(400).json({ error: "submissionId must be a number" });
+      }
+
+      const submission = await getSubmissionById(submissionId);
+      if (!submission) {
+        console.warn(`[survey-pdf] NOT FOUND: id=${submissionId}`);
+        return res.status(404).json({ error: "Submission not found" });
+      }
+
+      // Two independent checks, because either alone can be wrong: form_type is
+      // what the Submissions page switches on, and the payload shape is what the
+      // builder actually needs. An intake row asked for here is a caller bug,
+      // not something to render badly.
+      if (submission.formType !== SURVEY_FORM_TYPE || !isSurveyPayload(submission.payload)) {
+        console.warn(
+          `[survey-pdf] REJECTED: id=${submissionId} is not a survey (formType=${submission.formType})`,
+        );
+        return res.status(400).json({ error: "That submission is not a client survey" });
+      }
+
+      const pdfmake = require("pdfmake");
+      pdfmake.addFonts(require("pdfmake/standard-fonts/Helvetica"));
+
+      const { buildSurveyDocument } = await import("./pdf/survey-template");
+      const docDefinition = buildSurveyDocument(submission);
+      const pdfDoc = pdfmake.createPdf(docDefinition);
+
+      // Filename: readable in a downloads folder AND once attached to a chart.
+      // Same sanitiser as the intake route above — it strips anything outside
+      // [A-Za-z0-9 -], which also drops accented characters. That loses a little
+      // fidelity on a name like "Siobhán" but keeps the filename safe on every
+      // filesystem and avoids RFC 5987 encoding in Content-Disposition.
+      const safeName =
+        (submission.name || "Client")
+          .replace(/[^a-zA-Z0-9\s-]/g, "")
+          .replace(/\s+/g, "-")
+          .replace(/-+/g, "-")
+          .replace(/^-|-$/g, "") || "Client";
+      const submittedIso = (submission.submittedAt || submission.createdAt || "").slice(0, 10);
+      const datePart = /^\d{4}-\d{2}-\d{2}$/.test(submittedIso) ? submittedIso : "undated";
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="Client-Survey-${safeName}-${datePart}-Sub${submission.id}.pdf"`,
+      );
+      res.setHeader("Cache-Control", "no-store");
+
+      const stream = await pdfDoc.getStream();
+      stream.pipe(res);
+      stream.end();
+      console.log(`[survey-pdf] SERVED: id=${submissionId}`);
+    } catch (error) {
+      // Message only — never the submission, which is where the free text is.
+      console.error(
+        `[survey-pdf] FAILED: id=${submissionId}:`,
+        error instanceof Error ? error.message : "unknown",
+      );
+      if (!res.headersSent) {
+        return res.status(500).json({ error: "Failed to generate the survey PDF" });
+      }
     }
   });
 

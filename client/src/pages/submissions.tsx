@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, ExternalLink, Code2, FileText, Inbox, FileUp } from "lucide-react";
+import { Loader2, ExternalLink, Code2, FileText, Inbox, FileUp, Download } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessReferralUpload } from "@shared/access-control";
 import { SURVEY_FORM_TYPE, SURVEY_SOURCE } from "@shared/survey-questions";
@@ -363,6 +363,29 @@ export default function Submissions() {
                             View Contact
                           </Button>
                         </Link>
+                      )}
+                      {/*
+                        Survey rows only. The PDF is how a completed survey gets
+                        filed to the client's chart — a staff member downloads it
+                        here and attaches it in TherapyNotes.
+
+                        A plain link, not a fetch-and-blob: the route is
+                        session-gated and returns Content-Disposition: attachment,
+                        so the browser downloads it with the server's filename and
+                        no survey content ever passes through this component. The
+                        button shows no answers, no scores and no comment excerpt.
+                      */}
+                      {isSurveySubmission(sub) && (
+                        <a
+                          href={`/api/survey/pdf/${sub.id}`}
+                          download
+                          data-testid={`link-survey-pdf-${sub.id}`}
+                        >
+                          <Button variant="outline" size="sm" className="h-7 text-xs">
+                            <Download className="h-3 w-3 mr-1" />
+                            Download PDF
+                          </Button>
+                        </a>
                       )}
                       {/* Absent for survey rows — see RawPayloadModal. */}
                       {!isSurveySubmission(sub) && (
