@@ -2269,6 +2269,37 @@ export async function getReferralsCount(monthStart: string, nextMonthStart: stri
   return (result.rows[0]?.count as number) ?? 0;
 }
 
+/**
+ * Survey submissions only, newest first.
+ *
+ * The matcher needs the whole survey set, not the 50-row recent window
+ * getRecentSubmissions() serves the Submissions page. Filtered on form_type in
+ * SQL so an intake row can never reach the matcher.
+ */
+export async function getRecentSurveySubmissions(limit: number = 1000): Promise<FormSubmission[]> {
+  const pool = getPool();
+  const result = await pool.query(`
+    SELECT
+      id,
+      created_at    AS "createdAt",
+      source,
+      form_type     AS "formType",
+      submitted_at  AS "submittedAt",
+      contact_id    AS "contactId",
+      name,
+      payload
+    FROM form_submissions
+    WHERE form_type = 'survey'
+    ORDER BY created_at DESC
+    LIMIT $1
+  `, [limit]);
+
+  return (result.rows as Array<Omit<FormSubmission, "payload"> & { payload: string }>).map((r) => ({
+    ...r,
+    payload: JSON.parse(r.payload),
+  }));
+}
+
 export async function getRecentSubmissions(limit: number = 50): Promise<FormSubmission[]> {
   const pool = getPool();
   const result = await pool.query(`

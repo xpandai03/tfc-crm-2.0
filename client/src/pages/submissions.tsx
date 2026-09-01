@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { useState } from "react";
 import { PageLayout } from "@/components/layout/page-layout";
@@ -13,7 +13,9 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, ExternalLink, Code2, FileText, Inbox, FileUp, Download } from "lucide-react";
+import { Loader2, ExternalLink, Code2, FileText, Inbox, FileUp, Download, UserCheck, UserSearch, UserX, RefreshCw } from "lucide-react";
+import { SurveyMatchReviewDialog } from "@/components/survey-match-review";
+import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessReferralUpload } from "@shared/access-control";
 import { SURVEY_FORM_TYPE, SURVEY_SOURCE } from "@shared/survey-questions";
@@ -81,6 +83,27 @@ function getFormTypeBadge(formType: string): { label: string; variant: "secondar
       return { label: formType || "Unknown", variant: "outline" };
   }
 }
+
+/** One row of survey→contact match state, from /api/survey/matching/states. */
+interface MatchState {
+  submissionId: number;
+  status: "matched" | "review" | "no_contact";
+  reason: string;
+  matchedContactId: number | null;
+  candidateIds: number[];
+  resolvedBy: string | null;
+  resolvedAt: string | null;
+}
+
+interface MatchCounts {
+  matched: number;
+  review: number;
+  no_contact: number;
+  unprocessed: number;
+}
+
+/** The filter the staff member is looking through. */
+type MatchFilter = "all" | "review" | "matched" | "no_contact";
 
 /**
  * A survey row's payload holds free text a client typed — the "Additional
@@ -241,9 +264,44 @@ function RawPayloadModal({
   );
 }
 
+/** The match-state chip on a survey row. Identity state only — no answers. */
+function MatchBadge({ state }: { state: MatchState | undefined }) {
+  if (!state) {
+    return (
+      <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0 gap-1">
+        <UserSearch className="h-2.5 w-2.5" /> Not yet matched
+      </Badge>
+    );
+  }
+  if (state.status === "matched") {
+    return (
+      <Badge className="text-[10px] px-1.5 py-0 shrink-0 gap-1 bg-emerald-600 hover:bg-emerald-600">
+        <UserCheck className="h-2.5 w-2.5" />
+        {state.resolvedBy ? "Matched (confirmed)" : "Matched"}
+      </Badge>
+    );
+  }
+  if (state.status === "no_contact") {
+    return (
+      <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0 gap-1">
+        <UserX className="h-2.5 w-2.5" /> No contact
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0 gap-1 border-amber-500 text-amber-700">
+      <UserSearch className="h-2.5 w-2.5" /> Needs review
+    </Badge>
+  );
+}
+
 export default function Submissions() {
   const { user } = useAuth();
   const [selectedSubmission, setSelectedSubmission] = useState<FormSubmission | null>(null);
+  const [reviewingId, setReviewingId] = useState<number | null>(null);
+  const [matchFilter, setMatchFilter] = useState<MatchFilter>("all");
+  const { toast } = useToast();
+  const qc = useQueryClient();
 
   const { data, isLoading } = useQuery<{ submissions: FormSubmission[] }>({
     queryKey: ["/api/submissions"],
@@ -254,7 +312,55 @@ export default function Submissions() {
     },
   });
 
-  const submissions = data?.submissions ?? [];
+  // Match state for every survey submission. Separate from the submissions
+  // query so a resolution can refresh identity state without refetching rows.
+  const { data: matchData } = useQuery<{ counts: MatchCounts; states: Record<string, MatchState> }>({
+    queryKey: ["/api/survey/matching/states"],
+    queryFn: async () => {
+      const res = await fetch("/api/survey/matching/states");
+      if (!res.ok) throw new Error("Failed to load match states");
+      return res.json();
+    },
+  });
+
+  const runMatching = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/survey/matching/run", { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Matching run failed");
+      return json as { summary: { considered: number; matched: number; review: number; skippedHumanResolved: number } };
+    },
+    onSuccess: (json) => {
+      const s = json.summary;
+      toast({
+        title: "Matching complete",
+        description: `${s.matched} matched, ${s.review} need review` +
+          (s.skippedHumanResolved ? `, ${s.skippedHumanResolved} already confirmed by staff` : ""),
+      });
+      qc.invalidateQueries({ queryKey: ["/api/survey/matching/states"] });
+      qc.invalidateQueries({ queryKey: ["/api/submissions"] });
+    },
+    onError: (e: Error) =>
+      toast({ title: "Matching failed", description: e.message, variant: "destructive" }),
+  });
+
+  const allSubmissions = data?.submissions ?? [];
+  const states = matchData?.states ?? {};
+  const counts = matchData?.counts;
+  const stateFor = (id: number): MatchState | undefined => states[String(id)];
+
+  // The review queue is a FILTER over this list, not a separate page — the
+  // client has repeatedly asked for fewer tabs, and an identity decision is
+  // made about a submission, so it belongs beside the submission.
+  const submissions = allSubmissions.filter((sub) => {
+    if (matchFilter === "all") return true;
+    if (!isSurveySubmission(sub)) return false;
+    const st = stateFor(sub.id);
+    if (matchFilter === "review") return !st || st.status === "review";
+    return st?.status === matchFilter;
+  });
+
+  const reviewCount = (counts?.review ?? 0) + (counts?.unprocessed ?? 0);
 
   return (
     <PageLayout>
@@ -291,6 +397,49 @@ export default function Submissions() {
             </Link>
           )}
         </div>
+
+        {/*
+          Survey identity filter. The review queue lives HERE rather than in its
+          own nav tab: the client has asked repeatedly for fewer tabs, and the
+          decision being made is about a submission that is already on this page.
+        */}
+        {counts && (
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {([
+                ["all", "All", allSubmissions.length],
+                ["review", "Needs review", reviewCount],
+                ["matched", "Matched", counts.matched],
+                ["no_contact", "No contact", counts.no_contact],
+              ] as const).map(([key, label, n]) => (
+                <Button
+                  key={key}
+                  variant={matchFilter === key ? "default" : "outline"}
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => setMatchFilter(key as MatchFilter)}
+                  data-testid={`filter-${key}`}
+                >
+                  {label}
+                  <span className="ml-1.5 opacity-70 tabular-nums">{n}</span>
+                </Button>
+              ))}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs"
+              disabled={runMatching.isPending}
+              onClick={() => runMatching.mutate()}
+              data-testid="button-run-matching"
+            >
+              {runMatching.isPending
+                ? <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                : <RefreshCw className="h-3 w-3 mr-1" />}
+              Run matching
+            </Button>
+          </div>
+        )}
 
         {/* Loading */}
         {isLoading && (
@@ -333,6 +482,7 @@ export default function Submissions() {
                         <Badge variant={srcBadge.variant} className="text-[10px] px-1.5 py-0 shrink-0">
                           {srcBadge.label}
                         </Badge>
+                        {isSurveySubmission(sub) && <MatchBadge state={stateFor(sub.id)} />}
                       </div>
                       <span
                         className="text-xs text-muted-foreground flex-shrink-0 tabular-nums"
@@ -375,6 +525,27 @@ export default function Submissions() {
                         no survey content ever passes through this component. The
                         button shows no answers, no scores and no comment excerpt.
                       */}
+                      {/* Identity review. Shown while a survey row is unmatched or
+                          awaiting review; also available afterwards to correct a
+                          decision. Opens a dialog that shows identity only. */}
+                      {isSurveySubmission(sub) && (
+                        <Button
+                          variant={
+                            !stateFor(sub.id) || stateFor(sub.id)?.status === "review"
+                              ? "default"
+                              : "ghost"
+                          }
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => setReviewingId(sub.id)}
+                          data-testid={`button-review-${sub.id}`}
+                        >
+                          <UserSearch className="h-3 w-3 mr-1" />
+                          {!stateFor(sub.id) || stateFor(sub.id)?.status === "review"
+                            ? "Review identity"
+                            : "Change match"}
+                        </Button>
+                      )}
                       {isSurveySubmission(sub) && (
                         <a
                           href={`/api/survey/pdf/${sub.id}`}
@@ -411,6 +582,12 @@ export default function Submissions() {
           </div>
         )}
       </div>
+
+      {/* Identity review — survey answers are never fetched for this. */}
+      <SurveyMatchReviewDialog
+        submissionId={reviewingId}
+        onClose={() => setReviewingId(null)}
+      />
 
       {/* Raw payload modal */}
       <RawPayloadModal
