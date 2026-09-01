@@ -73,6 +73,10 @@ const EXPECTED_IDS = [
   "appointment-confirmation",
   "post-appointment-survey",
   "intake-form-reminder",
+  // Appended (not inserted) so the six above keep their positions — sort_order
+  // in email_templates is the array index and is written only on first seed.
+  "survey-in-person",
+  "survey-telehealth",
 ];
 
 // 0. Regression guard for the bodyContent refactor: bodyHtml byte-lengths must
@@ -85,6 +89,12 @@ const EXPECTED_HTML_LEN: Record<string, number> = {
   "appointment-confirmation": 3753,
   "post-appointment-survey": 3786,
   "intake-form-reminder": 3303,
+  // The two CRM survey templates. Their presence here does not weaken the guard
+  // above: the six original fingerprints are unchanged, which is what proves the
+  // survey templates were ADDED beside the existing ones rather than altering
+  // any of them — post-appointment-survey in particular is still exactly 3786.
+  "survey-in-person": 3898,
+  "survey-telehealth": 3915,
 };
 for (const t of EMAIL_TEMPLATES) {
   const exp = EXPECTED_HTML_LEN[t.id];
