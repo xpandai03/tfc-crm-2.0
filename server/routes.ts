@@ -323,15 +323,6 @@ function excelSerialToIso(serial: number): string {
   return date.toISOString().split("T")[0];
 }
 
-function excelSerialToMMDDYYYY(serial: number): string {
-  const excelEpoch = new Date(1899, 11, 30);
-  const jsDate = new Date(excelEpoch.getTime() + serial * 86400000);
-  const mm = String(jsDate.getMonth() + 1).padStart(2, "0");
-  const dd = String(jsDate.getDate()).padStart(2, "0");
-  const yyyy = jsDate.getFullYear();
-  return `${mm}/${dd}/${yyyy}`;
-}
-
 // ============================================================================
 // n8n URLs — ALL driven by environment variables for staging isolation
 // ============================================================================
@@ -489,18 +480,72 @@ function normalizeZip5(zip: string | null | undefined): string {
   return digits.slice(0, 5);
 }
 
-// Convert a stored DOB (Excel serial number, ISO YYYY-MM-DD..., or already
-// MM/DD/YYYY) to MM/DD/YYYY. Mirrors the V1 TN handler's DOB normalization.
-function dobToMMDDYYYY(rawDob: unknown): string {
-  if (typeof rawDob === "number" && rawDob > 15000 && rawDob < 80000) {
-    return excelSerialToMMDDYYYY(rawDob);
+// Convert a stored DOB to the MM/DD/YYYY form the TN agent's schema requires
+// (it validates against ^\d{2}/\d{2}/\d{4}$).
+//
+// Recognition is delegated to normalizeExcelDate — the SAME normalizer the sync
+// ingestion paths use — so every format the CRM can store is handled in one
+// place: Excel serial, ISO YYYY-MM-DD, ISO datetime, YYYY/MM/DD, M/D/YYYY and
+// written-month. Previously this knew about only two of those and returned
+// anything else unchanged, which is why a slash-separated year-first date
+// reached the agent verbatim.
+//
+// Returns null for a value it cannot recognise. It deliberately does NOT pass an
+// unrecognised value through: that turned a local data problem into a remote 422,
+// and because the agent rejects the request before starting a run it never sends
+// a progress callback — so the failure reached staff as silence. Callers must
+// fail locally on null, with a reason a human can act on.
+export function dobToMMDDYYYY(rawDob: unknown): string | null {
+  const iso = normalizeExcelDate(rawDob); // → YYYY-MM-DD | null
+  if (!iso) return null;
+  const [yyyy, mm, dd] = iso.split("-");
+  return `${mm}/${dd}/${yyyy}`;
+}
+
+// Reduce a TN agent error body to something safe to store and log.
+//
+// PHI SAFETY: FastAPI's 422 body echoes the REJECTED VALUE back to us — each
+// error carries `input` (and can carry `ctx`) holding the exact field value that
+// failed, e.g. a date of birth. The body is therefore NEVER stored or logged
+// verbatim. Only `loc` (the field path) and `msg` (the constraint, e.g. "String
+// should match pattern ...") are extracted; `input` and `ctx` are dropped. A body
+// we cannot positively parse into those two fields is discarded entirely and only
+// the status code is kept, since we cannot prove such a body is PHI-free.
+export function summarizeAgentError(status: number, body: string): string {
+  try {
+    const detail = (JSON.parse(body) as { detail?: unknown })?.detail;
+    if (Array.isArray(detail)) {
+      const fields = detail
+        .map((d) => {
+          const e = (d ?? {}) as { loc?: unknown; msg?: unknown };
+          const loc = Array.isArray(e.loc)
+            ? e.loc.filter((part) => typeof part === "string").join(".")
+            : "";
+          const msg = typeof e.msg === "string" ? e.msg : "";
+          return loc && msg ? `${loc}: ${msg}` : loc || msg;
+        })
+        .filter(Boolean);
+      if (fields.length > 0) {
+        return `TN agent rejected the request (HTTP ${status}) — ${fields.join("; ")}`.slice(0, 500);
+      }
+    }
+    if (typeof detail === "string") {
+      return `TN agent rejected the request (HTTP ${status}) — ${detail}`.slice(0, 500);
+    }
+  } catch {
+    /* not JSON, or not the shape we know — fall through to status only */
   }
-  if (typeof rawDob === "string" && rawDob.length > 0) {
-    const isoMatch = rawDob.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (isoMatch) return `${isoMatch[2]}/${isoMatch[3]}/${isoMatch[1]}`;
-    return rawDob;
-  }
-  return "";
+  return `TN agent rejected the request (HTTP ${status}). See agent logs for detail.`;
+}
+
+// True when a DOB field holds something that was entered but cannot be parsed —
+// as opposed to simply being absent. Lets callers tell "no DOB on this contact"
+// apart from "the DOB is in a format we do not understand", which need different
+// messages to staff.
+export function isUnparseableDob(rawDob: unknown): boolean {
+  if (rawDob === null || rawDob === undefined) return false;
+  if (String(rawDob).trim() === "") return false;
+  return dobToMMDDYYYY(rawDob) === null;
 }
 
 // Whether a contact has enough intake data to generate an intake PDF.
@@ -5727,18 +5772,20 @@ export async function registerRoutes(
           const fullName = (snapshot.name as string) || "";
           const { firstName, lastName } = parseName(fullName);
 
-          // Convert DOB: Excel serial → MM/DD/YYYY, ISO string → MM/DD/YYYY
-          let dob = "";
+          // Convert DOB to MM/DD/YYYY via the shared converter. This used to be an
+          // inline copy that recognised only Excel serials and hyphenated ISO and
+          // passed anything else through verbatim — the same defect that reached
+          // the V2 agent as a 422. An unrecognised DOB is now rejected here; an
+          // absent one still falls through to the critical-field check below.
           const rawDob = snapshot.patientDob;
-          if (typeof rawDob === "number" && rawDob > 15000 && rawDob < 80000) {
-            dob = excelSerialToMMDDYYYY(rawDob);
-          } else if (typeof rawDob === "string" && rawDob.length > 0) {
-            const isoMatch = rawDob.match(/^(\d{4})-(\d{2})-(\d{2})/);
-            if (isoMatch) {
-              dob = `${isoMatch[2]}/${isoMatch[3]}/${isoMatch[1]}`;
-            } else {
-              dob = rawDob;
-            }
+          const dob = dobToMMDDYYYY(rawDob) ?? "";
+          if (isUnparseableDob(rawDob)) {
+            // Distinguish "unreadable" from "absent" — the message below would
+            // otherwise say the DOB is missing when it is present but malformed.
+            const reason = "Date of birth is in an unrecognised format — correct it on the contact record (MM/DD/YYYY) and retry";
+            console.error(`[TN] Pre-validation failed for contact ${contactId}: ${reason}`);
+            await updateTnStatus(contactId, "failed", { failureReason: reason });
+            return;
           }
 
           const payload: TnAgentPayload = {
@@ -6040,7 +6087,23 @@ export async function registerRoutes(
 
       // ---- Build the V2 payload ----
       const { firstName, lastName } = parseName(contactName);
-      const dob = dobToMMDDYYYY(contact.patientDob);
+      // Reject an unrecognised DOB HERE rather than letting it reach the agent.
+      // The agent validates dob against ^\d{2}/\d{2}/\d{4}$ and rejects a bad one
+      // with a 422 BEFORE starting a run — so no progress callback is ever sent
+      // and the UI ages the run out as "No response from TN". Failing locally
+      // gives staff a reason they can act on. No DOB value is logged or stored.
+      if (isUnparseableDob(contact.patientDob)) {
+        const reason =
+          "Date of birth on this contact is in a format the TN agent cannot accept. " +
+          "Correct the DOB on the contact record (MM/DD/YYYY), then retry.";
+        await logActivity({
+          type: "tn_schedule_failed", actorEmail: userEmail, entityType: "contact",
+          entityId: String(contactId), entityName: contactName,
+          metadata: { contactId, failureReason: reason, field: "patientDob" },
+        });
+        return res.status(422).json({ error: reason });
+      }
+      const dob = dobToMMDDYYYY(contact.patientDob) ?? "";
       // Drive the alert text AND the discrete appointment_modality from the
       // EXPLICIT modality (not contact.modality), so the silent else→"In-Person"
       // default inside computeAppointmentAlertText is unreachable on the modal path.
@@ -6125,10 +6188,32 @@ export async function registerRoutes(
         signal: controller.signal,
       })
         .then(async (r) => {
-          // Optional: if V2 replies synchronously (fast failure before the edge
-          // cut), log it for diagnostics — but the callback is the source of truth.
+          // If V2 replies synchronously (fast failure before the edge cut), log it
+          // for diagnostics — but for a run that STARTED, the callback is still the
+          // source of truth and nothing below changes that.
           const text = await r.text().catch(() => "");
-          console.log(`[tn-v2] run ${runId}: V2 sync reply HTTP ${r.status} (callbacks are authoritative): ${text.slice(0, 200)}`);
+          if (r.ok) {
+            console.log(`[tn-v2] run ${runId}: V2 sync reply HTTP ${r.status} (callbacks are authoritative)`);
+            return;
+          }
+
+          // Non-2xx means the agent REJECTED the request outright (schema 422,
+          // concurrency 429, ...). No run started, so no progress callback will
+          // ever arrive — computeTnRun would age this out as "No response from TN
+          // (the run may have failed or timed out)". Write the terminal failure
+          // here so staff see the real reason instead of silence.
+          //
+          // The body is summarised, never stored raw: a 422 echoes the rejected
+          // field VALUE back in `input`. See summarizeAgentError.
+          const reason = summarizeAgentError(r.status, text);
+          console.error(`[tn-v2] run ${runId}: ${reason}`);
+          await logActivity({
+            type: "tn_schedule_failed", actorEmail: "tn-agent", entityType: "contact",
+            entityId: String(contactId), entityName: contactName,
+            metadata: { contactId, runId, phase: "dispatch", failureReason: reason },
+          }).catch((logErr) => {
+            console.error(`[tn-v2] run ${runId}: could not log dispatch failure:`, logErr);
+          });
         })
         .catch((err) => {
           const cause = (err as { cause?: { code?: string } })?.cause;
