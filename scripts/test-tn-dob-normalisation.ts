@@ -5,7 +5,7 @@
  *
  * NOTE: every date below is synthetic. No patient data appears in this file.
  */
-import { dobToMMDDYYYY, isUnparseableDob, summarizeAgentError } from "../server/routes";
+import { dobToMMDDYYYY, isUnparseableDob, summarizeAgentError, normalizeSex, validateAgentPayload } from "../server/routes";
 
 // The exact pattern the TN agent validates `dob` against
 // (shared/schemas/therapy_notes_v2.py).
@@ -121,6 +121,96 @@ check(
   summarizeAgentError(429, JSON.stringify({ detail: "Another patient creation is already in progress" }))
     .includes("already in progress"),
 );
+
+
+// ---------------------------------------------------------------------------
+console.log("\n[5] DOB plausibility — a shape-valid date that is not a birth date");
+// A dropped leading digit (1981 -> 0981) parses, round-trips through Date, and
+// satisfies the agent's MM/DD/YYYY pattern. TherapyNotes rejects it at SAVE,
+// long after the run has started, so it must be stopped here.
+for (const [label, input] of [
+  ["year 0981 (dropped leading digit)", "0981-05-01"],
+  ["year 0001",                         "0001-01-01"],
+  ["year 1899 (below the floor)",       "1899-12-31"],
+  ["a future date",                     "2099-01-01"],
+] as Array<[string, unknown]>) {
+  check(`${label} -> null`, dobToMMDDYYYY(input) === null, `got ${JSON.stringify(dobToMMDDYYYY(input))}`);
+  check(`${label} IS flagged unparseable`, isUnparseableDob(input) === true);
+}
+for (const [label, input, expected] of [
+  ["year 1900 (the floor, inclusive)", "1900-01-01", "01/01/1900"],
+  ["an ordinary adult DOB",           "1981-05-01", "05/01/1981"],
+  ["a newborn (today)",               new Date().toISOString().slice(0, 10), null],
+] as Array<[string, string, string | null]>) {
+  const got = dobToMMDDYYYY(input);
+  if (expected) check(`${label} -> ${expected}`, got === expected, `got ${JSON.stringify(got)}`);
+  else check(`${label} is accepted`, got !== null && AGENT_DOB_RE.test(got), `got ${JSON.stringify(got)}`);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n[6] normalizeSex — map the unambiguous, reject the rest");
+for (const [input, expected] of [
+  ["Male", "Male"], ["male", "Male"], ["MALE", "Male"], ["  Male  ", "Male"], ["m", "Male"], ["M", "Male"],
+  ["Female", "Female"], ["female", "Female"], ["FEMALE", "Female"], ["f", "Female"], ["F", "Female"],
+] as Array<[string, string]>) {
+  check(`${JSON.stringify(input)} -> ${expected}`, normalizeSex(input) === expected, `got ${normalizeSex(input)}`);
+}
+// Never guessed. A gender identity outside the administrative binary is real
+// data; coercing it would write a wrong fact into a clinical record.
+for (const input of ["", "   ", null, undefined, "Other", "Non-binary", "Nonbinary",
+                     "Unknown", "X", "Prefer not to say", "Intersex", "Transgender",
+                     "Man", "Woman", "1", "0", "MF"]) {
+  check(`${JSON.stringify(input)} -> null (rejected, never guessed)`, normalizeSex(input) === null,
+        `got ${normalizeSex(input)}`);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n[7] validateAgentPayload — mirrors the agent schema, leaks no values");
+const SENTINEL = "SENSITIVE-VALUE-9999";
+const goodPayload = {
+  first_name: "A", last_name: "B", dob: "05/01/1981",
+  address: "1 Example St", zip: "87031", sex: "Male",
+  email: "", phone: "", rfs_url: "",
+  intake_pdf_url: "https://example.test/i.pdf",
+  snapshot_pdf_url: "https://example.test/s.pdf",
+  appointment_date: "9/17/2026", appointment_time: "8:00 AM",
+  appointment_alert_text: "New Individual In-Person Therapy CRM",
+  appointment_modality: "In Person",
+  clinician_name: "Example Clinician",
+  contact_id: 1, run_id: "r", callback_url: "https://example.test/cb",
+} as Parameters<typeof validateAgentPayload>[0];
+
+check("a complete payload has no problems", validateAgentPayload(goodPayload).length === 0,
+      JSON.stringify(validateAgentPayload(goodPayload)));
+
+const cases: Array<[string, Record<string, unknown>, string]> = [
+  ["empty sex (the live failure)",  { sex: "" },                        "sex"],
+  ["unmapped sex",                  { sex: SENTINEL },                  "sex"],
+  ["empty dob",                     { dob: "" },                        "dob"],
+  ["empty address",                 { address: "" },                    "address"],
+  ["over-long address",             { address: "x".repeat(201) },       "address"],
+  ["empty zip",                     { zip: "" },                        "zip"],
+  ["4-digit zip",                   { zip: "7031" },                    "zip"],
+  ["empty first name",              { first_name: "" },                 "first_name"],
+  ["over-long first name",          { first_name: "x".repeat(101) },    "first_name"],
+  ["empty last name",               { last_name: "" },                  "last_name"],
+  ["empty clinician",               { clinician_name: "" },             "clinician_name"],
+  ["empty alert text",              { appointment_alert_text: "" },     "appointment_alert_text"],
+  ["bad appointment date",          { appointment_date: "2026-09-17" }, "appointment_date"],
+  ["bad appointment time",          { appointment_time: "0800" },       "appointment_time"],
+  ["hyphenated modality",           { appointment_modality: "In-Person" }, "appointment_modality"],
+  ["non-http pdf url",              { intake_pdf_url: "file:///x.pdf" }, "intake_pdf_url"],
+];
+for (const [label, patch, field] of cases) {
+  const out = validateAgentPayload({ ...goodPayload, ...patch } as typeof goodPayload);
+  check(`${label} is caught`, out.length > 0, JSON.stringify(out));
+  check(`${label} names the field (${field})`, out.some((m) => m.includes(field)), JSON.stringify(out));
+  check(`${label} leaks no value`, !out.join(" ").includes(SENTINEL) && !out.join(" ").includes("x".repeat(50)),
+        JSON.stringify(out));
+}
+// The whole point: several problems at once are all reported, not just the first.
+const multiProblems = validateAgentPayload({ ...goodPayload, sex: "", zip: "", address: "" } as typeof goodPayload);
+check("multiple problems are all reported", multiProblems.length === 3, JSON.stringify(multiProblems));
 
 // ---------------------------------------------------------------------------
 console.log(`\n${fail === 0 ? "PASS" : "FAIL"} — ${pass} passed, ${fail} failed`);
