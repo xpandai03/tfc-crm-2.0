@@ -480,6 +480,10 @@ function normalizeZip5(zip: string | null | undefined): string {
   return digits.slice(0, 5);
 }
 
+// Oldest plausible year of birth. Anything earlier is a data-entry error (a
+// dropped leading digit), not a patient.
+const MIN_PLAUSIBLE_DOB_YEAR = 1900;
+
 // Convert a stored DOB to the MM/DD/YYYY form the TN agent's schema requires
 // (it validates against ^\d{2}/\d{2}/\d{4}$).
 //
@@ -499,7 +503,86 @@ export function dobToMMDDYYYY(rawDob: unknown): string | null {
   const iso = normalizeExcelDate(rawDob); // → YYYY-MM-DD | null
   if (!iso) return null;
   const [yyyy, mm, dd] = iso.split("-");
+  // Plausibility, not just shape. A year like 0981 (a dropped leading digit)
+  // parses cleanly, round-trips through Date, and satisfies the agent's
+  // ^\d{2}/\d{2}/\d{4}$ pattern — so it sails through every format check and is
+  // only rejected by TherapyNotes itself, at the save step, long after the run
+  // has started. Bound it here instead.
+  const year = Number(yyyy);
+  if (!Number.isFinite(year) || year < MIN_PLAUSIBLE_DOB_YEAR) return null;
+  if (iso > new Date().toISOString().slice(0, 10)) return null; // not in the future
   return `${mm}/${dd}/${yyyy}`;
+}
+
+// The agent's `sex` field is Literal["Male", "Female"] — TherapyNotes' New
+// Patient form offers exactly those two radio options for ADMINISTRATIVE sex.
+//
+// Only unambiguous spellings of those two values are mapped. Everything else —
+// empty, "Other", "Non-binary", "Unknown", "X", "Prefer not to say" — returns
+// null and is REJECTED rather than guessed. A gender identity outside the
+// administrative binary is real data, not a formatting problem, and picking one
+// of two values for it would write a wrong fact into a clinical record.
+const SEX_ALIASES: Record<string, "Male" | "Female"> = {
+  male: "Male", m: "Male",
+  female: "Female", f: "Female",
+};
+export function normalizeSex(raw: unknown): "Male" | "Female" | null {
+  if (raw === null || raw === undefined) return null;
+  const key = String(raw).trim().toLowerCase();
+  if (!key) return null;
+  return SEX_ALIASES[key] ?? null;
+}
+
+// Mirror of the agent's input schema (shared/schemas/therapy_notes_v2.py), so a
+// payload that the agent would reject is caught HERE, where the reason can be
+// put in front of staff, instead of coming back as a 422 after the CRM has
+// already told the user a run started.
+//
+// Returns one human-readable problem per offending field. Values are NEVER
+// included — only the field name and what it needs.
+const AGENT_DOB_RE = /^\d{2}\/\d{2}\/\d{4}$/;
+const AGENT_ZIP_RE = /^\d{5}$/;
+const AGENT_APPT_DATE_RE = /^\d{1,2}\/\d{1,2}\/\d{4}$/;
+const AGENT_APPT_TIME_RE = /^\d{1,2}:\d{2}\s*[AaPp][Mm]$/;
+
+export function validateAgentPayload(p: TnV2AgentPayload): string[] {
+  const problems: string[] = [];
+  const req = (v: string, field: string, label: string, max?: number) => {
+    if (!v || !v.trim()) { problems.push(`${label} is missing (${field})`); return; }
+    if (max && v.length > max) problems.push(`${label} is longer than ${max} characters (${field})`);
+  };
+
+  req(p.first_name, "first_name", "First name", 100);
+  req(p.last_name, "last_name", "Last name", 100);
+  req(p.address, "address", "Street address", 200);
+  req(p.clinician_name, "clinician_name", "Clinician", undefined);
+  req(p.appointment_alert_text, "appointment_alert_text", "Appointment alert text", undefined);
+
+  if (!AGENT_DOB_RE.test(p.dob)) {
+    problems.push("Date of birth is missing or not a usable date (dob) — it must be a real date in MM/DD/YYYY form");
+  }
+  if (!AGENT_ZIP_RE.test(p.zip)) {
+    problems.push("ZIP code is missing or not 5 digits (zip)");
+  }
+  if (p.sex !== "Male" && p.sex !== "Female") {
+    problems.push(
+      "Administrative sex is missing or not one TherapyNotes accepts (sex) — " +
+      "it must be Male or Female on the contact record"
+    );
+  }
+  if (!AGENT_APPT_DATE_RE.test(p.appointment_date)) {
+    problems.push("Appointment date is not in m/d/yyyy form (appointment_date)");
+  }
+  if (!AGENT_APPT_TIME_RE.test(p.appointment_time)) {
+    problems.push("Appointment time is not in h:mm am/pm form (appointment_time)");
+  }
+  if (p.appointment_modality !== "Telehealth" && p.appointment_modality !== "In Person") {
+    problems.push("Appointment modality must be Telehealth or In Person (appointment_modality)");
+  }
+  for (const [field, value] of [["intake_pdf_url", p.intake_pdf_url], ["snapshot_pdf_url", p.snapshot_pdf_url]] as const) {
+    if (!/^https?:\/\//i.test(value || "")) problems.push(`${field} must be an http(s) URL`);
+  }
+  return problems;
 }
 
 // Reduce a TN agent error body to something safe to store and log.
@@ -5795,7 +5878,7 @@ export async function registerRoutes(
             email: (snapshot.email as string) || "",
             address: (snapshot.streetAddress as string) || "",
             zip: (snapshot.zipCode as string) || "",
-            sex: (snapshot.gender as string) || "",
+            sex: normalizeSex(snapshot.gender) ?? "",
             eil: (snapshot.insuranceId as string) || "",
             phone: (snapshot.phone as string) || "",
             rfs_url: (snapshot.rfsLink as string) || "",
@@ -5808,6 +5891,13 @@ export async function registerRoutes(
           if (!payload.first_name) missingFields.push("first_name");
           if (!payload.last_name) missingFields.push("last_name");
           if (!payload.dob) missingFields.push("dob");
+          // V1's schema constrains sex the same way V2's does
+          // (Literal["Male","Female"]). normalizeSex leaves it empty when the
+          // stored value is absent or outside that pair, so catch it here rather
+          // than letting the agent 422 on it.
+          if (!payload.sex) missingFields.push("sex (must be Male or Female)");
+          if (!payload.address) missingFields.push("address");
+          if (!/^\d{5}$/.test(payload.zip || "")) missingFields.push("zip (5 digits)");
 
           if (missingFields.length > 0) {
             const reason = `Missing critical fields: ${missingFields.join(", ")}`;
@@ -6087,22 +6177,6 @@ export async function registerRoutes(
 
       // ---- Build the V2 payload ----
       const { firstName, lastName } = parseName(contactName);
-      // Reject an unrecognised DOB HERE rather than letting it reach the agent.
-      // The agent validates dob against ^\d{2}/\d{2}/\d{4}$ and rejects a bad one
-      // with a 422 BEFORE starting a run — so no progress callback is ever sent
-      // and the UI ages the run out as "No response from TN". Failing locally
-      // gives staff a reason they can act on. No DOB value is logged or stored.
-      if (isUnparseableDob(contact.patientDob)) {
-        const reason =
-          "Date of birth on this contact is in a format the TN agent cannot accept. " +
-          "Correct the DOB on the contact record (MM/DD/YYYY), then retry.";
-        await logActivity({
-          type: "tn_schedule_failed", actorEmail: userEmail, entityType: "contact",
-          entityId: String(contactId), entityName: contactName,
-          metadata: { contactId, failureReason: reason, field: "patientDob" },
-        });
-        return res.status(422).json({ error: reason });
-      }
       const dob = dobToMMDDYYYY(contact.patientDob) ?? "";
       // Drive the alert text AND the discrete appointment_modality from the
       // EXPLICIT modality (not contact.modality), so the silent else→"In-Person"
@@ -6127,7 +6201,7 @@ export async function registerRoutes(
         dob,
         address: contact.streetAddress || "",
         zip: normalizeZip5(contact.zipCode),
-        sex: contact.gender || "",
+        sex: normalizeSex(contact.gender) ?? "",
         email: contact.email || "",
         phone: contact.phone || "",
         rfs_url: contact.rfsLink || "",
@@ -6147,16 +6221,18 @@ export async function registerRoutes(
       // not in the body, so nothing to mask here).
       console.log(`[tn-v2 trigger] Sending payload to V2: contact=${contactId} run=${runId} fields=${Object.keys(payload).length}`);
 
-      // Pre-validate critical fields (mirrors V1)
-      const missing: string[] = [];
-      if (!payload.first_name) missing.push("first_name");
-      if (!payload.last_name) missing.push("last_name");
-      if (!payload.dob) missing.push("dob");
-      if (missing.length > 0) {
-        const reason = `Missing critical fields: ${missing.join(", ")}`;
+      // Pre-validate the WHOLE payload against the agent's schema, not just the
+      // three fields this used to check. Every constrained field is verified
+      // here, so a value the agent would reject fails locally — with a reason
+      // naming the field — instead of arriving as a 422 after the UI has already
+      // reported that a run started. No field VALUES appear in the message.
+      const problems = validateAgentPayload(payload);
+      if (problems.length > 0) {
+        const reason = `Cannot send to TherapyNotes — ${problems.join("; ")}. Correct the contact record and retry.`;
         await logActivity({
           type: "tn_schedule_failed", actorEmail: userEmail, entityType: "contact",
-          entityId: String(contactId), entityName: contactName, metadata: { contactId, failureReason: reason },
+          entityId: String(contactId), entityName: contactName,
+          metadata: { contactId, failureReason: reason, fields: problems.length },
         });
         return res.status(422).json({ error: reason });
       }
