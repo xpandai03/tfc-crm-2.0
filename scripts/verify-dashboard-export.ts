@@ -149,7 +149,7 @@ for (const scope of ["pipeline", "waitlist"] as CardScope[]) {
     const hits = allText.filter((t) => re.test(t));
     ok(`  workbook clean of ${label}`, hits.length === 0, hits.slice(0, 2).join(" | "));
   }
-  // Any insurance string present must be one of the 16 canonical names.
+  // Any insurance string present must be one of the canonical names.
   const insuranceLike = allText.filter((t) =>
     /insurance|tricare|bcbs|blue ?cross|molina|presbyterian|uhc|united/i.test(t));
   // Sheet names and headings legitimately contain the word "Insurance"; only a

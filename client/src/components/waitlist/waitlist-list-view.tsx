@@ -457,7 +457,7 @@ export function WaitlistListView({
     searchQuery,
   ]);
 
-  // Insurance options are the CANONICAL 16, not values derived from the data.
+  // Insurance options are the CANONICAL list, not values derived from the data.
   // Deriving from data would resurface the ~114 legacy strings as filter
   // choices, which is exactly what this batch removes. Records holding a legacy
   // payer are reachable under "All Insurances" only.

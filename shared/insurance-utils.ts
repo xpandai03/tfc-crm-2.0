@@ -44,6 +44,7 @@ export const TFC_ACCEPTED_INSURANCES_RAW = [
   "UHC Centennial",
   "ComPsych",
   "Self-Pay (Cash / Out-of-Pocket)",
+  "Curative", // added 2026-09-08 (commercial)
 ] as const;
 
 /**
@@ -206,6 +207,12 @@ export const INSURANCE_NORMALIZATION_MAP: Record<string, string> = {
   "partners direct": "Partners Direct Health",
   "partners direct health": "Partners Direct Health",
 
+  // 18. Curative (commercial; added 2026-09-08). No Turquoise Care sibling, so
+  // no qualifier rule is needed — the bare name is the whole bucket.
+  "curative": "Curative",
+  "curative health": "Curative",
+  "curative insurance": "Curative",
+
   // Rejected insurances (not accepted by TFC)
   "healthscope": "Not Accepted",
   "healthscope benefits": "Not Accepted",
@@ -239,6 +246,7 @@ export const ACCEPTED_INSURANCES = [
   "Health Smart",
   "Carelon",
   "Partners Direct Health",
+  "Curative",
 ] as const;
 
 export type InsuranceCategory = typeof ACCEPTED_INSURANCES[number] | "Unknown";

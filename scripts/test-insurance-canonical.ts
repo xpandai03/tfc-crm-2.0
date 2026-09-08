@@ -28,13 +28,20 @@ const eq = (l: string, a: unknown, e: unknown) => {
 const ok = (l: string, c: boolean) => { if (!c) { console.error(`FAIL ${l}`); fails++; } };
 
 // ---- the list, verbatim from the client ------------------------------------
-eq("exactly 16 selectable payers", CANONICAL_INSURANCES.length, 16);
+// 16 on 2026-08-14; "Curative" (commercial) added 2026-09-08 -> 17.
+eq("exactly 17 selectable payers", CANONICAL_INSURANCES.length, 17);
 eq("list matches the client's canonical set", [...CANONICAL_INSURANCES], [
   "Aetna", "BlueCross BlueShield Commercial", "BlueCross BlueShield Turquoise Care",
-  "ChampVA", "ComPsych", "Medicaid", "Medicare", "Molina Commercial",
+  "ChampVA", "ComPsych", "Curative", "Medicaid", "Medicare", "Molina Commercial",
   "Molina Turquoise Care", "Presbyterian Commercial", "Presbyterian Turquoise Care",
   "Self-Pay", "UHC Commercial", "UHC Turquoise Care", "Unknown", "VACCN",
 ]);
+// Curative is selectable, and is NOT abbreviated (short enough to render whole).
+ok("Curative is selectable", isCanonicalInsurance("Curative"));
+ok("Curative is not legacy", !isLegacyInsurance("Curative"));
+eq("Curative renders in full", abbreviateInsurance("Curative"), "Curative");
+ok("Curative matches itself exactly", matchesInsurance("Curative", "Curative"));
+ok("a Curative-like stray does NOT match", !matchesInsurance("Curative Health", "Curative"));
 
 // ---- retired values are NOT selectable --------------------------------------
 for (const retired of ["Tricare", "Tricare West", "EAP", "UHC Centennial", "Molina",
@@ -79,10 +86,21 @@ ok("null matches nothing", CANONICAL_INSURANCES.every((c) => !matchesInsurance(n
 ok("abbreviations are not matchable", !matchesInsurance("BCBS TC", "BlueCross BlueShield Turquoise Care"));
 
 // ---- scope guards: reporting + matching must NOT have been repointed ---------
-ok("insurance-utils ACCEPTED_INSURANCES still intact (18, reporting/matching)",
-   ACCEPTED_INSURANCES.length === 18);
-ok("ACCEPTED_INSURANCES still carries Tricare (legacy records stay reportable)",
-   (ACCEPTED_INSURANCES as readonly string[]).includes("Tricare"));
+// This used to assert a fixed length (18). A COUNT can't tell a repoint apart
+// from a legitimate addition, and it broke the moment the client added a payer.
+// Assert the invariant it was actually protecting instead: the reporting list is
+// a DIFFERENT set from the selection list, and it still carries every value that
+// was retired from selection, so historical records stay reportable.
+const acceptedSet = new Set<string>(ACCEPTED_INSURANCES as readonly string[]);
+for (const retained of ["Tricare", "UHC Centennial", "Molina", "Carelon",
+                        "Partners Direct Health", "Health Smart"]) {
+  ok(`ACCEPTED_INSURANCES still carries ${retained} (legacy records stay reportable)`,
+     acceptedSet.has(retained));
+}
+ok("ACCEPTED_INSURANCES was not repointed at CANONICAL_INSURANCES",
+   CANONICAL_INSURANCES.some((c) => !acceptedSet.has(c)));
+// A payer the client adds belongs in BOTH lists: selection AND reporting/matching.
+ok("Curative is in the reporting/matching list too", acceptedSet.has("Curative"));
 
 const dbSrc = readFileSync(join(process.cwd(), "server", "sync", "db.ts"), "utf8");
 // The export predicate must use the shared canonical matcher...
@@ -94,5 +112,5 @@ ok("referral report still uses normalizeInsurance", /normalizeInsurance\(insuran
 ok("sync upserts still write insurance_payer (not CRM-owned)",
    /insurance_payer = EXCLUDED\.insurance_payer/.test(dbSrc));
 
-if (fails === 0) console.log("PASS — canonical insurance: 16 options, abbreviations, exact-match filter, scope guards OK");
+if (fails === 0) console.log(`PASS — canonical insurance: ${CANONICAL_INSURANCES.length} options, abbreviations, exact-match filter, scope guards OK`);
 else { console.error(`\n${fails} FAILURES`); process.exit(1); }

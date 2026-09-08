@@ -305,7 +305,7 @@ function UnmappedInsuranceModal({
         <DialogHeader>
           <DialogTitle className="text-base">{title}</DialogTitle>
           <p className="text-xs text-muted-foreground">
-            These records hold an insurance value that is not one of the 16 approved
+            These records hold an insurance value that is not one of the approved
             payers, so they match no filter elsewhere in the CRM. Open a contact to
             correct it — this list is read-only.
           </p>
