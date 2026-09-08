@@ -25,7 +25,8 @@
     "test:dashboard-scopes": "tsx --tsconfig tsconfig.test.json scripts/verify-dashboard-scopes.ts",
     "test:dashboard-export": "tsx --tsconfig tsconfig.test.json scripts/verify-dashboard-export.ts",
     "test:report-delivery": "tsx --tsconfig tsconfig.test.json scripts/verify-report-delivery.ts",
-    "test:tn-dob": "tsx scripts/test-tn-dob-normalisation.ts"
+    "test:tn-dob": "tsx scripts/test-tn-dob-normalisation.ts",
+    "test:tn-clinician": "tsx scripts/test-tn-clinician-name.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1034.0",
