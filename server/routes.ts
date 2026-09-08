@@ -34,6 +34,7 @@ import type { TnAgentPayload, TnV2AgentPayload, TnAgentResponse } from "./therap
 import { saveEmailSnapshot, getEmailSnapshot, getSnapshotsForContact, hasSnapshotForTemplate, getLatestSnapshotForTemplate } from "./email-snapshots";
 import { createAssignment, getAssignmentsByContact, deleteAssignment, getLatestAssignmentsByAllContacts, getLatestAssignmentsWithDates, getLatestAssignment, countActiveAssignmentsForProvider } from "./assignments/db";
 import { normalizeProviderName } from "./providers/normalize-name";
+import { PROVIDER_NAME_CORRECTIONS, toTherapyNotesClinicianName } from "./providers/tn-clinician-name";
 import {
   syncContacts as syncContactsToDb,
   recordSyncError,
@@ -3325,13 +3326,12 @@ export async function registerRoutes(
         let name = nameMatch ? nameMatch[1].trim() : nameWithCredentials;
         let credentials = nameMatch ? nameMatch[2].trim() : "";
 
-        // Correct names that are in "Last First" format or abbreviated in the spreadsheet
-        const nameCorrections: Record<string, string> = {
-          "Neuhart Jessica": "Jessica Neuhart",
-          "Ty Jones": "Tyra Jones",
-        };
-        if (nameCorrections[name]) {
-          name = nameCorrections[name];
+        // Correct names that are in "Last First" format or abbreviated in the
+        // spreadsheet. The map now lives in server/providers/tn-clinician-name.ts
+        // because it is also the source of the TherapyNotes-facing name: this
+        // correction's INPUT is the form TN renders, its OUTPUT is what staff see.
+        if (PROVIDER_NAME_CORRECTIONS[name]) {
+          name = PROVIDER_NAME_CORRECTIONS[name];
         }
 
         // Correct credential typos. Keyed by corrected name → corrected credential.
@@ -6195,6 +6195,13 @@ export async function registerRoutes(
       const runId = randomUUID();
       const callbackUrl = `${baseUrl}/api/internal/tn-progress/${contactId}`;
 
+      // Separate the two jobs the provider name was doing: staff keep seeing the
+      // CRM display name everywhere, the agent receives the name TN will match.
+      const tnClinicianName = toTherapyNotesClinicianName(provider);
+      if (tnClinicianName !== provider) {
+        console.log(`[tn-v2] clinician_name mapped to the TherapyNotes form for contact ${contactId}: "${provider}" -> "${tnClinicianName}"`);
+      }
+
       const payload: TnV2AgentPayload = {
         first_name: firstName,
         last_name: lastName,
@@ -6211,7 +6218,10 @@ export async function registerRoutes(
         appointment_time: apptTime,
         appointment_alert_text: alertText,
         appointment_modality: appointmentModality,
-        clinician_name: provider,
+        // The name TherapyNotes renders, NOT the corrected display name. For
+        // every provider without an explicit TN-facing name this is `provider`
+        // unchanged. See server/providers/tn-clinician-name.ts.
+        clinician_name: tnClinicianName,
         contact_id: contactId,
         run_id: runId,
         callback_url: callbackUrl,
