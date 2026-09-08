@@ -51,6 +51,12 @@ expect("Presbyterian Turquoise Care", "Presbyterian Turquoise Care");        // 
 expect("Magellan Turquoise Care", "Presbyterian Turquoise Care");            // turquoise + NO bcbs → stays Presbyterian
 expect("Tricare West", "Tricare");
 
+// (c2) Curative (added 2026-09-08, commercial) — resolves for reports + matching:
+expect("Curative", "Curative");
+expect("curative", "Curative");
+expect("Curative Health", "Curative");
+expect("Curative Insurance", "Curative");
+
 // (d) Excluded / niche — must stay Unknown (VA pending human decision; Other/Cigna not accepted):
 expect("VA", "Unknown");
 expect("Veterans Affairs", "Unknown");

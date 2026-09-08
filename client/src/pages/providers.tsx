@@ -660,7 +660,7 @@ const AGE_GROUP_SPECIALTIES: Record<string, string[]> = {
   "Children (0-5)": ["Anxiety", "Depression", "Family", "Grief", "Trauma"],
 };
 
-// Provider accepted-insurances options: the canonical 16, FULL names (this is a
+// Provider accepted-insurances options: the canonical list, FULL names (this is a
 // selection list, not a dense column, so no abbreviations). Sourced from
 // @shared/insurance so it can't drift from the contact-card and waitlist lists
 // the way this hand-maintained copy did — it still had Tricare, UHC Centennial,

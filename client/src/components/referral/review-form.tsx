@@ -384,7 +384,7 @@ export function ReviewForm({ value, onChange, onSubmit, onStartOver, isSubmittin
       <Section title="Referral">
         <div className="grid grid-cols-2 gap-3">
           <Field label={labelFor("insurancePayer")}>
-            {/* Canonical 16 only (@shared/insurance). Free text here is what
+            {/* Canonical list only (@shared/insurance). Free text here is what
                 produced "BCBS", "BCBS Comm", "Blue cross" etc. as separate
                 buckets. "Unknown" is one of the 16, so it isn't appended. */}
             <Select

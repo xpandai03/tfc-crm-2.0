@@ -102,7 +102,7 @@ export function buildWorkbookFromSummary(
       : "All — every contact on record, including closed"],
     ["Pipeline definition", `Pipeline = ${PIPELINE_BUCKETS.join(" + ")}`],
     ["Counting rule", "Per contact, by first-choice modality (P1) only — nobody is counted twice."],
-    ["Other / Unmapped", "Records whose insurance value is not one of the 16 approved payers. Shown, never dropped, so columns reconcile."],
+    ["Other / Unmapped", "Records whose insurance value is not one of the approved payers. Shown, never dropped, so columns reconcile."],
     [],
     ["HEADLINE FIGURES"],
     ["All contacts on record", summary.totals.all],

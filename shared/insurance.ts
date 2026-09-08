@@ -1,9 +1,10 @@
 /**
  * Canonical insurance payers (client-issued list, 2026-08-14).
  *
- * THE SELECTION LIST. Every place a human PICKS a payer offers exactly these 16
- * and nothing else: the waitlist filter, the contact-card payer dropdown, the
- * staff referral review form, and the provider accepted-insurances picker.
+ * THE SELECTION LIST. Every place a human PICKS a payer offers exactly these
+ * values and nothing else: the waitlist filter, the contact-card payer
+ * dropdown, the staff referral review form, and the provider
+ * accepted-insurances picker.
  *
  * RETIRED-FROM-SELECTION, RETAINED-FOR-DISPLAY (2026-08-14): the client retired
  * "Tricare" (dropped 2026-08-13, no longer accepted) and anything EAP-related.
@@ -31,8 +32,14 @@
  */
 
 /**
- * The 16 selectable payers, verbatim from the client. Stored and exported in
- * FULL — abbreviations below are a rendering concern only.
+ * The selectable payers, verbatim from the client. 16 on 2026-08-14; the client
+ * added "Curative" (a commercial payer) on 2026-09-08, making 17. Stored and
+ * exported in FULL — abbreviations below are a rendering concern only.
+ *
+ * Curative has no Turquoise Care sibling, so it takes the BARE name — the same
+ * convention as Aetna / ChampVA / ComPsych / VACCN. The "Commercial" suffix
+ * exists only to DISAMBIGUATE payers that also run a Turquoise Care (NM
+ * Medicaid managed care) plan: BCBS, Molina, Presbyterian, UHC.
  *
  * "Unknown" is a real, selectable choice here (staff genuinely don't always
  * know), unlike the residual "Unknown" bucket in insurance-utils.
@@ -43,6 +50,7 @@ export const CANONICAL_INSURANCES = [
   "BlueCross BlueShield Turquoise Care",
   "ChampVA",
   "ComPsych",
+  "Curative",
   "Medicaid",
   "Medicare",
   "Molina Commercial",
@@ -83,7 +91,7 @@ export function abbreviateInsurance(value: string | null | undefined): string {
   return INSURANCE_ABBREVIATIONS[v] ?? v;
 }
 
-/** Is this exactly one of the 16 selectable payers? */
+/** Is this exactly one of the selectable payers? */
 export function isCanonicalInsurance(value: string | null | undefined): boolean {
   const v = (value ?? "").trim();
   return !!v && (CANONICAL_INSURANCES as readonly string[]).includes(v);

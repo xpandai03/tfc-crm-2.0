@@ -1996,7 +1996,7 @@ export default function ContactDetail() {
                       {isEditingIntake ? (
                         <div className="space-y-2">
                           <div>
-                            {/* Canonical 16 only (@shared/insurance). Free text
+                            {/* Canonical list only (@shared/insurance). Free text
                                 here is what produced "BCBS", "BCBS Comm", "Blue
                                 cross" and friends as separate buckets.
                                 A record already holding a LEGACY payer keeps
