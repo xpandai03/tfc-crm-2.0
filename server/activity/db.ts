@@ -39,7 +39,9 @@ export type ActivityType =
   | "tn_schedule_started"
   | "tn_schedule_phase"
   | "tn_schedule_completed"
-  | "tn_schedule_failed";
+  | "tn_schedule_failed"
+  | "survey_attach_completed"
+  | "survey_attach_failed";
 
 export interface LogActivityParams {
   type: ActivityType;
@@ -564,6 +566,20 @@ function formatActivitySummary(
       const reason = String(metadata.failureReason || "unknown error");
       const short = reason.length > 80 ? reason.slice(0, 80) + "…" : reason;
       return `Add to Schedule in TN failed for ${name}: ${short}`;
+    }
+
+    // Survey → chart attach. entityName is the FIXED string "Client survey"
+    // (see attach-runner.ts), so `name` here carries no identity — which is why
+    // these two summaries deliberately do not use it the way the others do.
+    case "survey_attach_completed": {
+      const how = metadata.trigger === "scheduled" ? "overnight run" : "staff";
+      return `Client survey #${String(metadata.submissionId ?? "?")} filed to the chart in TherapyNotes (${how})`;
+    }
+
+    case "survey_attach_failed": {
+      const reason = String(metadata.failureReason || "unknown error");
+      const how = metadata.trigger === "scheduled" ? "overnight run" : "staff";
+      return `Client survey #${String(metadata.submissionId ?? "?")} not filed (${how}): ${reason}`;
     }
 
     case "report_exported": {

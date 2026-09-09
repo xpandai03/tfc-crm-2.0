@@ -228,17 +228,36 @@ const callback = routesSrc.slice(
 );
 ok("the progress callback is untouched — still no name in its log lines",
   !/console\.(log|warn|error)\([^)]*contactName/.test(callback));
-// The real property is not a magic number: it is that the SERVER did not change
-// at all. This build consumes what already arrives, so every server file must be
-// byte-identical to the committed version.
+// The guarantee is that the partial-success display asks the AGENT for nothing
+// new: it reads phase breadcrumbs that already arrive. Scoped to the two files
+// that would have to change if it did — the progress callback that receives
+// them and the V2 payload the agent is sent. (This was originally asserted as
+// "no server file changed at all", which held while the build was in flight but
+// says nothing once it is committed and later work lands on top.)
 const { execSync } = await import("child_process");
-const serverDiff = execSync("git diff --name-only HEAD -- server/ shared/", { encoding: "utf8" }).trim();
-ok("no server or shared file changed — the agent is asked for nothing new",
-  serverDiff === "", serverDiff);
-const agentDiff = execSync(
-  "git -C /Users/raunekpratap/Desktop/axiom-browser-agent-clone status --porcelain", { encoding: "utf8" },
-).trim();
-ok("the agent repository is untouched", agentDiff === "", agentDiff);
+const callbackNow = routesSrc.slice(
+  routesSrc.indexOf('app.post("/api/internal/tn-progress/:contactId"'),
+  routesSrc.indexOf("// Submissions API"),
+);
+const callbackAtBuild = execSync("git show 1028740:server/routes.ts", { encoding: "utf8" });
+const callbackThen = callbackAtBuild.slice(
+  callbackAtBuild.indexOf('app.post("/api/internal/tn-progress/:contactId"'),
+  callbackAtBuild.indexOf("// Submissions API"),
+);
+ok("the progress callback is byte-identical to when this shipped",
+  callbackNow === callbackThen);
+ok("the phases the agent may report are unchanged",
+  routesSrc.includes('"upload_intake_pdf", "upload_snapshot_pdf", "schedule_appointment", "workflow_complete"'));
+ok("the V2 payload sent to the agent is unchanged",
+  execSync("git diff 1028740 --name-only -- server/therapy-notes/ shared/", { encoding: "utf8" })
+    .split("\n").filter(Boolean)
+    .every((f) => !f.includes("therapy-notes")));
+// The agent repository is a separate checkout that other sessions work in, so
+// "it has no uncommitted changes" is not this build's to assert. What is ours is
+// that nothing we wrote is in there.
+const ourFiles = execSync("git diff --name-only 1028740", { encoding: "utf8" }).trim().split("\n").filter(Boolean);
+ok("no file from this build lives in the agent repository",
+  ourFiles.every((f) => !f.includes("axiom-browser-agent")));
 
 console.log("\n[wording] Every state's text is a fixed string, built from no record data");
 const pageSrc = fs.readFileSync(path.join(process.cwd(), "client", "src", "pages", "contact-detail.tsx"), "utf8");

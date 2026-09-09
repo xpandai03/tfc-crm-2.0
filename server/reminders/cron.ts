@@ -6,6 +6,7 @@
 
 import cron from "node-cron";
 import { sendMonthlyReport } from "../reports/send";
+import { runScheduledAttach, ATTACH_BATCH_CAP } from "../survey/attach-runner";
 import { previousPeriod } from "../reports/monthly";
 import {
   getDueReminders,
@@ -208,4 +209,134 @@ export function startMonthlyReportCron(): void {
 /** Manual trigger for the endpoint and for local testing. */
 export async function triggerMonthlyReport(): Promise<void> {
   await runMonthlyReport();
+}
+
+
+// ============================================================================
+// Overnight survey → chart attach
+// ============================================================================
+//
+// THE TIMING IS THE CLIENT'S DECISION, NOT A DEFAULT. The agent serialises: one
+// job at a time, each paying a full login, and a scheduling run takes 45–75
+// seconds. Staff use that all day. So survey attaches never run on their own
+// during working hours — they run once, overnight, when the agent is idle.
+//
+// TIMEZONE IS EXPLICIT AND MUST STAY THAT WAY. The container's clock is UTC, so
+// a bare "0 0 * * *" fires at 17:00 or 18:00 Mountain — the middle of the
+// working day, competing with exactly what this is designed to avoid. The
+// timezone option is the whole point of the expression.
+
+const DEFAULT_ATTACH_SCHEDULE = "0 0 * * *"; // midnight, Mountain
+const ATTACH_TIMEZONE = "America/Denver";
+
+let isAttaching = false;
+
+async function runSurveyAttachBatch(): Promise<void> {
+  // A run that overlaps the previous one would dispatch two jobs at the agent
+  // at once, which is the one thing the batch exists to prevent.
+  if (isAttaching) {
+    console.log("[attach-cron] Skipping — previous run still in progress");
+    return;
+  }
+  isAttaching = true;
+  const startedAt = Date.now();
+  try {
+    const s = await runScheduledAttach();
+    // HEARTBEAT ON EVERY RUN, INCLUDING AN EMPTY ONE. A scheduled job that
+    // silently never fires is a failure mode this project has already been bitten
+    // by, and "no output" is indistinguishable from "never ran". Counts and reason
+    // codes only — no submission content, no identity.
+    const reasons = Object.entries(s.byReason).map(([k, n]) => `${k}=${n}`).join(" ");
+    console.log(
+      `[attach-cron] Run complete in ${Math.round((Date.now() - startedAt) / 1000)}s — ` +
+      `eligible=${s.eligible} attempted=${s.attempted} attached=${s.attached} ` +
+      `failed=${s.failed} deferred=${s.deferred}${reasons ? ` [${reasons}]` : ""}`,
+    );
+    if (s.deferred > 0) {
+      console.log(
+        `[attach-cron] ${s.deferred} eligible submission(s) over the cap of ${ATTACH_BATCH_CAP} — ` +
+        `they will be taken on the next run.`,
+      );
+    }
+  } catch (error) {
+    console.error(
+      "[attach-cron] Unhandled error:",
+      error instanceof Error ? error.message : "unknown",
+    );
+  } finally {
+    isAttaching = false;
+  }
+}
+
+export function startSurveyAttachCron(): void {
+  const schedule = process.env.SURVEY_ATTACH_CRON_SCHEDULE || DEFAULT_ATTACH_SCHEDULE;
+  const isOverridden = Boolean(process.env.SURVEY_ATTACH_CRON_SCHEDULE);
+
+  if (!cron.validate(schedule)) {
+    console.error(
+      `[attach-cron] INVALID schedule "${schedule}" — survey attach NOT scheduled. ` +
+      `Fix SURVEY_ATTACH_CRON_SCHEDULE and redeploy.`,
+    );
+    return;
+  }
+
+  cron.schedule(schedule, () => { void runSurveyAttachBatch(); }, { timezone: ATTACH_TIMEZONE });
+
+  console.log(
+    `[attach-cron] Survey → chart attach scheduled: "${schedule}" (${describeSchedule(schedule)}) ` +
+    `timezone=${ATTACH_TIMEZONE}${isOverridden ? " [OVERRIDDEN via SURVEY_ATTACH_CRON_SCHEDULE]" : " [default]"}`,
+  );
+  console.log(
+    `[attach-cron] Next fire: ${nextFireDescription(schedule, ATTACH_TIMEZONE)}. ` +
+    `Up to ${ATTACH_BATCH_CAP} submissions per run, one at a time, oldest first. ` +
+    `Only surveys matched to a contact and carrying a name, date of birth, phone ` +
+    `and therapist are eligible.`,
+  );
+}
+
+/**
+ * The next time a "m h * * *" expression fires, in the given zone.
+ *
+ * Written out rather than inferred from the expression, because the point of
+ * logging it is that someone reading the boot log can check the deployment is
+ * doing what they think — and "0 0 * * *" read in a UTC container is precisely
+ * the thing they would get wrong.
+ */
+function nextFireDescription(expr: string, timeZone: string): string {
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length !== 5 || parts[2] !== "*" || parts[3] !== "*" || parts[4] !== "*") {
+    return `per "${expr}" in ${timeZone}`;
+  }
+  const min = Number(parts[0]);
+  const hour = Number(parts[1]);
+  if (!Number.isFinite(min) || !Number.isFinite(hour)) return `per "${expr}" in ${timeZone}`;
+
+  // Walk forward a minute at a time from now until the wall clock in the target
+  // zone matches. Bounded to 48 hours; no dependency, and it is correct across a
+  // daylight-saving change because it asks the zone rather than doing arithmetic.
+  // hourCycle "h23" matters: with hour12:false alone, Intl renders midnight as
+  // "24" in the en-US locale, so a comparison against 0 never matches and this
+  // silently fell back to printing the raw expression — which is exactly the
+  // thing the log line exists to avoid.
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone, hourCycle: "h23", hour: "2-digit", minute: "2-digit",
+    year: "numeric", month: "2-digit", day: "2-digit",
+  });
+  const now = new Date();
+  for (let i = 1; i <= 48 * 60; i++) {
+    const t = new Date(now.getTime() + i * 60_000);
+    const p = Object.fromEntries(fmt.formatToParts(t).map((x) => [x.type, x.value]));
+    // Belt and braces in case a runtime still hands back "24".
+    const h = Number(p.hour) % 24;
+    if (h === hour && Number(p.minute) === min) {
+      return `${p.year}-${p.month}-${p.day} ${String(h).padStart(2, "0")}:${p.minute} ${timeZone} ` +
+             `(${t.toISOString().replace(".000", "")} UTC)`;
+    }
+  }
+  return `per "${expr}" in ${timeZone}`;
+}
+
+/** Manual trigger, for the endpoint and for local testing. */
+export async function triggerSurveyAttachBatch(): Promise<void> {
+  await runSurveyAttachBatch();
 }

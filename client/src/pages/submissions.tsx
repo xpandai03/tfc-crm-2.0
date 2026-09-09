@@ -13,13 +13,14 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, ExternalLink, Code2, FileText, Inbox, FileUp, Download, UserCheck, UserSearch, UserX, RefreshCw } from "lucide-react";
+import { Loader2, ExternalLink, Code2, FileText, Inbox, FileUp, Download, UserCheck, UserSearch, UserX, RefreshCw, Upload, CheckCircle2, AlertTriangle } from "lucide-react";
 import { SurveyMatchReviewDialog } from "@/components/survey-match-review";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessReferralUpload } from "@shared/access-control";
 import { SURVEY_FORM_TYPE, SURVEY_SOURCE } from "@shared/survey-questions";
 import { REASON_SHORT, isMatchReason } from "@shared/survey-match-reasons";
+import { attachFailureText, attachIneligibleText } from "@shared/survey-attach-reasons";
 
 interface FormSubmission {
   id: number;
@@ -83,6 +84,19 @@ function getFormTypeBadge(formType: string): { label: string; variant: "secondar
     default:
       return { label: formType || "Unknown", variant: "outline" };
   }
+}
+
+/** One attach attempt, from /api/survey/attach/states. Never survey content. */
+interface AttachState {
+  submissionId: number;
+  contactId: number | null;
+  status: "running" | "attached" | "failed";
+  reason: string | null;
+  trigger: string;
+  actorEmail: string;
+  durationMs: number | null;
+  startedAt: string;
+  finishedAt: string | null;
 }
 
 /** One row of survey→contact match state, from /api/survey/matching/states. */
@@ -333,6 +347,90 @@ function MatchBadge({ state }: { state: MatchState | undefined }) {
   );
 }
 
+/**
+ * File-to-chart control for one survey row.
+ *
+ * FOUR STATES, because the answer to "can I press this" has four answers:
+ *
+ *   already filed   disabled, and says so. An attach is NOT idempotent —
+ *                   pressing twice puts two copies of the same survey on a
+ *                   patient's chart — so this is the important one. The server
+ *                   enforces it too, with an atomic claim; this is the
+ *                   affordance, not the guarantee.
+ *   running         disabled, spinner. The run takes the better part of a
+ *                   minute and the button has to say so or it gets pressed
+ *                   again.
+ *   not eligible    disabled, with the reason on the row. Chiefly: awaiting
+ *                   review. The review queue exists precisely so an unmatched
+ *                   survey never reaches a chart.
+ *   ready           enabled.
+ *
+ * A FAILURE LEAVES THE DOWNLOAD BUTTON RIGHT BESIDE IT, untouched, and the
+ * failure text ends by pointing at it. Two of the expected refusals — a home
+ * phone where the chart holds a mobile, and a chart holding a middle name the
+ * client did not type — are correct refusals that are nobody's fault, and the
+ * wording says so rather than reading as breakage.
+ */
+function AttachButton({
+  submission, matchState, attachState, onAttach, isPending,
+}: {
+  submission: FormSubmission;
+  matchState: MatchState | undefined;
+  attachState: AttachState | undefined;
+  onAttach: () => void;
+  isPending: boolean;
+}) {
+  // Eligibility as the CLIENT can see it. The server re-derives all of this
+  // before it dispatches — this exists to explain a disabled button, never to
+  // be the thing that keeps a survey off the wrong chart.
+  const p = (submission.payload ?? {}) as {
+    client?: { name?: unknown; dateOfBirth?: unknown; phone?: unknown };
+    answers?: { therapist?: unknown };
+  };
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  let ineligible: string | null = null;
+  if (attachState?.status === "attached") ineligible = "already_attached";
+  else if (attachState?.status === "running" || isPending) ineligible = "in_progress";
+  else if (!matchState || matchState.status === "review") ineligible = "awaiting_review";
+  else if (matchState.status !== "matched" || !matchState.matchedContactId) ineligible = "no_match";
+  else if (str(p.client?.name).split(/\s+/).filter(Boolean).length < 2) ineligible = "no_name";
+  else if (!/^\d{4}-\d{2}-\d{2}$/.test(str(p.client?.dateOfBirth))) ineligible = "no_dob";
+  else if (str(p.client?.phone).replace(/\D/g, "").length < 7) ineligible = "no_phone";
+  else if (!str(p.answers?.therapist)) ineligible = "no_therapist";
+
+  const running = attachState?.status === "running" || isPending;
+  const attached = attachState?.status === "attached";
+
+  return (
+    <Button
+      variant={attached ? "ghost" : ineligible ? "outline" : "default"}
+      size="sm"
+      className="h-7 text-xs"
+      disabled={!!ineligible}
+      title={ineligible ? attachIneligibleText(ineligible) : "File this survey to the patient's chart in TherapyNotes"}
+      onClick={onAttach}
+      data-testid={`button-attach-${submission.id}`}
+    >
+      {running ? (
+        <>
+          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+          Filing to chart…
+        </>
+      ) : attached ? (
+        <>
+          <CheckCircle2 className="h-3 w-3 mr-1" />
+          Filed to chart
+        </>
+      ) : (
+        <>
+          <Upload className="h-3 w-3 mr-1" />
+          File to chart
+        </>
+      )}
+    </Button>
+  );
+}
+
 export default function Submissions() {
   const { user } = useAuth();
   const [selectedSubmission, setSelectedSubmission] = useState<FormSubmission | null>(null);
@@ -382,10 +480,54 @@ export default function Submissions() {
       toast({ title: "Matching failed", description: e.message, variant: "destructive" }),
   });
 
+  // Attach state. Its own query, and it POLLS while anything is running: a run
+  // takes the better part of a minute and a second staff member looking at the
+  // same list needs to see that it is already under way rather than press the
+  // button themselves.
+  const { data: attachData } = useQuery<{ states: Record<string, AttachState> }>({
+    queryKey: ["/api/survey/attach/states"],
+    queryFn: async () => {
+      const res = await fetch("/api/survey/attach/states");
+      if (!res.ok) throw new Error("Failed to load attach states");
+      return res.json();
+    },
+    refetchInterval: (query) =>
+      Object.values(query.state.data?.states ?? {}).some((a) => a.status === "running") ? 5000 : false,
+  });
+
+  const attachMutation = useMutation({
+    mutationFn: async (submissionId: number) => {
+      const res = await fetch(`/api/survey/attach/${submissionId}`, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "The attach could not be started.");
+      return json as { submissionId: number; status: string; reason: string | null };
+    },
+    onSuccess: (r) => {
+      if (r.status === "attached") {
+        toast({
+          title: "Filed to the chart",
+          description: "The survey is attached to the patient's chart in TherapyNotes.",
+        });
+      } else if (r.status === "skipped") {
+        toast({ title: "Not filed", description: attachIneligibleText(r.reason) });
+      } else {
+        // Never a toast variant of "destructive" for an EXPECTED refusal: a
+        // home phone or a missing middle name is not an error, and colouring it
+        // red teaches staff to report working software as broken.
+        toast({ title: "Not filed", description: attachFailureText(r.reason) });
+      }
+      qc.invalidateQueries({ queryKey: ["/api/survey/attach/states"] });
+    },
+    onError: (e: Error) =>
+      toast({ title: "Could not reach the automation", description: e.message, variant: "destructive" }),
+  });
+
   const allSubmissions = data?.submissions ?? [];
   const states = matchData?.states ?? {};
   const counts = matchData?.counts;
   const stateFor = (id: number): MatchState | undefined => states[String(id)];
+  const attachStates = attachData?.states ?? {};
+  const attachFor = (id: number): AttachState | undefined => attachStates[String(id)];
 
   // The review queue is a FILTER over this list, not a separate page — the
   // client has repeatedly asked for fewer tabs, and an identity decision is
@@ -543,6 +685,18 @@ export default function Submissions() {
                       </p>
                     )}
 
+                    {/* Why the last attach did not file. Fixed wording from the
+                        shared vocabulary — no identity, no survey content, and
+                        it ends by pointing at the Download PDF button below. */}
+                    {isSurveySubmission(sub) && attachFor(sub.id)?.status === "failed" && (
+                      <p className="text-xs text-amber-700 dark:text-amber-400 pl-6 flex items-start gap-1.5">
+                        <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                        <span data-testid={`attach-failure-${sub.id}`}>
+                          {attachFailureText(attachFor(sub.id)?.reason)}
+                        </span>
+                      </p>
+                    )}
+
                     {/* Actions */}
                     <div className="flex items-center gap-2 pl-6 pt-1">
                       {sub.contactId && (
@@ -585,6 +739,20 @@ export default function Submissions() {
                             : "Change match"}
                         </Button>
                       )}
+                      {isSurveySubmission(sub) && (
+                        <AttachButton
+                          submission={sub}
+                          matchState={stateFor(sub.id)}
+                          attachState={attachFor(sub.id)}
+                          isPending={attachMutation.isPending && attachMutation.variables === sub.id}
+                          onAttach={() => attachMutation.mutate(sub.id)}
+                        />
+                      )}
+                      {/* ALWAYS PRESENT, and deliberately never disabled by an
+                          attach outcome. This is the path that works for every
+                          patient, it is what the client already accepted as the
+                          primary route, and it is what every failure message
+                          tells a staff member to fall back to. */}
                       {isSurveySubmission(sub) && (
                         <a
                           href={`/api/survey/pdf/${sub.id}`}
