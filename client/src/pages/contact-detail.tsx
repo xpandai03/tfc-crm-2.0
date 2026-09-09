@@ -92,6 +92,7 @@ import { buildTimelineEvents, formatFullDate, matchSnapshotForEmailEvent, type E
 import { ProviderMatchingModal } from "@/components/ui/provider-matching-modal";
 import { CreateTnModal } from "@/components/ui/create-tn-modal";
 import { cn, formatDate, formatDob } from "@/lib/utils";
+import { computeTnRun, joinNaturally, type TnActivity } from "@/lib/tn-run-state";
 import {
   STATUS_UMBRELLAS,
   STATUS_LABELS,
@@ -262,74 +263,6 @@ function IntakeHistoryEntry({ sub, label, isLatest, defaultExpanded }: {
 // out with no completion callback). Runs take ~100s, so 10 min never trips a
 // live run — it only auto-unsticks contacts whose completion callback never
 // arrived (the stuck-loading bug's safety net; also clears existing hangs).
-const TN_STALE_MS = 10 * 60 * 1000;
-
-// Parse an activity `createdAt` to epoch ms. The API serves Postgres
-// `created_at::text`, e.g. "2026-07-01 20:21:15.549361+00" — a space separator
-// and a BARE 2-digit offset ("+00") that Date.parse() rejects (→ NaN). Normalize
-// to ISO ("T" separator, "+00"→"+00:00"); fall back to treating it as UTC. Using
-// raw Date.parse here silently returned NaN, which disabled the staleness TTL and
-// left runs stuck in-flight forever.
-function parseActivityTs(s: string | undefined | null): number {
-  if (!s) return NaN;
-  const iso = String(s).trim().replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00");
-  const ms = Date.parse(iso);
-  return Number.isFinite(ms) ? ms : Date.parse(iso.replace(/[+-]\d{2}(:?\d{2})?$/, "") + "Z");
-}
-
-// Derive the current TN V2 run state from a contact's activity log (newest-first).
-// A run is "in flight" if its tn_schedule_started entry (which carries a runId)
-// has no matching terminal entry (tn_schedule_completed/failed) for the same
-// runId AND is younger than TN_STALE_MS. A terminal failure — or an aged-out run
-// with no terminal — clears the loading state and surfaces a reason.
-type TnActivity = { type: string; metadata: Record<string, unknown>; summary: string; createdAt: string };
-function computeTnRun(activities: TnActivity[] | undefined): {
-  inFlight: boolean;
-  runId?: string;
-  latestPhaseMessage?: string;
-  latestPhaseStatus?: string;
-  failedReason?: string; // set when the newest run failed or went stale (for the indicator)
-  stale?: boolean;       // aged out with no terminal callback
-} {
-  if (!activities || activities.length === 0) return { inFlight: false };
-  const started = activities.find((a) => a.type === "tn_schedule_started");
-  const runId = started?.metadata?.runId as string | undefined;
-  if (!started || !runId) return { inFlight: false }; // only async (runId-tagged) runs count
-  const terminal = activities.find(
-    (a) => (a.type === "tn_schedule_completed" || a.type === "tn_schedule_failed") && a.metadata?.runId === runId
-  );
-  if (terminal) {
-    // Success clears silently; an explicit terminal failure surfaces its reason.
-    if (terminal.type === "tn_schedule_failed") {
-      const reason = (terminal.metadata?.failureReason as string) || terminal.summary || "unknown error";
-      return { inFlight: false, runId, failedReason: reason };
-    }
-    return { inFlight: false, runId };
-  }
-  // No terminal yet — apply the staleness TTL so a missing callback can't hang forever.
-  const startedAtMs = parseActivityTs(started.createdAt);
-  const isStale = Number.isFinite(startedAtMs) && Date.now() - startedAtMs > TN_STALE_MS;
-  const latestPhase = activities.find((a) => a.type === "tn_schedule_phase" && a.metadata?.runId === runId);
-  const latestPhaseMessage = (latestPhase?.metadata?.message as string) || latestPhase?.summary;
-  const latestPhaseStatus = latestPhase?.metadata?.status as string | undefined;
-  if (isStale) {
-    return {
-      inFlight: false,
-      runId,
-      stale: true,
-      failedReason: latestPhaseMessage
-        ? `No completion received — last step: ${latestPhaseMessage}`
-        : "No response from TN (the run may have failed or timed out)",
-    };
-  }
-  return {
-    inFlight: true,
-    runId,
-    latestPhaseMessage,
-    latestPhaseStatus,
-  };
-}
-
 export default function ContactDetail() {
   const params = useParams();
   const [, navigate] = useLocation();
@@ -2458,30 +2391,120 @@ export default function ContactDetail() {
                 </Card>
               )}
 
-              {/* Last TN run failed / stale — surface the reason + offer retry.
-                  Hidden while a fresh run is in flight or being submitted. */}
+              {/* Last TN run failed / stale.
+                  Hidden while a fresh run is in flight or being submitted.
+
+                  THREE STATES, because they call for three different actions:
+
+                    NOTHING CREATED  — red. The run stopped before the patient
+                      existed. Create them; there is nothing to collide with.
+                    PATIENT CREATED  — amber. The record exists. Creating it
+                      again is the duplicate this card exists to prevent, so the
+                      card says so first and leads with a link to the chart.
+                    PATIENT + APPOINTMENT — amber. Both exist; only the run's
+                      own bookkeeping is unfinished.
+
+                  Amber rather than red for the partial states on purpose: red
+                  reads as "this did not work, do it again", which is precisely
+                  the wrong instinct once a patient record exists.
+
+                  Retry is UNCHANGED in all three — same control, same handler,
+                  same placement. A retry after a partial success re-runs from
+                  the beginning and is refused by TherapyNotes' duplicate check
+                  at the save step; that is correct, and changing it is an agent
+                  question, not this one. */}
               {canUseTnV2 && !tnRun.inFlight && tnRun.failedReason && !createWithScheduleMutation.isPending && (
-                <Card className="border-red-300 bg-red-50/60 dark:bg-red-950/20" data-testid="card-tn-failed">
+                <Card
+                  className={tnRun.patientCreated
+                    ? "border-amber-300 bg-amber-50/60 dark:bg-amber-950/20"
+                    : "border-red-300 bg-red-50/60 dark:bg-red-950/20"}
+                  data-testid="card-tn-failed"
+                >
                   <CardContent className="py-3">
                     <div className="flex items-start gap-2">
-                      <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+                      <AlertTriangle
+                        className={`h-4 w-4 shrink-0 mt-0.5 ${tnRun.patientCreated
+                          ? "text-amber-600 dark:text-amber-400"
+                          : "text-red-600 dark:text-red-400"}`}
+                      />
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-red-800 dark:text-red-300">
-                          Last TN run {tnRun.stale ? "did not complete" : "failed"}
-                        </p>
-                        <p className="text-xs text-red-700 dark:text-red-400 mt-0.5 break-words">
-                          {tnRun.failedReason}
-                        </p>
+                        {tnRun.patientCreated ? (
+                          <div data-testid="tn-partial-success">
+                            <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
+                              {tnRun.appointmentScheduled
+                                ? "Patient created and appointment scheduled — the run did not finish"
+                                : "Patient created in TherapyNotes — appointment not scheduled"}
+                            </p>
+                            {/* The one sentence that decides whether a duplicate
+                                gets made. It goes first, and it is not hedged. */}
+                            <p className="text-xs font-medium text-amber-900 dark:text-amber-200 mt-1">
+                              Do not create this patient again — the record already exists.
+                            </p>
+                            {(tnRun.outstanding?.length ?? 0) > 0 ? (
+                              <p className="text-xs text-amber-800 dark:text-amber-300 mt-1">
+                                Still to do in TherapyNotes: {joinNaturally(tnRun.outstanding ?? [])}.
+                              </p>
+                            ) : (
+                              <p className="text-xs text-amber-800 dark:text-amber-300 mt-1">
+                                Nothing is outstanding — the run just did not report that it finished.
+                              </p>
+                            )}
+                            {/* The save verdict is not fully reliable: a refused
+                                save has been reported as a success. So the claim
+                                is attributed, and the reader is pointed at the
+                                one thing that settles it. */}
+                            <p className="text-[11px] text-amber-700/90 dark:text-amber-400/90 mt-1">
+                              {tnRun.patientUrl
+                                ? "TherapyNotes reported the patient was created. Open the chart to confirm before creating anything by hand."
+                                : "TherapyNotes reported the patient was created but did not send a chart link. Search TherapyNotes by name and date of birth to confirm before creating anything by hand."}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground mt-1 break-words">
+                              Run stopped at: {tnRun.failedReason}
+                            </p>
+                          </div>
+                        ) : (
+                          <div data-testid="tn-nothing-created">
+                            <p className="text-sm font-medium text-red-800 dark:text-red-300">
+                              Last TN run {tnRun.stale ? "did not complete" : "failed"}
+                            </p>
+                            <p className="text-xs text-red-700 dark:text-red-400 mt-0.5 break-words">
+                              {tnRun.failedReason}
+                            </p>
+                            {/* Says the quiet part out loud, so "failed" cannot be
+                                read as "something might have been created". */}
+                            <p className="text-xs text-red-700 dark:text-red-400 mt-1">
+                              No patient was created in TherapyNotes.
+                            </p>
+                          </div>
+                        )}
                       </div>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="shrink-0 border-red-300 text-red-700 hover:bg-red-100 dark:text-red-300"
-                        onClick={() => setShowScheduleTnModal(true)}
-                        data-testid="button-tn-retry"
-                      >
-                        <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry
-                      </Button>
+                      <div className="shrink-0 flex flex-col gap-1.5">
+                        {/* Same control and same wording as the sidebar's
+                            "Open in TherapyNotes" — one pattern, not two.
+                            Rendered only when a chart URL actually exists. */}
+                        {tnRun.patientCreated && tnRun.patientUrl && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-amber-400 text-amber-800 hover:bg-amber-100 dark:text-amber-300"
+                            onClick={() => window.open(tnRun.patientUrl, "_blank")}
+                            data-testid="button-tn-open-chart"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5 mr-1.5" /> Open in TherapyNotes
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className={tnRun.patientCreated
+                            ? "border-amber-300 text-amber-800 hover:bg-amber-100 dark:text-amber-300"
+                            : "border-red-300 text-red-700 hover:bg-red-100 dark:text-red-300"}
+                          onClick={() => setShowScheduleTnModal(true)}
+                          data-testid="button-tn-retry"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry
+                        </Button>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
