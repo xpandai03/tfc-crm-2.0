@@ -3,18 +3,36 @@
  *
  * Both variants are built from the SAME question definition
  * (shared/survey-questions.ts). Nothing about a question's wording, its options
- * or its conditional explanation box is written here — this file only decides
+ * or whether it carries a comment box is written here — this file only decides
  * which slots share a screen. Two hand-written forms would drift; one
  * definition with a modality-swapped middle block cannot.
+ *
+ * IDENTITY STAYS ON ONE SCREEN. The 2026-09-03 review took the first screen
+ * from two required fields to four, which was worth reconsidering. It stays as
+ * one screen: name, email and phone are exactly the trio a browser or phone
+ * autofills in a single gesture, and splitting them across a step boundary
+ * breaks that — the client's own note was that phones autofill both and it is
+ * "not a big burden". A second screen would also make eight steps of seven,
+ * and the step counter is the thing telling someone in a waiting room that
+ * this is short.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CLIENT_EMAIL_MAX,
   CLIENT_NAME_MAX,
+  CLIENT_PHONE_MAX,
+  COMMENT_MAX,
+  COMMENT_PROMPT,
+  LEGAL_NAME_HINT,
   MODALITY_FOR_VARIANT,
   SURVEY_VERSION,
+  commentKeysFor,
   dateOfBirthProblem,
+  emailProblem,
+  isCommentable,
+  legalNameProblem,
+  phoneProblem,
   questionsFor,
   type ChoiceQuestion,
   type ScaleQuestion,
@@ -25,7 +43,7 @@ import {
 import { MultiStepForm, type FormScreen } from "./MultiStepForm";
 import {
   ChoiceField,
-  Reveal,
+  CommentField,
   ScaleField,
   TextAreaField,
   TextField,
@@ -45,13 +63,16 @@ const SCREEN_SLOTS: number[][] = [
 type AnswerValue = string | number;
 
 interface Draft {
-  client: { name: string; dateOfBirth: string; email: string };
+  client: { name: string; dateOfBirth: string; email: string; phone: string };
   answers: Record<string, AnswerValue>;
+  /** Per-question free text, keyed by question key. Mirrors the stored shape. */
+  comments: Record<string, string>;
 }
 
 const emptyDraft = (): Draft => ({
-  client: { name: "", dateOfBirth: "", email: "" },
+  client: { name: "", dateOfBirth: "", email: "", phone: "" },
   answers: {},
+  comments: {},
 });
 
 /**
@@ -78,10 +99,17 @@ function loadDraft(variant: SurveyVariant): Draft {
         name: String(parsed.client?.name ?? ""),
         dateOfBirth: String(parsed.client?.dateOfBirth ?? ""),
         email: String(parsed.client?.email ?? ""),
+        // Absent from any draft saved before 2026-09-03. Defaults to empty, and
+        // the identity screen then simply asks for it.
+        phone: String(parsed.client?.phone ?? ""),
       },
       answers:
         parsed.answers && typeof parsed.answers === "object"
           ? (parsed.answers as Record<string, AnswerValue>)
+          : {},
+      comments:
+        parsed.comments && typeof parsed.comments === "object"
+          ? (parsed.comments as Record<string, string>)
           : {},
     };
   } catch {
@@ -160,35 +188,62 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
     [],
   );
 
+  const setComment = useCallback((key: string, value: string) => {
+    setDraft((d) => ({ ...d, comments: { ...d.comments, [key]: value } }));
+  }, []);
+
   const answerOf = (key: string): string =>
     typeof draft.answers[key] === "string" ? (draft.answers[key] as string) : "";
   const scaleOf = (key: string): number | null =>
     typeof draft.answers[key] === "number" ? (draft.answers[key] as number) : null;
+  const commentOf = (key: string): string =>
+    typeof draft.comments[key] === "string" ? draft.comments[key] : "";
 
   // --- identity validation --------------------------------------------------
   //
-  // dateOfBirthProblem is the SAME function the server re-runs
-  // (server/survey/schema.ts -> serverDateOfBirthProblem), so the form and the
-  // endpoint cannot disagree about what counts as a valid date.
+  // Every rule here is the SAME function the server re-runs
+  // (server/survey/schema.ts -> serverIdentityProblem), so the form and the
+  // endpoint cannot disagree about what is acceptable. All four are required as
+  // of the 2026-09-03 review — see the identity section of the shared module.
   //
   // A message is shown only once a field has something in it. An empty required
   // field is already communicated by the disabled Continue button and the
   // required marker; an error under a field the client has not reached yet
-  // reads as an accusation. A future or implausibly old date DOES get a
-  // message, because there the client typed something and needs to know why it
-  // is being refused.
-  const nameProblem = draft.client.name.trim() ? null : "Please enter your name.";
+  // reads as an accusation. A malformed value DOES get a message, because there
+  // the client typed something and needs to know why it is being refused.
+  const nameProblem = legalNameProblem(draft.client.name);
   const dobProblem = dateOfBirthProblem(draft.client.dateOfBirth, new Date());
-  const emailProblem =
-    draft.client.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.client.email.trim())
-      ? "Please check that email address."
-      : null;
+  const emailIssue = emailProblem(draft.client.email);
+  const phoneIssue = phoneProblem(draft.client.phone);
   const shown = (value: string, problem: string | null) =>
     value.trim() ? problem : null;
 
   // --- renderers ------------------------------------------------------------
 
-  const renderQuestion = (q: SurveyQuestion) => {
+  /**
+   * One question plus its comment box.
+   *
+   * The comment is rendered HERE, once, around whatever the question itself
+   * renders — not inside each branch. That is what makes "one mechanism per
+   * question" structural rather than a thing to remember: there is a single
+   * place a comment box can come from, and isCommentable() is the only thing
+   * that decides whether it appears.
+   */
+  const renderQuestion = (q: SurveyQuestion) => (
+    <div key={q.key} className="question">
+      {renderQuestionBody(q)}
+      {isCommentable(q) && (
+        <CommentField
+          prompt={COMMENT_PROMPT}
+          maxLength={COMMENT_MAX}
+          value={commentOf(q.key)}
+          onChange={(v) => setComment(q.key, v)}
+        />
+      )}
+    </div>
+  );
+
+  const renderQuestionBody = (q: SurveyQuestion) => {
     switch (q.kind) {
       case "therapist":
         return (
@@ -205,33 +260,15 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
 
       case "choice": {
         const cq = q as ChoiceQuestion;
-        const value = answerOf(cq.key);
         return (
-          <div key={cq.key}>
-            <ChoiceField
-              name={cq.key}
-              label={cq.prompt}
-              options={cq.options}
-              value={value}
-              onChange={(v) => setAnswer(cq.key, v)}
-              required={cq.required}
-            />
-            {cq.explain && (
-              // Stays OPTIONAL, matching the source form. A required-looking box
-              // the client's instrument does not require is a change to the
-              // instrument.
-              <Reveal show={value === cq.explain.revealOn}>
-                <TextAreaField
-                  label={cq.explain.prompt}
-                  hint="Optional"
-                  rows={3}
-                  maxLength={cq.explain.maxLength}
-                  value={answerOf(cq.explain.key)}
-                  onChange={(v) => setAnswer(cq.explain!.key, v)}
-                />
-              </Reveal>
-            )}
-          </div>
+          <ChoiceField
+            name={cq.key}
+            label={cq.prompt}
+            options={cq.options}
+            value={answerOf(cq.key)}
+            onChange={(v) => setAnswer(cq.key, v)}
+            required={cq.required}
+          />
         );
       }
 
@@ -287,8 +324,15 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
             Your answers go to The Family Connection&rsquo;s care team. They are
             not shared outside the practice.
           </p>
+          {/* LEGAL name, said plainly on the label. The practice sees clients
+              whose preferred name is the one they would type by reflex, while
+              the record carries the legal name from their insurance — and a
+              preferred name matches nothing, silently. The hint says which name
+              and why in one sentence, without naming any reason someone might
+              go by another. */}
           <TextField
-            label="Your full name"
+            label="Your legal name"
+            hint={LEGAL_NAME_HINT}
             required
             value={draft.client.name}
             maxLength={CLIENT_NAME_MAX}
@@ -304,16 +348,37 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
             onChange={(v) => setClient({ dateOfBirth: v })}
             error={shown(draft.client.dateOfBirth, dobProblem)}
           />
+          {/* Required as of 2026-09-03 — it is a matching field, not a way to
+              reach the client, so the old "optional, only if you want us to
+              contact you" hint would now be inaccurate as well as wrong. */}
           <TextField
             label="Email address"
-            hint="Optional — only if you would like us to be able to reach you."
+            required
             type="email"
             inputMode="email"
             autoComplete="email"
             maxLength={CLIENT_EMAIL_MAX}
             value={draft.client.email}
             onChange={(v) => setClient({ email: v })}
-            error={emailProblem}
+            error={shown(draft.client.email, emailIssue)}
+          />
+          {/* type="tel" + inputMode="tel" bring up the phone keypad rather than
+              the alphabetic keyboard, and autoComplete="tel" lets the browser
+              fill it alongside name and email in one gesture — which is the
+              whole reason four fields on one screen is not a burden. No input
+              masking: a mask fights anyone typing an extension or a country
+              code, and phoneProblem() counts digits rather than caring how they
+              are punctuated. */}
+          <TextField
+            label="Phone number"
+            required
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            maxLength={CLIENT_PHONE_MAX}
+            value={draft.client.phone}
+            onChange={(v) => setClient({ phone: v })}
+            error={shown(draft.client.phone, phoneIssue)}
           />
           {/* Honeypot. Hidden from sight and from the tab order; a person never
               reaches it, a form-filling bot does. The server answers a filled
@@ -332,7 +397,7 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
           </div>
         </>
       ),
-      isValid: () => !nameProblem && !dobProblem && !emailProblem,
+      isValid: () => !nameProblem && !dobProblem && !emailIssue && !phoneIssue,
     },
     {
       id: "therapist",
@@ -357,14 +422,21 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
     for (const q of questions) {
       const v = draft.answers[q.key];
       if (v !== undefined && v !== "") answers[q.key] = v;
-      if (q.kind === "choice" && q.explain) {
-        const explain = draft.answers[q.explain.key];
-        // Only send an explanation that still belongs to the answer revealing
-        // it, so switching "No" back to "Yes" cannot leave orphaned free text.
-        if (v === q.explain.revealOn && typeof explain === "string" && explain.trim()) {
-          answers[q.explain.key] = explain;
-        }
-      }
+    }
+
+    // Only comments that were actually written. An empty box sends nothing, so
+    // a client who wrote none sends no `comments` key at all — which is the
+    // common case and keeps the row the size it was before.
+    //
+    // Keyed by commentKeysFor(), not by Object.keys(draft.comments): a stale
+    // sessionStorage draft could hold a key for a question this variant does
+    // not ask, and the server's .strict() would reject the whole submission for
+    // it. Sending only what this variant can carry means a client's answers
+    // survive a form change mid-run.
+    const comments: Record<string, string> = {};
+    for (const key of commentKeysFor(variant)) {
+      const text = (draft.comments[key] ?? "").trim();
+      if (text) comments[key] = text;
     }
 
     const result = await submitSurvey(variant, {
@@ -372,9 +444,11 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
       client: {
         name: draft.client.name.trim(),
         dateOfBirth: draft.client.dateOfBirth.trim(),
-        ...(draft.client.email.trim() ? { email: draft.client.email.trim() } : {}),
+        email: draft.client.email.trim(),
+        phone: draft.client.phone.trim(),
       },
       answers,
+      ...(Object.keys(comments).length > 0 ? { comments } : {}),
       formLoadedAt: formLoadedAt.current,
       ...(company ? { company } : {}),
     });
