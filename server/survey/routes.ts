@@ -50,7 +50,9 @@ import {
   buildSurveyPayload,
   completionTimingProblem,
   honeypotTripped,
-  serverDateOfBirthProblem,
+  identityFieldFromPath,
+  identityFieldMessage,
+  serverIdentityProblem,
   surveySubmissionSchema,
 } from "./schema";
 import {
@@ -227,6 +229,20 @@ export function registerSurveyPublicRoutes(app: Express): void {
         console.warn(
           `[survey] REJECTED: schema (${variant}) fields=[${fields.join(", ")}]`,
         );
+
+        // An identity field that is simply ABSENT never reaches
+        // serverIdentityProblem below — Zod rejects the object first. All four
+        // are required now, so "some answers were missing" would leave a client
+        // hunting a form they thought they had filled in. Name the field.
+        const missing = parsed.error.issues
+          .map((i) => identityFieldFromPath(i.path))
+          .find((f): f is NonNullable<typeof f> => f !== null);
+        if (missing) {
+          return res
+            .status(400)
+            .json({ field: missing, error: identityFieldMessage(missing, new Date()) });
+        }
+
         return res
           .status(400)
           .json({ error: "Some answers were missing or invalid. Please check the form." });
@@ -254,10 +270,15 @@ export function registerSurveyPublicRoutes(app: Express): void {
         });
       }
 
-      const dobProblem = serverDateOfBirthProblem(input.client.dateOfBirth, new Date(now));
-      if (dobProblem) {
-        console.warn("[survey] REJECTED: date of birth failed validation");
-        return res.status(400).json({ error: dobProblem });
+      // All four identity fields, re-checked with the shared rules the form
+      // uses. The reply names the FIELD and says what it needs; the log line
+      // carries the field name only. Neither ever carries the value — an
+      // identity rejection is precisely where a handler is most tempted to echo
+      // the record back.
+      const identity = serverIdentityProblem(input.client, new Date(now));
+      if (identity) {
+        console.warn(`[survey] REJECTED: identity field failed validation (${identity.field})`);
+        return res.status(400).json({ field: identity.field, error: identity.message });
       }
 
       // Rate limit is checked AFTER validation so a malformed request cannot

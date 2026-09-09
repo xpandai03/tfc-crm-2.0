@@ -34,8 +34,13 @@ export async function fetchRoster(): Promise<RosterResult> {
 
 export interface SubmitBody {
   surveyVersion: number;
-  client: { name: string; dateOfBirth: string; email?: string };
+  /** All four required as of the 2026-09-03 client review — every one is a
+   *  field the pairing build matches against the EHR record. */
+  client: { name: string; dateOfBirth: string; email: string; phone: string };
   answers: Record<string, string | number>;
+  /** Optional per-question free text, keyed by question key. Omitted entirely
+   *  when the client wrote nothing, which is the common case. */
+  comments?: Record<string, string>;
   formLoadedAt: number;
   company?: string;
 }

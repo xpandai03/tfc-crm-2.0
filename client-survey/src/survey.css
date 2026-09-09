@@ -547,7 +547,68 @@ body {
 }
 
 /* --------------------------------------------------------------------------
-   Reveal (conditional "If no, please explain")
+   Per-question comment box (client review, 2026-09-03)
+   --------------------------------------------------------------------------
+
+   Replaces the conditional "If no, please explain" reveal below, which only
+   ever opened on a "No". A box that appears when you say No reads as "justify
+   yourself"; the client asked for this so people can leave PRAISE, so it is
+   always there and always looks the same.
+
+   It has to be visibly SUBORDINATE to the question above it. There are now up
+   to eleven of these, and if each one carried the weight of a real field the
+   form would read as twenty-three questions rather than twelve with an offer
+   attached to each. Hence the indent and rule (it belongs to the question), the
+   muted label at hint weight rather than field weight, and two rows rather than
+   four — a short box invites a sentence, a tall one demands a paragraph.
+
+   .question is the wrapper that ties the two together, so the gap inside a
+   question is smaller than the 26px .fields gap BETWEEN questions. Without that
+   a comment box floats equidistant between the question it belongs to and the
+   next one.
+   -------------------------------------------------------------------------- */
+
+.question {
+  display: flex;
+  flex-direction: column;
+}
+
+.comment {
+  margin-top: 12px;
+  padding-left: 13px;
+  border-left: 2px solid var(--border);
+}
+
+.comment__label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+  margin-bottom: 5px;
+}
+
+/* "Optional" set apart from the invitation rather than inside it, so the
+   sentence reads as a question and the status reads as a status. */
+.comment__optional {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  opacity: 0.75;
+}
+
+/* Overrides .textarea's 96px floor: two rows, growable. 16px font is inherited
+   from .textarea and must stay — anything smaller makes iOS Safari zoom the
+   viewport on focus, which on this form would happen eleven times. */
+.textarea--comment {
+  min-height: 0;
+  padding: 8px 10px;
+}
+
+/* --------------------------------------------------------------------------
+   Reveal (retained primitive, currently unused — see fields.tsx)
    -------------------------------------------------------------------------- */
 
 .reveal {

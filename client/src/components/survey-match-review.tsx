@@ -33,7 +33,13 @@ interface ContactIdentity {
 interface ReviewPayload {
   submissionId: number;
   submittedAt: string;
-  typed: { name: string; dateOfBirth: string | null; email: string | null };
+  typed: {
+    name: string;
+    dateOfBirth: string | null;
+    /** Collected from 2026-09-03; null on submissions taken before that. */
+    phone: string | null;
+    email: string | null;
+  };
   modality: string | null;
   therapist: string | null;
   state: { status: string; reason: string; resolvedBy: string | null; resolvedAt: string | null } | null;
@@ -136,8 +142,9 @@ export function SurveyMatchReviewDialog({
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
                 What the client typed
               </p>
-              <Field label="Name" value={data.typed.name} />
+              <Field label="Legal name" value={data.typed.name} />
               <Field label="Date of birth" value={data.typed.dateOfBirth} />
+              <Field label="Phone" value={data.typed.phone} />
               <Field label="Email" value={data.typed.email} />
               <Field label="Therapist" value={data.therapist} />
               <Field label="Modality" value={data.modality} />

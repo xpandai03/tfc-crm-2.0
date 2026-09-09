@@ -54,10 +54,10 @@ export function TextField({
   error?: string | null;
   required?: boolean;
   hint?: string;
-  type?: "text" | "email" | "date";
+  type?: "text" | "email" | "date" | "tel";
   maxLength?: number;
   autoComplete?: string;
-  inputMode?: "text" | "email";
+  inputMode?: "text" | "email" | "tel";
   placeholder?: string;
 }) {
   const id = useId();
@@ -349,7 +349,64 @@ export function TherapistField({
   );
 }
 
-/** Animated conditional block for the source's "If no, please explain" boxes. */
+/**
+ * The optional comment box that sits under every question.
+ *
+ * ONE MECHANISM. This REPLACED the conditional "If no, please explain" reveal
+ * that used to appear under four of the Yes/No/N/A questions — that component is
+ * gone, not hidden, so there is no arrangement of answers that can put two
+ * comment boxes on one question.
+ *
+ * ALWAYS VISIBLE, never animated in. The old box slid open on a "No", which is
+ * what told the client it was tied to that answer. Something that appears when
+ * you say No reads as "justify yourself"; the client asked for this so people
+ * can leave praise, so it has to already be there when they say Yes.
+ *
+ * Smaller and quieter than the question above it: two rows, the label in the
+ * hint weight rather than the field weight. It should read as an offer that can
+ * be walked past, which is also literally true — nothing here gates Continue.
+ */
+export function CommentField({
+  prompt,
+  value,
+  onChange,
+  maxLength,
+}: {
+  prompt: string;
+  value: string;
+  onChange: (v: string) => void;
+  maxLength: number;
+}) {
+  const id = useId();
+  const remaining = maxLength - value.length;
+  const showCount = remaining <= 150;
+  return (
+    <div className="comment">
+      <label className="comment__label" htmlFor={id}>
+        {prompt}
+        <span className="comment__optional">Optional</span>
+      </label>
+      <textarea
+        id={id}
+        className="textarea textarea--comment"
+        rows={2}
+        value={value}
+        maxLength={maxLength}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {showCount && <span className="char-count">{remaining} characters left</span>}
+    </div>
+  );
+}
+
+/**
+ * Animated conditional block.
+ *
+ * RETAINED but currently UNUSED: the "If no, please explain" boxes it was built
+ * for were retired at the 2026-09-03 client review in favour of CommentField
+ * above. Kept because it is a general-purpose primitive and costs nothing;
+ * AnimatePresence is already in the bundle for the step transition.
+ */
 export function Reveal({ show, children }: { show: boolean; children: ReactNode }) {
   return (
     <AnimatePresence initial={false}>

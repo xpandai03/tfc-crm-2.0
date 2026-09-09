@@ -22,6 +22,8 @@ import { z } from "zod";
 import {
   CLIENT_EMAIL_MAX,
   CLIENT_NAME_MAX,
+  CLIENT_PHONE_MAX,
+  COMMENT_MAX,
   MODALITY_FOR_VARIANT,
   SCALE_MAX,
   SCALE_MIN,
@@ -29,7 +31,11 @@ import {
   THERAPIST_MAX,
   type SurveyQuestion,
   type SurveyVariant,
+  commentKeysFor,
   dateOfBirthProblem,
+  emailProblem,
+  legalNameProblem,
+  phoneProblem,
   questionsFor,
 } from "@shared/survey-questions";
 
@@ -84,24 +90,49 @@ function answersSchemaFor(variant: SurveyVariant) {
   for (const q of questionsFor(variant)) {
     const base = answerSchemaFor(q);
     shape[q.key] = q.required ? base : base.optional();
-    if (q.kind === "choice" && q.explain) {
-      // Always optional — the source form does not mark these required, and
-      // making them required would be a change to the client's instrument.
-      shape[q.explain.key] = trimmedString(q.explain.maxLength).optional();
-    }
   }
   // .strict(): an unrecognised answer key is a rejected request, not a silently
   // dropped field. Loud beats quiet for the one object that holds free text.
+  //
+  // The retired "If no, please explain" keys are NOT in this shape any more, so
+  // a stale cached bundle still posting one is rejected outright rather than
+  // quietly writing a key nothing reads. See ChoiceQuestion.legacyExplain.
   return z.object(shape).strict();
 }
 
+/**
+ * The `comments` object: one optional, capped string per commentable question,
+ * and nothing else.
+ *
+ * EVERY entry is optional. The client was explicit that the rating and choice
+ * questions stay mandatory and no comment is ever required, so there is no
+ * branch here that can make one — the box is an invitation, and the schema is
+ * the place that guarantees it.
+ */
+function commentsSchemaFor(variant: SurveyVariant) {
+  const shape: Record<string, z.ZodTypeAny> = {};
+  for (const key of commentKeysFor(variant)) {
+    shape[key] = trimmedString(COMMENT_MAX).optional();
+  }
+  return z.object(shape).strict();
+}
+
+/**
+ * Identity. All four REQUIRED as of the 2026-09-03 client review — each one is
+ * a field the pairing build lines up against the EHR record, and an absent one
+ * is a submission that can never be filed to a chart.
+ *
+ * `name` is the client's LEGAL name; the form says so on the label. Nothing
+ * here can enforce that, which is exactly why the label carries the weight.
+ */
 const clientSchema = z
   .object({
     name: trimmedString(CLIENT_NAME_MAX).pipe(z.string().min(1)),
     dateOfBirth: trimmedString(10),
-    // Optional: a lobby QR submitter may not want to give one, and it is only
-    // ever a matching hint. Not verified, never written to.
-    email: trimmedString(CLIENT_EMAIL_MAX).optional(),
+    email: trimmedString(CLIENT_EMAIL_MAX).pipe(z.string().min(1)),
+    // Stored as typed. Format is checked in the route by the shared
+    // phoneProblem(), which counts digits rather than imposing a layout.
+    phone: trimmedString(CLIENT_PHONE_MAX).pipe(z.string().min(1)),
   })
   .strict();
 
@@ -111,6 +142,12 @@ export function surveySubmissionSchema(variant: SurveyVariant) {
       surveyVersion: z.literal(SURVEY_VERSION),
       client: clientSchema,
       answers: answersSchemaFor(variant),
+      /**
+       * Optional per-question free text. Optional as a whole AND per key: a
+       * client who writes nothing sends no object at all, which is what the
+       * majority of submissions will look like.
+       */
+      comments: commentsSchemaFor(variant).optional(),
       /** Epoch ms captured when the form first rendered. See the min-time check. */
       formLoadedAt: z.number().int().positive(),
       /**
@@ -160,15 +197,22 @@ export function buildSurveyPayload(
   for (const q of questionsFor(variant)) {
     const value = input.answers[q.key];
     if (value !== undefined && value !== "") answers[q.key] = value;
-    if (q.kind === "choice" && q.explain) {
-      const explain = input.answers[q.explain.key];
-      // Only keep an explanation when it belongs to the answer that reveals it.
-      // Otherwise a client who typed "No" with detail, then switched to "Yes",
-      // would leave orphaned free text on the record.
-      if (value === q.explain.revealOn && typeof explain === "string" && explain !== "") {
-        answers[q.explain.key] = explain;
-      }
-    }
+  }
+
+  // Comments live in their own object, keyed by the question key, so pairing a
+  // comment to its question is a lookup. Only non-empty ones are stored — an
+  // untouched box leaves no trace, and a submission with nothing written has no
+  // `comments` key at all rather than eleven empty strings.
+  //
+  // There is no orphan case to clean up here. The old conditional box could be
+  // filled on "No" and then stranded by switching to "Yes", so buildSurveyPayload
+  // had to drop text whose revealing answer had changed. A comment box that is
+  // always visible belongs to the question however it was answered, so what the
+  // client wrote is what gets stored.
+  const comments: Record<string, string> = {};
+  for (const key of commentKeysFor(variant)) {
+    const text = input.comments?.[key];
+    if (typeof text === "string" && text !== "") comments[key] = text;
   }
 
   return {
@@ -179,16 +223,73 @@ export function buildSurveyPayload(
     client: {
       name: input.client.name,
       dateOfBirth: input.client.dateOfBirth,
-      ...(input.client.email ? { email: input.client.email } : {}),
+      email: input.client.email,
+      phone: input.client.phone,
     },
     answers,
+    ...(Object.keys(comments).length > 0 ? { comments } : {}),
   };
 }
 
 /**
- * Date-of-birth check, re-run server-side. The form blocks a bad date before
- * the client can advance, but a public endpoint cannot trust that.
+ * Identity checks, re-run server-side with the SAME shared rules the form uses,
+ * so the two cannot disagree about what is acceptable. The form blocks each of
+ * these before the client can advance; a public endpoint cannot trust that.
+ *
+ * Returns the first problem found together with the field it belongs to, so the
+ * route can name the field in its reply without ever echoing the VALUE back.
  */
 export function serverDateOfBirthProblem(value: string, now: Date): string | null {
   return dateOfBirthProblem(value, now);
+}
+
+/** The identity fields, in the order the form asks for them. */
+export const IDENTITY_FIELDS = ["name", "dateOfBirth", "email", "phone"] as const;
+export type IdentityField = typeof IDENTITY_FIELDS[number];
+
+/**
+ * The message for an identity field that is MISSING, as opposed to malformed.
+ *
+ * Zod catches an absent key before serverIdentityProblem ever runs, and its own
+ * issue text ("Required") is not something to put in front of a client. This
+ * reuses the same shared rules by asking them about an empty value, so the
+ * wording a client sees for "you left it out" is written in exactly one place.
+ */
+export function identityFieldMessage(field: IdentityField, now: Date): string {
+  switch (field) {
+    case "name": return legalNameProblem("") ?? "Please enter your legal name.";
+    case "dateOfBirth": return dateOfBirthProblem("", now) ?? "Please enter your date of birth.";
+    case "email": return emailProblem("") ?? "Please enter your email address.";
+    case "phone": return phoneProblem("") ?? "Please enter your phone number.";
+  }
+}
+
+/**
+ * Which identity field a Zod issue path points at, if any.
+ *
+ * Paths look like ["client", "phone"]. Used so a schema-level rejection can
+ * name the field just as precisely as serverIdentityProblem does — a client who
+ * left the phone blank should be told which box, not "check the form".
+ */
+export function identityFieldFromPath(path: (string | number)[]): IdentityField | null {
+  if (path[0] !== "client") return null;
+  const field = path[1];
+  return (IDENTITY_FIELDS as readonly unknown[]).includes(field)
+    ? (field as IdentityField)
+    : null;
+}
+
+export function serverIdentityProblem(
+  client: SurveySubmissionInput["client"],
+  now: Date,
+): { field: "name" | "dateOfBirth" | "email" | "phone"; message: string } | null {
+  const name = legalNameProblem(client.name);
+  if (name) return { field: "name", message: name };
+  const dob = dateOfBirthProblem(client.dateOfBirth, now);
+  if (dob) return { field: "dateOfBirth", message: dob };
+  const email = emailProblem(client.email);
+  if (email) return { field: "email", message: email };
+  const phone = phoneProblem(client.phone);
+  if (phone) return { field: "phone", message: phone };
+  return null;
 }

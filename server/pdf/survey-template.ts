@@ -20,19 +20,35 @@
  * included ("We're you greeted", "an technical difficulties", "of value" vs
  * "a value"). Anything that looks like a typo below came from that file.
  *
- * NOT ASKED vs NOT ANSWERED. The four "If no, please explain" boxes are only
- * shown on the form when the preceding answer is "No". So:
+ * COMMENTS. Since the 2026-09-03 client review every question carries an
+ * optional comment box that is visible whatever the answer, stored in a
+ * `comments` object keyed by question key. A comment renders directly under the
+ * answer it belongs to. An EMPTY one renders nothing at all — it is optional,
+ * so silence is not a refusal to answer and printing "not answered" under every
+ * question a client simply had no comment on would bury the ones they wrote.
+ *
+ * LEGACY "If no, please explain". Before that review, four Yes/No/N/A questions
+ * showed a conditional box that appeared only on a "No", stored inside
+ * `answers` at its own key. 32 submissions predate the change and 14 of those
+ * values exist. Nothing can write one any more, but this template is the
+ * clinical record of what those clients wrote, so it still renders them — under
+ * the question's own original prompt, so a reader sees the text beside the
+ * words that prompted it. New submissions have no such key and print nothing
+ * here.
+ *
+ * NOT ASKED vs NOT ANSWERED, for the legacy box only:
  *   - answer is not the revealing one  -> the box was never presented, and it
- *     is omitted from the PDF entirely
+ *     is omitted entirely
  *   - answer is "No" but the box was left empty -> it WAS presented and skipped,
  *     and the PDF says so explicitly
- * A reader of a chart can therefore tell a question that was never put to the
- * client from one they declined to answer. "Additional Comments" is always
- * presented, so a blank one always renders as not answered.
+ * "Additional Comments" is always presented, so a blank one always renders as
+ * not answered.
  */
 
 import type { FormSubmission } from "../sync/db";
 import {
+  COMMENT_PROMPT,
+  isCommentable,
   questionsFor,
   variantFromPath,
   type ChoiceQuestion,
@@ -69,8 +85,10 @@ interface SurveyPayload {
   formVariant?: unknown;
   modality?: unknown;
   submittedAt?: unknown;
-  client?: { name?: unknown; dateOfBirth?: unknown; email?: unknown };
+  client?: { name?: unknown; dateOfBirth?: unknown; email?: unknown; phone?: unknown };
   answers?: Record<string, unknown>;
+  /** Present only on submissions taken after 2026-09-03. */
+  comments?: Record<string, unknown>;
 }
 
 /** True when this row is a survey this builder can render. */
@@ -131,7 +149,11 @@ function sectionHeader(title: string): Content[] {
  * Render one question and, where applicable, its conditional explanation.
  * Returns the blocks in the order they should appear.
  */
-function renderQuestion(q: SurveyQuestion, answers: Record<string, unknown>): Content[] {
+function renderQuestion(
+  q: SurveyQuestion,
+  answers: Record<string, unknown>,
+  comments: Record<string, unknown>,
+): Content[] {
   const out: Content[] = [];
   const raw = answers[q.key];
 
@@ -141,13 +163,14 @@ function renderQuestion(q: SurveyQuestion, answers: Record<string, unknown>): Co
       const value = asString(raw);
       out.push(questionBlock(q.prompt, value ? [answerText(value)] : [notAnswered()], !!value));
 
-      // The conditional box, only if the form actually presented it.
+      // The retired conditional box, on pre-2026-09-03 rows only, and only if
+      // the form actually presented it. Never written any more; see the header.
       const cq = q as ChoiceQuestion;
-      if (cq.explain && value === cq.explain.revealOn) {
-        const detail = asString(answers[cq.explain.key]);
+      if (cq.legacyExplain && value === cq.legacyExplain.revealOn) {
+        const detail = asString(answers[cq.legacyExplain.key]);
         out.push({
           stack: [
-            { text: cq.explain.prompt, style: "subQuestion" },
+            { text: cq.legacyExplain.prompt, style: "subQuestion" },
             detail
               ? { text: detail, style: "answer", margin: [12, 2, 0, 0] }
               : { text: NOT_ANSWERED, style: "answerMuted", margin: [12, 2, 0, 0] },
@@ -203,6 +226,25 @@ function renderQuestion(q: SurveyQuestion, answers: Record<string, unknown>): Co
     }
   }
 
+  // The client's own comment on this question, if they left one.
+  //
+  // NOT `unbreakable`: a comment can run to a thousand characters and there are
+  // eleven of them, so it has to be free to flow onto the next page. The
+  // question above it is already unbreakable with its answer, which is what
+  // keeps a prompt from being orphaned at a page foot.
+  if (isCommentable(q)) {
+    const comment = asString(comments[q.key]);
+    if (comment) {
+      out.push({
+        stack: [
+          { text: COMMENT_PROMPT, style: "subQuestion" },
+          { text: comment, style: "answer", margin: [12, 2, 0, 0] },
+        ],
+        margin: [16, -4, 0, 11],
+      });
+    }
+  }
+
   return out;
 }
 
@@ -212,11 +254,16 @@ export function buildSurveyDocument(submission: FormSubmission): Record<string, 
     "in-person") as SurveyVariant;
   const questions = questionsFor(variant);
   const answers = (payload.answers ?? {}) as Record<string, unknown>;
+  // Absent on every submission taken before 2026-09-03 — an empty object, so
+  // every lookup below simply finds nothing and prints nothing.
+  const comments = (payload.comments ?? {}) as Record<string, unknown>;
 
   const modality = asString(payload.modality) ?? (variant === "telehealth" ? "Telehealth" : "In Person");
   const clientName = asString(payload.client?.name) ?? submission.name ?? "";
   const dob = formatDob(asString(payload.client?.dateOfBirth));
   const email = asString(payload.client?.email);
+  // Collected from 2026-09-03. Older rows have none; the line is then omitted.
+  const phone = asString(payload.client?.phone);
 
   const submittedDate =
     formatDate(asString(payload.submittedAt) ?? submission.submittedAt) ??
@@ -239,6 +286,7 @@ export function buildSurveyDocument(submission: FormSubmission): Record<string, 
             { text: clientName, style: "contactName" },
             ...(dob ? [{ text: `Date of Birth: ${dob}`, style: "contactMeta" }] : []),
             ...(email ? [{ text: email, style: "contactMeta" }] : []),
+            ...(phone ? [{ text: phone, style: "contactMeta" }] : []),
           ],
         },
         {
@@ -262,7 +310,7 @@ export function buildSurveyDocument(submission: FormSubmission): Record<string, 
   // --- Responses: every question, in the order the form asked them -------
   const responses: Content[] = [];
   for (const q of questions) {
-    responses.push(...renderQuestion(q, answers));
+    responses.push(...renderQuestion(q, answers, comments));
   }
 
   const content: Content[] = [

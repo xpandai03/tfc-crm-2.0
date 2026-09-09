@@ -7124,7 +7124,7 @@ export async function registerRoutes(
       const candidates = await getContactIdentities(state?.candidateIds ?? []);
 
       const payload = submission.payload as {
-        client?: { name?: string; dateOfBirth?: string; email?: string };
+        client?: { name?: string; dateOfBirth?: string; email?: string; phone?: string };
         answers?: Record<string, unknown>;
         modality?: string;
       };
@@ -7137,6 +7137,10 @@ export async function registerRoutes(
         typed: {
           name: payload.client?.name ?? submission.name ?? "",
           dateOfBirth: payload.client?.dateOfBirth ?? null,
+          // Collected from 2026-09-03. Null on the submissions that predate it,
+          // and the dialog renders those the same way it already renders a
+          // missing email — as an em dash, not as an error.
+          phone: payload.client?.phone ?? null,
           email: payload.client?.email ?? null,
         },
         modality: payload.modality ?? null,

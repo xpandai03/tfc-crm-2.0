@@ -106,11 +106,15 @@ interface MatchCounts {
 type MatchFilter = "all" | "review" | "matched" | "no_contact";
 
 /**
- * A survey row's payload holds free text a client typed — the "Additional
- * Comments" box and up to four "If no, please explain" boxes. Those five fields
- * can contain anything, including clinical detail about someone who is not the
- * submitter, so they are kept out of the list summary AND out of the raw-payload
- * viewer. This predicate is the single gate for both; see the note above
+ * A survey row's payload holds free text a client typed. Since the 2026-09-03
+ * client review that is the "Additional Comments" box PLUS an optional comment
+ * on every one of the other eleven questions — twelve free-text fields, where
+ * there used to be five, all of them stored in the row.
+ *
+ * Any of them can contain anything, including clinical detail about someone who
+ * is not the submitter, so they are kept out of the list summary AND out of the
+ * raw-payload viewer. More fields makes that exclusion matter more, not less.
+ * This predicate is the single gate for both; see the note above
  * RawPayloadModal.
  */
 function isSurveySubmission(sub: FormSubmission): boolean {
@@ -148,6 +152,15 @@ function getSubmissionSummary(sub: FormSubmission): { title: string; subtitle: s
   // any free text: the Feedback branch below puts an 80-character comment
   // excerpt straight into `meta`, and that is exactly what must not happen for
   // a survey. See isSurveySubmission().
+  //
+  // Nor does it show identity beyond the name already in the row: phone and
+  // email are on the review dialog, which is the screen whose job is identity
+  // and which is reached deliberately. A list is scanned over someone's
+  // shoulder; a dialog is opened.
+  //
+  // `p.comments` is never read here. Every field below is an ANSWER, and the
+  // shape keeps comments in their own object precisely so that reading one by
+  // accident is not possible from this function.
   if (isSurveySubmission(sub)) {
     const answers = (p.answers ?? {}) as Record<string, unknown>;
     const modality = s(p.modality) || "Survey";
@@ -217,10 +230,10 @@ function getSubmissionSummary(sub: FormSubmission): { title: string; subtitle: s
  * Raw payload viewer.
  *
  * NOT AVAILABLE FOR SURVEY ROWS. A survey payload contains the client's own
- * free text — "Additional Comments" plus up to four "If no, please explain"
- * boxes — which can carry anything they chose to write, including clinical
- * detail about a third party. Keeping that text out of the list row while
- * leaving a one-click JSON dump beside it would be theatre.
+ * free text — "Additional Comments" plus, since 2026-09-03, an optional comment
+ * on every other question — which can carry anything they chose to write,
+ * including clinical detail about a third party. Keeping that text out of the
+ * list row while leaving a one-click JSON dump beside it would be theatre.
  *
  * The gate is here as well as on the button so a survey row cannot reach this
  * modal through any future call site.
