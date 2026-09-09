@@ -27,6 +27,7 @@ import { REFERRAL_REPORT_STATUS_LABELS } from "../sync/db";
 import { getStatusBucket, STATUS_BUCKET_LABELS, type StatusBucket } from "@shared/status-buckets";
 import { DASHBOARD_LOCATIONS, locationIdForContact } from "@shared/dashboard-locations";
 import { SERVICE_TYPE_LABELS, SERVICE_TYPE_COLUMNS, ORIGIN_COLUMNS, ORIGIN_LABELS, type OriginColumn } from "../dashboard/db";
+import { AGE_BASIS_NOTE, bandedServiceType } from "@shared/age-bands";
 
 /**
  * WHY sync_contacts.date_added AND NOT form_submissions.created_at
@@ -108,6 +109,10 @@ export interface CohortRow {
   status_code: number | null;
   requesting_for: string | null;
   intake_source: string | null;
+  /** Free-text date of birth. Read ONLY to derive the Minor/Adolescent band. */
+  patient_dob: string | null;
+  /** The referral date. THE reference date this report bands children by. */
+  date_added: string | null;
   legacy_sheet: boolean;
   n: number;
 }
@@ -160,13 +165,28 @@ function originFor(intakeSource: string | null, legacySheet: boolean): OriginCol
 }
 
 /** The cohort query. Exported so the pivot can be verified against real rows. */
+/**
+ * patient_dob and date_added JOINED THE GROUP BY on 2026-09-09, so a child can
+ * be banded Minor / Adolescent / 18+ by their age ON THE REFERRAL DATE.
+ *
+ * THIS IS THE PROPERTY THE WHOLE APPROACH EXISTS TO PROTECT. Both inputs are
+ * stored facts that never change, so August's report returns identical numbers
+ * whether it is run in September or in December — a child who was 13 in August
+ * is counted as a Minor in August's report forever, even after they turn 14.
+ * Banding by today's date instead would make last month's numbers drift every
+ * time someone re-opened the report.
+ *
+ * Cardinality: grouping by two near-unique columns collapses this to roughly
+ * one row per contact IN THE PERIOD — tens to low hundreds. Negligible.
+ */
 export const COHORT_SQL = `SELECT
        modality_p1, modality, status_code, requesting_for, intake_source,
+       patient_dob, date_added,
        (contact_id < $3) AS legacy_sheet,
        count(*)::int AS n
      FROM sync_contacts
      WHERE date_added >= $1 AND date_added < $2
-     GROUP BY 1,2,3,4,5,6`;
+     GROUP BY 1,2,3,4,5,6,7,8`;
 
 export async function buildMonthlyReport(period: string): Promise<MonthlyReport> {
   const { start, endExclusive } = resolvePeriod(period);
@@ -235,7 +255,9 @@ export function assembleMonthlyReport(
     byOrigin.total += n;
 
     // --- service type -------------------------------------------------------
-    const svc = (row.requesting_for ?? "").trim();
+    // Banded by the child's age ON THE REFERRAL DATE, not today — see
+    // COHORT_SQL. Every other service type passes through unchanged.
+    const svc = bandedServiceType(row.requesting_for, row.patient_dob, row.date_added);
     if (!svc) byServiceType.unknown += n;
     else if (svc in SERVICE_TYPE_LABELS) byServiceType.counts[svc] += n;
     else byServiceType.other += n;

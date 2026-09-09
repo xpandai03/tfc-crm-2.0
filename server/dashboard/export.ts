@@ -23,6 +23,7 @@ import {
 } from "./db";
 import { embedImages, type SheetImage } from "./xlsx-images";
 import { PIPELINE_BUCKETS } from "@shared/status-buckets";
+import { AGE_BASIS_NOTE } from "@shared/age-bands";
 
 type AOA = (string | number)[][];
 
@@ -103,6 +104,10 @@ export function buildWorkbookFromSummary(
     ["Pipeline definition", `Pipeline = ${PIPELINE_BUCKETS.join(" + ")}`],
     ["Counting rule", "Per contact, by first-choice modality (P1) only — nobody is counted twice."],
     ["Other / Unmapped", "Records whose insurance value is not one of the approved payers. Shown, never dropped, so columns reconcile."],
+    // This workbook is a dump of the dashboard payload, so it carries the
+    // dashboard's basis — age today — and says so. The monthly report and the
+    // referral CSV band by the referral date instead, and both say that too.
+    ["Minor / Adolescent", AGE_BASIS_NOTE.today],
     [],
     ["HEADLINE FIGURES"],
     ["All contacts on record", summary.totals.all],

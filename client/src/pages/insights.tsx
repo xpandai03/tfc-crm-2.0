@@ -39,6 +39,7 @@ import {
 } from "@/lib/status-config";
 import type { WaitlistSummary, WaitlistContact } from "@shared/schema";
 import { bucketReason } from "@shared/reason-canonicals";
+import { bandedServiceType } from "@shared/age-bands";
 
 /** Per-row counts for Insights breakdown cards (operations ⊆ pipeline). */
 type BreakdownDualCounts = { operations: number; pipeline: number };
@@ -285,15 +286,25 @@ export default function Insights() {
       INSIGHTS_PIPELINE_STATUS_SET.has(getContactStatusCode(c)),
     );
 
-    // Service type distribution — grouped by requestingFor (WHO), not reason (WHAT)
+    // Service type distribution — grouped by requestingFor (WHO), not reason (WHAT).
+    //
+    // Banded AS OF TODAY: a child appears as Minor / Adolescent / 18+ from their
+    // date of birth. Insights is an operational view of the CURRENT board — it
+    // has no period and re-computes from whatever is on screen — so it matches
+    // the waitlist it drills through to, not the monthly report. Every other
+    // service type is unchanged.
+    const bandOf = (c: unknown): string => {
+      const r = c as { requestingFor?: string | null; patientDob?: string | null };
+      return bandedServiceType(r.requestingFor, r.patientDob) || "Unknown";
+    };
     const serviceTypes: Record<string, BreakdownDualCounts> = {};
     for (const c of operationsContacts) {
-      const service = (c as { requestingFor?: string | null }).requestingFor?.trim() || "Unknown";
+      const service = bandOf(c);
       if (!serviceTypes[service]) serviceTypes[service] = { operations: 0, pipeline: 0 };
       serviceTypes[service].operations++;
     }
     for (const c of pipelineContacts) {
-      const service = (c as { requestingFor?: string | null }).requestingFor?.trim() || "Unknown";
+      const service = bandOf(c);
       if (!serviceTypes[service]) serviceTypes[service] = { operations: 0, pipeline: 0 };
       serviceTypes[service].pipeline++;
     }

@@ -34,6 +34,7 @@ import { STATUS_UMBRELLAS, type UmbrellaId } from "@/lib/status-config";
 import { abbreviateInsurance } from "@shared/insurance";
 import { getModalityPriorities, MODALITY_SHORT_LABELS } from "@shared/modality-utils";
 import type { WaitlistContact } from "@shared/schema";
+import { bandedServiceType } from "@shared/age-bands";
 
 /**
  * MM/DD/YYYY for the list. Handles the ISO strings the CRM stores and the Excel
@@ -300,7 +301,15 @@ export const WAITLIST_COLUMNS: WaitlistColumnDef[] = [
     defaultVisible: true,
     widthClass: "w-[116px] px-2",
     cellClass: "px-2 text-xs text-muted-foreground",
-    render: (contact) => contact.requestingFor ?? contact.serviceRequested ?? "—",
+    // Shows the BANDED service type: a child appears as Minor / Adolescent /
+    // 18+ from their date of birth, as of today. "Everywhere that there's
+    // service types, we want to be able to see adolescent versus minor"
+    // (client, 26 August) — this column is one of those places.
+    // Every other service type renders exactly as before.
+    render: (contact) =>
+      (contact.requestingFor
+        ? bandedServiceType(contact.requestingFor, contact.patientDob)
+        : contact.serviceRequested) || "—",
   },
   {
     id: "insurance",
