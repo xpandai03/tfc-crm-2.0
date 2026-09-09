@@ -9,7 +9,11 @@
  * Option values are READ from the shared modules that back the SERVER-SIDE
  * normalizers (not hardcoded guesses), so a selected filter round-trips to the
  * exact normalized value the export column shows:
- *   - service type  → normalizeServiceType (server/sync/db.ts) canonical strings
+ *   - service type  → SERVICE_TYPES (shared), the same list the server's
+ *                     normalizeServiceType folds to. This file kept its own
+ *                     hand-maintained copy of those five strings until
+ *                     2026-09-09 — three lines under this comment claiming it
+ *                     read from shared modules. It now actually does.
  *   - modality      → distinct buckets of MODALITY_NORMALIZATION_MAP (shared)
  *   - insurance     → ACCEPTED_INSURANCES (shared) + Unknown
  *   - status        → STATUS_LABELS (client status-config)
@@ -46,13 +50,10 @@ import { useToast } from "@/hooks/use-toast";
 import { ACCEPTED_INSURANCES } from "@shared/insurance-utils";
 import { MODALITY_NORMALIZATION_MAP } from "@shared/modality-utils";
 import { STATUS_LABELS } from "@/lib/status-config";
+import { SERVICE_TYPES } from "@shared/service-types";
 
 // Radix <Select> forbids an empty-string item value, so use a sentinel for "Any".
 const ANY = "__any__";
-
-// Canonical service-type strings the server's normalizeServiceType folds to.
-// Sending the canonical string round-trips (see server/sync/db.ts).
-const SERVICE_TYPES = ["Myself", "My Child", "My Partner & Myself", "My Family", "Other"] as const;
 
 // Friendly labels + preferred order for the modality buckets. The bucket VALUES
 // themselves are derived from the shared map below (source of truth); anything
