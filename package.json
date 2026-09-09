@@ -27,7 +27,9 @@
     "test:report-delivery": "tsx --tsconfig tsconfig.test.json scripts/verify-report-delivery.ts",
     "test:tn-dob": "tsx scripts/test-tn-dob-normalisation.ts",
     "test:tn-clinician": "tsx scripts/test-tn-clinician-name.ts",
-    "test:survey-fields": "tsx scripts/test-survey-fields.ts"
+    "test:survey-fields": "tsx scripts/test-survey-fields.ts",
+    "test:survey-matching": "tsx scripts/test-survey-matching.ts",
+    "test:survey-matching-run": "tsx scripts/test-survey-matching-run.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1034.0",

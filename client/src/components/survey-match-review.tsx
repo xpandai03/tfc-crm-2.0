@@ -22,12 +22,16 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, UserCheck, UserX, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { failedFieldFor, reasonText } from "@shared/survey-match-reasons";
 
 interface ContactIdentity {
   contactId: number;
   name: string;
   email: string | null;
+  phone: string | null;
   patientDob: string | null;
+  /** Most recent provider assignment. The couples discriminator. */
+  assignedProvider: string | null;
 }
 
 interface ReviewPayload {
@@ -46,23 +50,31 @@ interface ReviewPayload {
   candidates: ContactIdentity[];
 }
 
-/** Reason codes the matcher stores -> what a staff member should read.
- *  Human resolutions store a sentence already, so anything unrecognised is
- *  passed through unchanged. Mirrors REASON_LABEL in server/survey/matching.ts. */
-const REASON_TEXT: Record<string, string> = {
-  name_dob_email: "Matched on name, date of birth and email",
-  name_dob: "Matched on name and date of birth",
-  unparseable_dob: "The date of birth could not be read",
-  no_candidates: "No contact matched on both name and date of birth",
-  multiple_candidates: "More than one contact matched — too ambiguous to choose",
-  email_contradiction: "The email address belongs to a different contact than the name and date of birth point to",
-};
+// Reason text comes from @shared/survey-match-reasons — the SAME map the
+// matcher and the submissions list read. This file used to keep its own copy
+// and so did the list, and the two had already drifted in wording; six new
+// codes would have made that three places to remember. reasonText() passes a
+// human resolution's own sentence through unchanged.
 
-function Field({ label, value }: { label: string; value: string | null }) {
+/**
+ * One typed identity field.
+ *
+ * `flagged` marks the field the matcher says decided the outcome — the
+ * machine-readable half of "say why it threw the error". A reviewer opening a
+ * row should not have to read a sentence and then work out which of five boxes
+ * it is talking about.
+ */
+function Field({
+  label, value, flagged,
+}: { label: string; value: string | null; flagged?: boolean }) {
   return (
     <div className="flex gap-2 text-sm">
-      <span className="text-muted-foreground w-28 shrink-0">{label}</span>
-      <span className="font-medium">{value || <span className="text-muted-foreground italic">not given</span>}</span>
+      <span className={`w-28 shrink-0 ${flagged ? "text-amber-700 font-medium" : "text-muted-foreground"}`}>
+        {label}
+      </span>
+      <span className={`font-medium ${flagged ? "text-amber-800" : ""}`}>
+        {value || <span className="text-muted-foreground italic">not given</span>}
+      </span>
     </div>
   );
 }
@@ -118,6 +130,11 @@ export function SurveyMatchReviewDialog({
   });
 
   const busy = resolve.isPending;
+  // Only highlight a field on a row that is actually awaiting a decision — on a
+  // matched row the same code names what the match RESTED on, and colouring
+  // that amber would read as a problem.
+  const failed =
+    data?.state && data.state.status === "review" ? failedFieldFor(data.state.reason) : null;
 
   return (
     <Dialog open={submissionId !== null} onOpenChange={(o) => !o && !busy && onClose()}>
@@ -142,18 +159,18 @@ export function SurveyMatchReviewDialog({
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
                 What the client typed
               </p>
-              <Field label="Legal name" value={data.typed.name} />
-              <Field label="Date of birth" value={data.typed.dateOfBirth} />
-              <Field label="Phone" value={data.typed.phone} />
-              <Field label="Email" value={data.typed.email} />
-              <Field label="Therapist" value={data.therapist} />
+              <Field label="Legal name" value={data.typed.name} flagged={failed === "name"} />
+              <Field label="Date of birth" value={data.typed.dateOfBirth} flagged={failed === "dateOfBirth"} />
+              <Field label="Phone" value={data.typed.phone} flagged={failed === "phone"} />
+              <Field label="Email" value={data.typed.email} flagged={failed === "email"} />
+              <Field label="Therapist" value={data.therapist} flagged={failed === "provider"} />
               <Field label="Modality" value={data.modality} />
             </div>
 
             {data.state && (
               <div className="flex items-start gap-2 text-xs text-muted-foreground">
                 <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                <span>{REASON_TEXT[data.state.reason] ?? data.state.reason}</span>
+                <span>{reasonText(data.state.reason)}</span>
               </div>
             )}
 
@@ -191,8 +208,15 @@ export function SurveyMatchReviewDialog({
                             #{c.contactId}
                           </Badge>
                         </div>
+                        {/* Identity only. The assigned provider is here because
+                            it is the field that separates a couple recorded
+                            under one account — when the automatic tiebreak
+                            declined, this is what a reviewer decides on. */}
                         <div className="text-xs text-muted-foreground mt-1">
-                          DOB {c.patientDob || "—"} · {c.email || "no email"}
+                          DOB {c.patientDob || "—"} · {c.phone || "no phone"} · {c.email || "no email"}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          Provider: {c.assignedProvider || "none assigned"}
                         </div>
                       </button>
                     );
