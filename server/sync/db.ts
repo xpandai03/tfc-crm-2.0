@@ -19,6 +19,7 @@ import {
   getUmbrellaForStatusCode,
 } from "@shared/status-codes";
 import { normalizeInsurance } from "@shared/insurance-utils";
+import { bandedServiceType } from "@shared/age-bands";
 import { matchesInsurance } from "@shared/insurance";
 import {
   normalizeModality,
@@ -1196,6 +1197,17 @@ function resolveAge(ageCol: unknown, dob: unknown): number | null {
   return age;
 }
 
+/**
+ * LEGACY WORDING, DELIBERATELY FROZEN. This backs the referral CSV's existing
+ * "Age Bucket" column, which the client already receives — so its strings stay
+ * exactly as they were rather than adopting the new Minor / Adolescent wording.
+ * The new banding ships as a SEPARATE column ("Service Type (age at referral)")
+ * so nothing already in use changes underneath a reader.
+ *
+ * The boundaries are identical to bandForAge() in @shared/age-bands; only the
+ * labels differ. Retire this once the client confirms they are happy for the
+ * old column to adopt the new words.
+ */
 function ageBucket(age: number | null): string {
   if (age === null) return "Age Unknown";
   if (age < 14) return "Child (<14)";
@@ -1304,6 +1316,23 @@ export async function getReferralReportData(params: ReferralReportParams): Promi
       "Referral Date": formatMtDateTime(r.created_at),
       "Contact ID": contactId,
       "Service Type": serviceType,
+      // ADDED 2026-09-09. "My Child" split into Minor / Adolescent / 18+ by the
+      // child's age ON THE REFERRAL DATE, so re-running a past range returns
+      // identical values. The basis is in the COLUMN HEADING on purpose: this
+      // sheet can sit beside the dashboard, which bands by age today, and the
+      // two can legitimately disagree about a child who just had a birthday.
+      //
+      // The "Age" and "Age Bucket" columns below are UNCHANGED — same headings,
+      // same wording ("Child (<14)"), same computation. They are in a report the
+      // client already receives weekly, and silently changing a column's values
+      // or its labels is the kind of surprise that gets reported as a bug.
+      "Service Type (age at referral)": bandedServiceType(
+        serviceType,
+        r.patient_dob,
+        // created_at is a timestamptz; ReferenceDate truncates it to its
+        // calendar date, because a birthday is a date and not an instant.
+        r.created_at as Date | string,
+      ),
       "Age": age === null ? "" : age,
       "Age Bucket": ageBucket(age),
       "Modality (raw)": modalityRaw,

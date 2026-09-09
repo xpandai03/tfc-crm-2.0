@@ -180,17 +180,29 @@ ok("an expected refusal is not shown as a destructive toast",
   /title: "Not filed", description: attachFailureText\(r\.reason\) \}\)/.test(pageSrc));
 
 console.log("\n[8] Nothing else in the repository was disturbed");
-const changed = execSync("git diff --name-only HEAD", { encoding: "utf8" }).trim().split("\n").filter(Boolean);
+// Pinned to the commit that shipped this build rather than to HEAD. Comparing
+// against HEAD held while the work was in flight and says nothing once it is
+// committed and later builds land on top — it then flags THEIR files, not ours.
+const ATTACH_COMMIT = "8b81184";
+const changed = execSync(`git diff --name-only ${ATTACH_COMMIT}^ ${ATTACH_COMMIT}`, { encoding: "utf8" })
+  .trim().split("\n").filter(Boolean);
 const expected = [
   "client/src/pages/submissions.tsx",
   "package.json",
+  "scripts/test-survey-attach-claim.ts",
+  "scripts/test-survey-attach.ts",
+  "scripts/test-tn-partial-success.ts",
   "server/activity/db.ts",
   "server/index.ts",
   "server/reminders/cron.ts",
   "server/reminders/index.ts",
   "server/routes.ts",
+  "server/survey/attach-db.ts",
+  "server/survey/attach-routes.ts",
+  "server/survey/attach-runner.ts",
+  "shared/survey-attach-reasons.ts",
 ];
-eq("only the expected tracked files changed", changed.sort(), expected.sort());
+eq("this build touched exactly the files it should have", changed.sort(), expected.sort());
 ok("the partial-success work is committed and untouched",
   !changed.includes("client/src/lib/tn-run-state.ts"));
 const untracked = execSync("git ls-files --others --exclude-standard", { encoding: "utf8" }).trim().split("\n").filter(Boolean);

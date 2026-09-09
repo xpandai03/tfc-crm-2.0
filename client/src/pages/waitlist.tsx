@@ -28,6 +28,7 @@ import { getViewPrefs } from "@/lib/api";
 import { CANONICAL_INSURANCES } from "@shared/insurance";
 import { MODALITY_OPTIONS } from "@shared/modality-utils";
 import { SERVICE_TYPES } from "@shared/service-types";
+import { AGE_BANDS } from "@shared/age-bands";
 import { REASON_CANONICALS } from "@shared/reason-canonicals";
 import { QuickNoteModal } from "@/components/ui/quick-note-modal";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
@@ -212,7 +213,11 @@ export default function Waitlist() {
       modality: [...MODALITY_OPTIONS, "Unknown"],
       language: ["English", "Spanish"],
       reason: [...REASON_CANONICALS],
-      serviceType: [...SERVICE_TYPES],
+      // The bands are legitimate filter values (the dashboard drills through to
+      // them), so a saved view holding "Adolescent" must survive a restore.
+      // Without them here, applyViewPreferences silently resets the filter and
+      // tells the user their Service Type filter was dropped.
+      serviceType: [...SERVICE_TYPES, ...AGE_BANDS],
     },
     canUseStaffFilter: canStaffFilter,
     validSortFields: ["daysOnWaitlist", "dateAdded", "name"],

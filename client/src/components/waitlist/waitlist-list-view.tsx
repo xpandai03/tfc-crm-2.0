@@ -66,6 +66,7 @@ import {
 } from "@shared/modality-utils";
 import { getAttentionFlags } from "@/lib/api";
 import type { WaitlistContact } from "@shared/schema";
+import { bandedServiceType } from "@shared/age-bands";
 
 /**
  * The list view's live filter state, surfaced to the parent so the Export button
@@ -556,10 +557,24 @@ export function WaitlistListView({
         }
       }
 
-      // Service Type filter — single-value, matches contact.requestingFor exactly
+      // Service Type filter — single-value.
+      //
+      // Compares against the BANDED value, not the stored string: since
+      // 2026-09-09 a "My Child" record shows as Minor / Adolescent / 18+ from
+      // its date of birth. Comparing the raw string would make the dashboard's
+      // new Minor and Adolescent columns drill through to an empty list, which
+      // is the first thing anyone would notice.
+      //
+      // AS OF TODAY, deliberately. This is an operational screen: someone
+      // looking for a therapist needs the child's age now, not at referral. The
+      // monthly report and the referral CSV band by the referral date instead,
+      // and both surfaces say which they are doing.
+      //
+      // bandedServiceType returns every other service type untouched, so
+      // Myself / Couple / Family filtering is byte-for-byte what it was.
       if (serviceTypeFilter !== "all") {
-        const requestingFor = (contact as { requestingFor?: string | null }).requestingFor?.trim() ?? "";
-        if (requestingFor !== serviceTypeFilter) {
+        const c = contact as { requestingFor?: string | null; patientDob?: string | null };
+        if (bandedServiceType(c.requestingFor, c.patientDob) !== serviceTypeFilter) {
           return false;
         }
       }

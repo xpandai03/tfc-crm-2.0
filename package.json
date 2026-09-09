@@ -31,6 +31,7 @@
     "test:survey-matching": "tsx scripts/test-survey-matching.ts",
     "test:survey-matching-run": "tsx scripts/test-survey-matching-run.ts",
     "test:tn-partial": "tsx scripts/test-tn-partial-success.ts",
+    "test:age-bands": "tsx scripts/test-age-bands.ts",
     "test:survey-attach": "tsx scripts/test-survey-attach.ts",
     "test:survey-attach-claim": "tsx scripts/test-survey-attach-claim.ts"
   },

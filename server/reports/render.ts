@@ -14,6 +14,7 @@ import * as XLSX from "xlsx";
 import type { MonthlyReport, CohortBreakdown } from "./monthly";
 import { COHORT_LABELS } from "./monthly";
 import { DASHBOARD_LOCATIONS } from "@shared/dashboard-locations";
+import { AGE_BASIS_NOTE } from "@shared/age-bands";
 
 const esc = (s: unknown): string =>
   String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -122,6 +123,7 @@ export function renderMonthlyReportHtml(r: MonthlyReport): string {
     breakdownRows(c.byLocation, COHORT_LABELS.location), c.size)}
   ${htmlTable(["Requested for", "Referrals"],
     breakdownRows(c.byServiceType, COHORT_LABELS.serviceType), c.size)}
+  <p style="font-size:11px;color:#6b7280;margin:2px 0 0">${AGE_BASIS_NOTE.referral}</p>
   `}
 
   <!-- ==================== REFERRAL ORIGIN ==================== -->
@@ -214,15 +216,19 @@ export function renderMonthlyReportXlsx(r: MonthlyReport): Buffer {
 
   const breakdownSheet = (
     name: string, header: string, b: CohortBreakdown, labels: Record<string, string>,
+    /** Optional footnote under the total — used to state the age basis. */
+    note?: string,
   ) => addSheet(name, [
     [header, "Referrals"],
     ...breakdownRows(b, labels),
     ["Total", b.total],
+    ...(note ? [[], [note]] : []),
   ]);
 
   breakdownSheet("Period by Status", "Current status", c.byStatusBucket, COHORT_LABELS.statusBucket);
   breakdownSheet("Period by Origin", "Referral channel", c.byOrigin, COHORT_LABELS.origin);
-  breakdownSheet("Period by Service Type", "Requested for", c.byServiceType, COHORT_LABELS.serviceType);
+  breakdownSheet("Period by Service Type", "Requested for", c.byServiceType, COHORT_LABELS.serviceType,
+    AGE_BASIS_NOTE.referral);
   breakdownSheet("Period by Location", "Location", c.byLocation, COHORT_LABELS.location);
 
   addSheet("Period Status Detail", [

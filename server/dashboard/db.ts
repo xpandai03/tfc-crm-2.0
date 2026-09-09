@@ -38,6 +38,10 @@ import {
 } from "@shared/dashboard-locations";
 import { CANONICAL_INSURANCES, isCanonicalInsurance } from "@shared/insurance";
 import { SERVICE_TYPES } from "@shared/service-types";
+import {
+  AGE_BAND_ADOLESCENT, AGE_BAND_ADULT, AGE_BAND_MINOR, AGE_BASIS_NOTE,
+  bandedServiceType,
+} from "@shared/age-bands";
 
 export type Population = "active" | "all";
 
@@ -51,15 +55,43 @@ export type Population = "active" | "all";
  */
 export const SERVICE_TYPE_LABELS: Record<string, string> = {
   "Myself": "Individual",
-  "My Child": "Child",
+  [AGE_BAND_MINOR]: "Minor (13 & under)",
+  [AGE_BAND_ADOLESCENT]: "Adolescent (14-17)",
+  [AGE_BAND_ADULT]: "18+",
   "My Partner & Myself": "Couple",
   "My Family": "Family",
 };
 
-/** Service-type values that get their own column, in display order. */
-export const SERVICE_TYPE_COLUMNS: readonly string[] = SERVICE_TYPES.filter(
-  (s) => s in SERVICE_TYPE_LABELS,
+/**
+ * Service-type values that get their own column, in display order.
+ *
+ * "My Child" no longer appears: since 2026-09-09 a child referral is banded by
+ * age into Minor / Adolescent / 18+ (client request, 26 August). The three
+ * bands partition EXACTLY the rows the single "Child" column covered — nothing
+ * else was touched, and Individual / Couple / Family are unchanged.
+ *
+ * Built by substitution rather than by a hand-written list, so the surviving
+ * service types keep their canonical order and a future addition to
+ * SERVICE_TYPES still flows through.
+ */
+export const SERVICE_TYPE_COLUMNS: readonly string[] = SERVICE_TYPES.flatMap((s) =>
+  s === "My Child"
+    ? [AGE_BAND_MINOR, AGE_BAND_ADOLESCENT, AGE_BAND_ADULT]
+    : (s in SERVICE_TYPE_LABELS ? [s] : []),
 );
+
+/**
+ * WHICH REFERENCE DATE THIS SURFACE USES: TODAY.
+ *
+ * The dashboard is a live picture of who is on the list right now — it has no
+ * period and cannot be re-run for August, so reproducibility does not apply to
+ * it. What does apply is that clicking a column drills through to the waitlist,
+ * and the waitlist necessarily bands by age today. Banding the dashboard by
+ * referral date instead would make a column say 103 and the list it opens show
+ * a different set, silently. The monthly report and the referral CSV — which do
+ * have periods and must reproduce — band by the referral date instead.
+ */
+export const DASHBOARD_AGE_BASIS = AGE_BASIS_NOTE.today;
 
 /** Origin categories. The partition is total — every row lands in exactly one. */
 export const ORIGIN_COLUMNS = ["rfs_form", "fax_referral", "legacy_sheet"] as const;
@@ -85,6 +117,8 @@ interface GroupRow {
   requesting_for: string | null;
   insurance_payer: string | null;
   intake_source: string | null;
+  /** Free-text date of birth. Read ONLY to derive the Minor/Adolescent band. */
+  patient_dob: string | null;
   legacy_sheet: boolean;
   n: number;
 }
@@ -250,7 +284,27 @@ function originFor(intakeSource: string | null, legacySheet: boolean): OriginCol
   return legacySheet ? "legacy_sheet" : "rfs_form";
 }
 
-/** The one SELECT. Exported so the pivot can be verified against real rows. */
+/**
+ * The one SELECT. Exported so the pivot can be verified against real rows.
+ *
+ * patient_dob JOINED THE GROUP BY on 2026-09-09, so "My Child" can be split
+ * into Minor / Adolescent / 18+. The band is computed in TypeScript by
+ * ageBandAsOf (@shared/age-bands) rather than by a CASE expression here, on
+ * purpose: a SQL version would restate the 13/14/17/18 boundaries in a second
+ * place, and this codebase has been bitten repeatedly by exactly that — five
+ * divergent modality normalisers, two insurance lists, two service-type lists.
+ * One definition of the boundaries, in the module both the screen and the
+ * reports read.
+ *
+ * It also avoids parsing a free-text date column in SQL. patient_dob holds
+ * mixed formats and a to_date() over it throws on the malformed rows — the
+ * reason server/survey/match-db.ts loads identities into memory rather than
+ * filtering in SQL.
+ *
+ * COST: grouping by a near-unique column collapses the aggregate to roughly one
+ * row per contact — ~1,275 today against a few hundred before. On a table this
+ * size that is nothing, and it buys a single source of truth for the bands.
+ */
 export const DASHBOARD_GROUP_SQL = `SELECT
        modality_p1,
        modality,
@@ -258,10 +312,11 @@ export const DASHBOARD_GROUP_SQL = `SELECT
        requesting_for,
        insurance_payer,
        intake_source,
+       patient_dob,
        (contact_id < $1) AS legacy_sheet,
        count(*)::int AS n
      FROM sync_contacts
-     GROUP BY 1,2,3,4,5,6,7`;
+     GROUP BY 1,2,3,4,5,6,7,8`;
 
 /**
  * Build the whole dashboard payload.
@@ -334,7 +389,10 @@ function buildCrossTabSet(
     const locationId = locationIdForContact({
       modalityP1: row.modality_p1, modality: row.modality,
     });
-    const svc = (row.requesting_for ?? "").trim();
+    // "My Child" becomes Minor / Adolescent / 18+ from the date of birth, as of
+    // TODAY (see DASHBOARD_AGE_BASIS). Every other service type is returned
+    // unchanged, so nothing but the child column is affected.
+    const svc = bandedServiceType(row.requesting_for, row.patient_dob);
     const svcIsCanonical = svc in SERVICE_TYPE_LABELS;
     const ins = (row.insurance_payer ?? "").trim();
     const insIsCanonical = !!ins && isCanonicalInsurance(ins);
@@ -474,7 +532,11 @@ export function pivotDashboard(
 
     // --- Service type -------------------------------------------------------
     const svcRow = serviceRows.get(locationId)!;
-    const svc = (row.requesting_for ?? "").trim();
+    // Banded as above. A child row whose date of birth cannot be read keeps its
+    // stored value and therefore lands in `other`, exactly where an unrecognised
+    // service type has always landed — it is never dropped, so the totals still
+    // reconcile.
+    const svc = bandedServiceType(row.requesting_for, row.patient_dob);
     if (!svc) {
       svcRow.unknown += n;
     } else if (svc in SERVICE_TYPE_LABELS) {

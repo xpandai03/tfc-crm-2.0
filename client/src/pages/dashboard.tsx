@@ -949,7 +949,7 @@ export default function Dashboard() {
         <CrossTabCard
           summary={summary}
           title="Location × Service Type"
-          subtitle="Who the request is for. Labels are display-only; stored values are unchanged."
+          subtitle="Who the request is for. Minor / Adolescent are worked out from each child's age today. Labels are display-only; stored values are unchanged."
           columns={svcSet.byServiceType.columns}
           labels={svcSet.byServiceType.labels}
           rows={svcSet.byServiceType.rows}
