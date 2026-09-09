@@ -38,6 +38,6 @@ export type {
   ProviderAvailability,
   UpsertProviderAvailabilityParams,
 } from "./db";
-export { startReminderCron, triggerReminderProcessing, startMonthlyReportCron, triggerMonthlyReport } from "./cron";
+export { startReminderCron, triggerReminderProcessing, startMonthlyReportCron, triggerMonthlyReport, startSurveyAttachCron, triggerSurveyAttachBatch } from "./cron";
 export { sendReminderEmail } from "./email";
 export type { Reminder, CreateReminderParams, IntakeComment, AttentionFlag, CreateIntakeCommentParams } from "./types";

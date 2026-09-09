@@ -6,7 +6,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { configureAuth, authMiddleware } from "./auth";
-import { initRemindersTable, startReminderCron, startMonthlyReportCron } from "./reminders";
+import { initRemindersTable, startReminderCron, startMonthlyReportCron, startSurveyAttachCron } from "./reminders";
 import { initTherapyNotesTable } from "./therapy-notes";
 import { initEmailSnapshotsTable } from "./email-snapshots";
 import { initAssignmentsTable } from "./assignments/db";
@@ -18,7 +18,9 @@ import { initReportSendsTable } from "./reports/db";
 import { initReportSendLogTable } from "./reports/send-log";
 import { verifySvixSignature, handleDeliveryEvent } from "./reports/webhook";
 import { registerSurveyPublicRoutes } from "./survey/routes";
+import { registerSurveyAttachInternalRoutes } from "./survey/attach-routes";
 import { initSurveyMatchTable } from "./survey/match-db";
+import { initSurveyAttachTable } from "./survey/attach-db";
 
 const app = express();
 const httpServer = createServer(app);
@@ -275,6 +277,10 @@ app.use((req, res, next) => {
   // client/public/roadmap.html being a standalone file.
   // ==========================================================================
   registerSurveyPublicRoutes(app);
+  // The agent fetches the survey PDF with an API key and no session. Mounted
+  // here for the same reason everything above is: so that no path had to be
+  // added to server/auth.ts. It is still X-API-Key gated — see the module note.
+  registerSurveyAttachInternalRoutes(app);
 
   // Apply auth middleware to protect all routes except /auth/*
   app.use(authMiddleware);
@@ -297,11 +303,18 @@ app.use((req, res, next) => {
     await initReportSendLogTable();
     // Survey → contact match state. A SIDE table; form_submissions is untouched.
     await initSurveyMatchTable();
+    // Survey → chart attach attempts. Also a SIDE table, for the same reason,
+    // and it is what makes a double-attach impossible: one row per submission,
+    // claimed atomically. Additive CREATE TABLE IF NOT EXISTS, no ALTER.
+    await initSurveyAttachTable();
     startReminderCron();
     // Monthly management report. Schedule + timezone are logged on the line
     // below at boot, so the deployed cadence is readable from the startup log
     // rather than inferred from the code.
     startMonthlyReportCron();
+    // Overnight survey → chart attach. Midnight Mountain, explicit timezone, and
+    // the next fire time is logged on the line below at boot.
+    startSurveyAttachCron();
     // Phase 3: load the crm_providers-derived email-axis directory, then keep it
     // fresh on an interval (mutations also refresh it on write). Sync resolvers
     // fall back to PROVIDER_LIST until/if this populates, so startup is safe.

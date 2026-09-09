@@ -7051,6 +7051,85 @@ export async function registerRoutes(
   });
 
   // ============================================================================
+  // Survey → chart attach: the manual trigger and its state.
+  //
+  // Session-gated (not in server/auth.ts's publicPaths, and auth.ts is not
+  // touched). Nothing here returns survey CONTENT — the states endpoint returns
+  // a status, a reason code and a duration, and the trigger returns the same.
+  // The PDF itself is served only to the agent, over the API-key route above.
+  // ============================================================================
+
+  /** Attach state for every survey row, for the Submissions list. */
+  app.get("/api/survey/attach/states", async (_req, res) => {
+    try {
+      const { getAttachRows } = await import("./survey/attach-db");
+      const rows = await getAttachRows();
+      return res.json({ states: Object.fromEntries(rows) });
+    } catch (error) {
+      console.error(
+        "[survey-attach] states lookup failed:",
+        error instanceof Error ? error.message : "unknown",
+      );
+      return res.status(500).json({ error: "Failed to load attach states" });
+    }
+  });
+
+  /**
+   * File one survey to its matched patient's chart.
+   *
+   * Synchronous: the agent's route answers when it is done, and this takes the
+   * better part of a minute. The outcome is written to the attach table BEFORE
+   * this responds, so a client that gives up waiting — or a reload — still sees
+   * the true state. That is also what covers "the answer was lost in transit":
+   * there is no callback to lose.
+   *
+   * Double-press is impossible below this line: attachOne claims the row
+   * atomically and a second caller is told it is already running or filed.
+   */
+  // :submissionId(\d+) — a NUMERIC constraint, not a bare param. Without it this
+  // route captures /api/survey/attach/run-batch below, which then fails a
+  // parseInt and 400s. That is the same shadowing that took out
+  // /api/providers/override in v130; the constraint is the fix that was landed
+  // then, applied here before it could bite twice.
+  app.post("/api/survey/attach/:submissionId(\\d+)", async (req: any, res) => {
+    const submissionId = parseInt(req.params.submissionId, 10);
+    const userEmail = (req.user?.email as string) || "";
+    try {
+      if (isNaN(submissionId)) {
+        return res.status(400).json({ error: "submissionId must be a number" });
+      }
+      const { attachOne } = await import("./survey/attach-runner");
+      const result = await attachOne({ submissionId, trigger: "manual", actorEmail: userEmail });
+      return res.json(result);
+    } catch (error) {
+      console.error(
+        `[survey-attach] manual trigger failed for id=${submissionId}:`,
+        error instanceof Error ? error.message : "unknown",
+      );
+      return res.status(500).json({ error: "The attach could not be started." });
+    }
+  });
+
+  /**
+   * Run the overnight batch now. For an operator verifying the job without
+   * waiting for midnight; the cron calls the same function.
+   */
+  app.post("/api/survey/attach/run-batch", async (req: any, res) => {
+    try {
+      const { runScheduledAttach } = await import("./survey/attach-runner");
+      const summary = await runScheduledAttach();
+      console.log(`[survey-attach] manual batch by ${req.user?.email || "unknown"}: ${JSON.stringify(summary)}`);
+      return res.json(summary);
+    } catch (error) {
+      console.error(
+        "[survey-attach] batch failed:",
+        error instanceof Error ? error.message : "unknown",
+      );
+      return res.status(500).json({ error: "The batch could not be run." });
+    }
+  });
+
+  // ============================================================================
   // Survey → contact matching and the review queue.
   //
   // All session-gated (none of these paths are in server/auth.ts's publicPaths),
