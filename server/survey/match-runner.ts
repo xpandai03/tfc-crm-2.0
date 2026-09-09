@@ -29,15 +29,41 @@ export interface MatchRunSummary {
   byReason: Record<string, number>;
 }
 
-/** Pull the typed identity out of a stored survey payload. */
+/**
+ * Pull the typed identity out of a stored survey payload.
+ *
+ * PRE-PHONE SUBMISSIONS DEGRADE, THEY DO NOT FAIL. Phone became a required
+ * field on the form on 2026-09-03; all 32 submissions taken before that carry
+ * none, and there is no way to obtain one retrospectively for a survey handed
+ * in at a front desk weeks ago. An absent phone therefore reads as "no phone
+ * evidence" — exactly what an absent email has always meant — and the row is
+ * held to name + exact date of birth + no contradiction, which is the same bar
+ * it was always held to.
+ *
+ * That does not soften the bar for anything new. A submission taken today
+ * cannot lack a phone: the form requires it and the server's schema rejects a
+ * submission without one, so the corroboration always runs on new rows. The
+ * degradation is scoped to rows the old form produced, by construction rather
+ * than by a flag.
+ *
+ * THE THERAPIST ANSWER is read for one purpose — breaking a tie between
+ * otherwise-identical contacts. It is the only survey ANSWER this module
+ * touches, it never reaches the review queue as content, and it can only ever
+ * choose among candidates that already matched.
+ */
 function identityOf(payload: unknown): SubmittedIdentity | null {
-  const p = payload as { client?: { name?: unknown; dateOfBirth?: unknown; email?: unknown } } | null;
+  const p = payload as {
+    client?: { name?: unknown; dateOfBirth?: unknown; email?: unknown; phone?: unknown };
+    answers?: { therapist?: unknown };
+  } | null;
   const c = p?.client;
   if (!c || typeof c.name !== "string" || typeof c.dateOfBirth !== "string") return null;
   return {
     name: c.name,
     dateOfBirth: c.dateOfBirth,
+    phone: typeof c.phone === "string" ? c.phone : null,
     email: typeof c.email === "string" ? c.email : null,
+    provider: typeof p?.answers?.therapist === "string" ? p.answers.therapist : null,
   };
 }
 
@@ -66,12 +92,12 @@ export async function runSurveyMatching(): Promise<MatchRunSummary> {
       // A survey row whose payload has no client block cannot be matched. It is
       // not an error — it is a row for a person to look at.
       await markAutoMatchResult({
-        submissionId: sub.id, status: "review", reason: "no_candidates",
+        submissionId: sub.id, status: "review", reason: "no_name",
         contactId: null, candidateIds: [],
       });
       summary.considered += 1;
       summary.review += 1;
-      summary.byReason.no_candidates = (summary.byReason.no_candidates ?? 0) + 1;
+      summary.byReason.no_name = (summary.byReason.no_name ?? 0) + 1;
       continue;
     }
 

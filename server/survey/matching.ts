@@ -34,36 +34,71 @@
  *   - order-independent token comparison, so "First Last" and "Last First"
  *     agree while "First M Last" deliberately does NOT agree with "First Last"
  *     (an extra token is a real difference, and the review queue exists for it)
+ *
+ * PREFERRED NAMES ARE NOT CONSIDERED, ANYWHERE. The form asks for the legal
+ * name and says so on the label, and this compares that against the name on the
+ * record. There is no nickname table, no given-name expansion, no "Bob for
+ * Robert". A transgender or non-binary client may go by a name that is not on
+ * their insurance, and inferring one from the other in either direction is a
+ * guess about a person's identity that this module is not entitled to make.
+ *
+ * ADDED 2026-09-03 (client review), TWO CRITERIA:
+ *
+ *   PHONE — a corroborator, exactly like email, with the same household rule.
+ *   315 contacts share a phone number across 139 groups, so a number maps to a
+ *   SET of contacts. Corroboration means "a candidate is among the owners";
+ *   contradiction means "the number is on record and no candidate owns it".
+ *   Phone does NOT narrow a candidate set — see the provider note below.
+ *
+ *   PROVIDER — the tiebreaker, and ONLY the tiebreaker. TherapyNotes records a
+ *   couple under one account, so a partner seen individually and the same
+ *   couple seen together carry the same legal name, date of birth, phone,
+ *   email and address; the only thing that separates the two records is which
+ *   provider each sits under. The survey already asks which therapist the
+ *   client saw, so that answer is the discriminator.
+ *
+ *   PROVIDER CANNOT RESCUE A NEAR-MISS. It is consulted at exactly one point —
+ *   after a candidate set of two or more has already satisfied name, date of
+ *   birth and both contradiction gates — and it can only choose among that set.
+ *   There is no path from a name mismatch, a date-of-birth mismatch or a
+ *   contradiction to the provider step; those return before it. Adding
+ *   criteria makes a match more certain, never more permissive, so neither new
+ *   field can turn a review into a match by itself.
  */
+
+import { normalizeProviderName } from "../providers/normalize-name";
+import {
+  REASON_LABEL,
+  type MatchReason,
+} from "@shared/survey-match-reasons";
+
+export type { MatchReason };
+export { REASON_LABEL };
 
 /** What the matcher needs to know about one contact. Nothing more is read. */
 export interface ContactIdentity {
   contactId: number;
   name: string;
   email: string | null;
+  phone: string | null;
   patientDob: string | null;
+  /**
+   * The provider on this contact's most recent assignment, or null. 595 of
+   * 1,272 contacts have one, which is fine: it is only ever read to separate
+   * candidates that are otherwise identical.
+   */
+  assignedProvider?: string | null;
 }
 
 /** The identity a client typed into the survey. */
 export interface SubmittedIdentity {
   name: string;
   dateOfBirth: string;
+  phone?: string | null;
   email?: string | null;
+  /** The therapist answer, as the roster rendered it: "Name (LOCATION)". */
+  provider?: string | null;
 }
-
-export type MatchReason =
-  /** Name + date of birth agree, and the supplied email belongs to that contact. */
-  | "name_dob_email"
-  /** Name + date of birth agree; no email supplied, or it belongs to nobody. */
-  | "name_dob"
-  /** The typed date of birth is not a date we can read. */
-  | "unparseable_dob"
-  /** Nothing agreed on both name and date of birth. */
-  | "no_candidates"
-  /** More than one contact agreed on both. Ambiguity, not a tie to break. */
-  | "multiple_candidates"
-  /** The supplied email belongs to a different contact than name + dob chose. */
-  | "email_contradiction";
 
 export interface MatchOutcome {
   status: "matched" | "review";
@@ -161,6 +196,104 @@ export function emailKey(raw: string | null | undefined): string | null {
   return s || null;
 }
 
+/**
+ * Reduce a phone number to comparable digits, or null when there is nothing
+ * usable to compare.
+ *
+ * DIGITS, NOT FORMATTING. The form accepts "(505) 555-0142", "505.555.0142",
+ * "+1 505 555 0142" and "5055550142" as the same number, and contact records
+ * hold whichever shape was typed at intake. Comparing the strings would fail on
+ * punctuation alone.
+ *
+ * The LAST TEN digits are the key. Of 1,271 contacts with a phone, 1,264 hold
+ * ten digits and 4 hold eleven — a US number with the country code — and those
+ * two forms are the same number. Taking the last ten makes them agree without
+ * needing to know which country a number is from.
+ *
+ * Fewer than ten digits returns null rather than a short key: 3 contacts hold
+ * an unusable fragment (3 and 9 digits, and one 20-digit run), and letting a
+ * fragment participate would make it "match" every number ending the same way.
+ * Null means "no phone evidence", which costs nothing — phone only ever
+ * corroborates.
+ */
+export function phoneKey(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const digits = String(raw).replace(/\D/g, "");
+  if (digits.length < 10) return null;
+  return digits.slice(-10);
+}
+
+/**
+ * Reduce a provider name to a comparable key.
+ *
+ * REUSES normalizeProviderName() — the repo's existing provider normaliser,
+ * which already drops a ", Credential" suffix, trims, lowercases and collapses
+ * whitespace. One thing is stripped first: the survey stores the therapist as
+ * the roster rendered it, "Name (LOCATION)", while an assignment stores the
+ * bare name, so the trailing parenthetical has to come off before the two can
+ * agree. That is the only difference, and it is applied here rather than by
+ * forking the normaliser.
+ *
+ *   "Tyra Jones (ABQ)"  -> "tyra jones"     (survey side)
+ *   "Tyra Jones"        -> "tyra jones"     (assignment side)
+ *   "Tyra Jones, LMHC"  -> "tyra jones"     (assignment with a credential)
+ *
+ * Deliberately exact after normalisation, with no fuzzy fallback. Two of the 30
+ * distinct assignment values are malformed — a bare first name and a
+ * misspelling — and neither will key-match a roster label. That is the right
+ * outcome: an unrecognised provider simply fails to break a tie, and the
+ * submission goes to a human. A provider name is never evidence FOR a match on
+ * its own, so failing to read one can only ever be conservative.
+ */
+export function providerKey(raw: string | null | undefined): string {
+  if (!raw) return "";
+  const withoutLocation = String(raw).replace(/\s*\([^)]*\)\s*/g, " ");
+  return normalizeProviderName(withoutLocation);
+}
+
+/**
+ * Contacts that own a given contact-detail value.
+ *
+ * A phone number or an email address maps to a SET of contacts, not one: 315
+ * contacts share a phone across 139 groups, and 290 share an email across 127.
+ * A family uses one number and one address, so "this value belongs to someone
+ * else" is only true when it belongs to nobody among the candidates.
+ */
+function ownersOf<T>(
+  contacts: ContactIdentity[],
+  key: T,
+  keyOf: (c: ContactIdentity) => T | null,
+): ContactIdentity[] {
+  return contacts.filter((c) => keyOf(c) === key);
+}
+
+/**
+ * Corroborate-or-contradict, shared by phone and email.
+ *
+ * Three outcomes, and note what is NOT here: this never NARROWS the candidate
+ * set. Narrowing two candidates to one on a phone number would be using a
+ * corroborator as a tiebreaker, and the client was specific that the tiebreaker
+ * is the provider. So a corroborator can only leave the set alone or stop the
+ * match — it can never promote one.
+ *
+ *   "unknown"      the value is on nobody's record; no evidence either way
+ *   "corroborates" at least one candidate owns it
+ *   "contradicts"  it is on record, and no candidate owns it
+ */
+function corroboration(
+  candidates: ContactIdentity[],
+  contacts: ContactIdentity[],
+  submittedKey: string | null,
+  keyOf: (c: ContactIdentity) => string | null,
+): { verdict: "unknown" | "corroborates" | "contradicts"; owners: ContactIdentity[] } {
+  if (!submittedKey) return { verdict: "unknown", owners: [] };
+  const owners = ownersOf(contacts, submittedKey, keyOf);
+  if (owners.length === 0) return { verdict: "unknown", owners: [] };
+  const ids = new Set(owners.map((o) => o.contactId));
+  const corroborates = candidates.some((c) => ids.has(c.contactId));
+  return { verdict: corroborates ? "corroborates" : "contradicts", owners };
+}
+
 // ---------------------------------------------------------------------------
 // The rules
 // ---------------------------------------------------------------------------
@@ -168,14 +301,24 @@ export function emailKey(raw: string | null | undefined): string | null {
 /**
  * Decide whether a submitted identity resolves to exactly one contact.
  *
- * The bar for an automatic match, all of which must hold:
+ * THE BAR, all of which must hold:
  *   1. the typed date of birth is readable
- *   2. it equals the contact's date of birth exactly, after canonicalisation
- *   3. the name keys are equal after normalisation
- *   4. EXACTLY ONE contact satisfies 2 and 3
- *   5. the supplied email, if any, does not belong to some other contact
+ *   2. the normalised legal name equals a contact's, and that contact's date of
+ *      birth equals the typed one exactly, after canonicalisation
+ *   3. the typed phone, if it is on record at all, belongs to at least one of
+ *      those contacts
+ *   4. the typed email, if it is on record at all, belongs to at least one of
+ *      those contacts
+ *   5. EXACTLY ONE contact survives — or, where several do, exactly one of them
+ *      is assigned to the therapist the survey named
  *
- * Anything else returns "review".
+ * Anything else returns "review", with a reason naming the criterion that
+ * decided it.
+ *
+ * The order matters and is not arbitrary. Every gate that can REFUSE runs
+ * before the only step that can CHOOSE, so the provider step is unreachable
+ * except from a set that has already cleared name, date of birth and both
+ * contradiction checks.
  */
 export function matchSubmission(
   submitted: SubmittedIdentity,
@@ -190,91 +333,124 @@ export function matchSubmission(
 
   const key = nameKey(submitted.name);
   if (!key) {
-    return { status: "review", reason: "no_candidates", contactId: null, candidateIds: [] };
+    return { status: "review", reason: "no_name", contactId: null, candidateIds: [] };
   }
 
-  const dobMatches: ContactIdentity[] = [];
-  const nameMatches: ContactIdentity[] = [];
-  const both: ContactIdentity[] = [];
+  // --- 1. Candidates: name AND date of birth, both exact after normalisation.
+  const dobOnly: ContactIdentity[] = [];
+  const nameOnly: ContactIdentity[] = [];
+  const candidates: ContactIdentity[] = [];
 
   for (const c of contacts) {
     const cDob = canonicalDob(c.patientDob);
     const cName = nameKey(c.name);
     const dobOk = cDob !== null && cDob === dob;
     const nameOk = cName !== "" && cName === key;
-    if (dobOk && nameOk) both.push(c);
-    else if (dobOk) dobMatches.push(c);
-    else if (nameOk) nameMatches.push(c);
+    if (dobOk && nameOk) candidates.push(c);
+    else if (dobOk) dobOnly.push(c);
+    else if (nameOk) nameOnly.push(c);
   }
 
   // Candidates offered to a human when we decline to decide. Name agreement is
   // listed first because a shared date of birth alone is weak evidence.
-  const partialCandidates = [...nameMatches, ...dobMatches].slice(0, 10).map((c) => c.contactId);
+  const partialCandidates = [...nameOnly, ...dobOnly].slice(0, 10).map((c) => c.contactId);
 
-  if (both.length === 0) {
-    return { status: "review", reason: "no_candidates", contactId: null, candidateIds: partialCandidates };
+  if (candidates.length === 0) {
+    // Say WHICH criterion failed, which is what the client asked for. "The name
+    // is on record but not with this date of birth" and "no contact carries
+    // this name" send a staff member to two different places, and a single
+    // "no candidates" told them neither.
+    const reason: MatchReason = nameOnly.length > 0 ? "dob_mismatch" : "no_candidates";
+    return { status: "review", reason, contactId: null, candidateIds: partialCandidates };
   }
 
-  if (both.length > 1) {
-    // 126 contacts share BOTH a name and a date of birth with another contact
-    // (2026-09-01) — largely duplicate records. Picking one would be a coin
-    // flip on a clinical identity.
+  // --- 2. Phone. Corroborates or contradicts; never narrows.
+  const phone = corroboration(candidates, contacts, phoneKey(submitted.phone), (c) => phoneKey(c.phone));
+  if (phone.verdict === "contradicts") {
+    // Name + date of birth point one way, the number points at someone else.
+    // Resolving that by precedence would be choosing which evidence to ignore.
     return {
       status: "review",
-      reason: "multiple_candidates",
+      reason: "phone_contradiction",
       contactId: null,
-      candidateIds: both.map((c) => c.contactId),
+      candidateIds: dedupeIds([...candidates, ...phone.owners]),
     };
   }
 
-  const candidate = both[0];
-  const submittedEmail = emailKey(submitted.email);
-
-  if (submittedEmail) {
-    // Who owns this address? 290 contacts share an address with at least one
-    // other (127 household groups, up to 5 contacts each), so an address maps
-    // to a SET of contacts, not one. Corroboration therefore means "the
-    // candidate is among the owners", and contradiction means "the address is
-    // known and the candidate is not among them".
-    const owners = contacts.filter((c) => emailKey(c.email) === submittedEmail);
-
-    if (owners.length > 0) {
-      const corroborates = owners.some((o) => o.contactId === candidate.contactId);
-      if (!corroborates) {
-        // Name + dob point one way, the email points at someone else. Resolving
-        // that by precedence would be picking which evidence to ignore.
-        return {
-          status: "review",
-          reason: "email_contradiction",
-          contactId: null,
-          candidateIds: [candidate.contactId, ...owners.map((o) => o.contactId)],
-        };
-      }
-      return {
-        status: "matched",
-        reason: "name_dob_email",
-        contactId: candidate.contactId,
-        candidateIds: [candidate.contactId],
-      };
-    }
-    // The address belongs to nobody on record — unknown, not contradictory.
-    // Name + dob already met the bar, so this does not block the match.
+  // --- 3. Email. Identical treatment.
+  const email = corroboration(candidates, contacts, emailKey(submitted.email), (c) => emailKey(c.email));
+  if (email.verdict === "contradicts") {
+    return {
+      status: "review",
+      reason: "email_contradiction",
+      contactId: null,
+      candidateIds: dedupeIds([...candidates, ...email.owners]),
+    };
   }
 
+  // --- 4. One survivor, or the provider separates them.
+  if (candidates.length === 1) {
+    return {
+      status: "matched",
+      reason: matchedReasonFor(phone.verdict === "corroborates", email.verdict === "corroborates"),
+      contactId: candidates[0].contactId,
+      candidateIds: [candidates[0].contactId],
+    };
+  }
+
+  // More than one contact agrees on everything checkable. 126 contacts share
+  // both a name and a date of birth with another contact — largely duplicate
+  // records — and a couple recorded under one TherapyNotes account shares every
+  // field above as well. This is the ONE place a tie is broken, and only the
+  // provider breaks it.
+  const wanted = providerKey(submitted.provider);
+  const allIds = candidates.map((c) => c.contactId);
+
+  if (!wanted) {
+    return { status: "review", reason: "multiple_candidates", contactId: null, candidateIds: allIds };
+  }
+
+  const withProvider = candidates.filter((c) => {
+    const k = providerKey(c.assignedProvider);
+    return k !== "" && k === wanted;
+  });
+
+  if (withProvider.length === 1) {
+    return {
+      status: "matched",
+      reason: "name_dob_provider",
+      contactId: withProvider[0].contactId,
+      candidateIds: [withProvider[0].contactId],
+    };
+  }
+
+  // Named a therapist none of them sees, or one that several of them see.
+  // Either way the tie stands, and a tie that stands is a human's to settle.
   return {
-    status: "matched",
-    reason: "name_dob",
-    contactId: candidate.contactId,
-    candidateIds: [candidate.contactId],
+    status: "review",
+    reason: withProvider.length === 0 ? "provider_no_match" : "provider_ambiguous",
+    contactId: null,
+    candidateIds: allIds,
   };
 }
 
-/** Human-readable explanation for the review queue. Contains no identity. */
-export const REASON_LABEL: Record<MatchReason, string> = {
-  name_dob_email: "Matched on name, date of birth and email",
-  name_dob: "Matched on name and date of birth",
-  unparseable_dob: "The date of birth could not be read",
-  no_candidates: "No contact matched on both name and date of birth",
-  multiple_candidates: "More than one contact matched — ambiguous",
-  email_contradiction: "The email belongs to a different contact",
-};
+/** Which corroborators fired, recorded so a match says what it rested on. */
+function matchedReasonFor(phone: boolean, email: boolean): MatchReason {
+  if (phone && email) return "name_dob_phone_email";
+  if (phone) return "name_dob_phone";
+  if (email) return "name_dob_email";
+  return "name_dob";
+}
+
+/** Contact ids, first occurrence wins, capped for a review list. */
+function dedupeIds(rows: ContactIdentity[]): number[] {
+  const seen = new Set<number>();
+  const out: number[] = [];
+  for (const r of rows) {
+    if (seen.has(r.contactId)) continue;
+    seen.add(r.contactId);
+    out.push(r.contactId);
+    if (out.length >= 10) break;
+  }
+  return out;
+}

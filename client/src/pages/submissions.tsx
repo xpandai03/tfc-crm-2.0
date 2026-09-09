@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessReferralUpload } from "@shared/access-control";
 import { SURVEY_FORM_TYPE, SURVEY_SOURCE } from "@shared/survey-questions";
+import { REASON_SHORT, isMatchReason } from "@shared/survey-match-reasons";
 
 interface FormSubmission {
   id: number;
@@ -277,6 +278,30 @@ function RawPayloadModal({
   );
 }
 
+/**
+ * Why a row is waiting, shown on the row itself.
+ *
+ * The client asked for this directly: "on the error, can it say why it threw
+ * the error — no date of birth found, or no name, or whatever the reason is."
+ * A staff member should be able to see what a row needs from them before
+ * opening it, and triage twenty rows without twenty dialogs.
+ *
+ * The stored value is a CODE, and the text is looked up from
+ * @shared/survey-match-reasons — the same map the matcher and the review dialog
+ * read. A human resolution stores its own sentence instead of a code, and that
+ * is not rendered here: this line exists to explain an OUTSTANDING row.
+ *
+ * NO IDENTITY AND NO ANSWER CONTENT. Every string in REASON_SHORT is a fixed
+ * label naming a field; none of them interpolates anything from the submission.
+ */
+function MatchReasonNote({ state }: { state: MatchState | undefined }) {
+  if (!state || state.status !== "review") return null;
+  if (!isMatchReason(state.reason)) return null;
+  return (
+    <span className="text-[11px] text-amber-700/90">{REASON_SHORT[state.reason]}</span>
+  );
+}
+
 /** The match-state chip on a survey row. Identity state only — no answers. */
 function MatchBadge({ state }: { state: MatchState | undefined }) {
   if (!state) {
@@ -496,6 +521,7 @@ export default function Submissions() {
                           {srcBadge.label}
                         </Badge>
                         {isSurveySubmission(sub) && <MatchBadge state={stateFor(sub.id)} />}
+                        {isSurveySubmission(sub) && <MatchReasonNote state={stateFor(sub.id)} />}
                       </div>
                       <span
                         className="text-xs text-muted-foreground flex-shrink-0 tabular-nums"

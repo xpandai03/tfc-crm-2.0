@@ -63,25 +63,66 @@ export async function initSurveyMatchTable(): Promise<void> {
  * Every contact's identity fields, and nothing else.
  *
  * The whole set is loaded and matched in memory rather than filtered in SQL.
- * At 1,243 rows that is trivial, and it keeps the rules in one pure, testable
+ * At ~1,270 rows that is trivial, and it keeps the rules in one pure, testable
  * function instead of split between TypeScript and a SQL predicate that would
  * have to re-implement date canonicalisation — the formats are mixed, and a
  * to_date() over free text throws on the malformed rows.
+ *
+ * The whole set is also REQUIRED, not merely convenient: deciding that a phone
+ * number or an email address contradicts means knowing who else on record holds
+ * it, which a query filtered to the candidates could not tell us.
+ *
+ * THE ASSIGNED PROVIDER comes from contact_provider_assignments, most recent
+ * per contact — the same DISTINCT ON the assignments module uses
+ * (server/assignments/db.ts:167). It is read ONLY to separate candidates that
+ * are otherwise identical, so the 677 contacts with no assignment are
+ * unaffected: they either match on their own or they were going to review
+ * anyway.
+ *
+ * STILL READ-ONLY. This adds two columns to a SELECT. Nothing in this module
+ * writes to sync_contacts or to contact_provider_assignments.
  */
 export async function getContactIdentityIndex(): Promise<ContactIdentity[]> {
   const res = await getPool().query(`
-    SELECT contact_id AS "contactId", name, email, patient_dob AS "patientDob"
-      FROM sync_contacts
+    SELECT c.contact_id AS "contactId",
+           c.name,
+           c.email,
+           c.phone,
+           c.patient_dob AS "patientDob",
+           a.provider_name AS "assignedProvider"
+      FROM sync_contacts c
+      LEFT JOIN (
+        SELECT DISTINCT ON (contact_id) contact_id, provider_name
+          FROM contact_provider_assignments
+         ORDER BY contact_id, assigned_at DESC
+      ) a ON a.contact_id = c.contact_id
   `);
   return res.rows as ContactIdentity[];
 }
 
-/** Identity fields for a named set of contacts, for the review UI. */
+/**
+ * Identity fields for a named set of contacts, for the review UI.
+ *
+ * Carries the phone and the assigned provider too. Both are identity context,
+ * not survey content: the provider is precisely what lets a reviewer settle the
+ * couples case by hand when the automatic tiebreak declined to.
+ */
 export async function getContactIdentities(ids: number[]): Promise<ContactIdentity[]> {
   if (ids.length === 0) return [];
   const res = await getPool().query(
-    `SELECT contact_id AS "contactId", name, email, patient_dob AS "patientDob"
-       FROM sync_contacts WHERE contact_id = ANY($1::int[])`,
+    `SELECT c.contact_id AS "contactId",
+            c.name,
+            c.email,
+            c.phone,
+            c.patient_dob AS "patientDob",
+            a.provider_name AS "assignedProvider"
+       FROM sync_contacts c
+       LEFT JOIN (
+         SELECT DISTINCT ON (contact_id) contact_id, provider_name
+           FROM contact_provider_assignments
+          ORDER BY contact_id, assigned_at DESC
+       ) a ON a.contact_id = c.contact_id
+      WHERE c.contact_id = ANY($1::int[])`,
     [ids],
   );
   return res.rows as ContactIdentity[];
