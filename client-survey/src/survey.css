@@ -729,7 +729,8 @@ body {
    Confirmation
    --------------------------------------------------------------------------
 
-   Shows thanks and, only when it was requested, a line about follow-up.
+   The practice's own words, shown to everyone: the follow-up line is phrased
+   conditionally ("If you requested a follow-up") so one message covers both.
    No answers, no name, no scores, no submission id — a lobby device is shared.
    -------------------------------------------------------------------------- */
 
@@ -766,6 +767,13 @@ body {
 
 .done__body:last-child {
   margin-bottom: 0;
+}
+
+/* The two lines the practice bolded in their copy are the title, which is
+   already heavy, and the closing thank-you. */
+.done__body--strong {
+  font-weight: 650;
+  color: var(--foreground);
 }
 
 /* --------------------------------------------------------------------------
