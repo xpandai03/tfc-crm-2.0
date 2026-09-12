@@ -6,6 +6,7 @@
  */
 
 import { getPool } from "../db/pool";
+import { PROVIDER_SHORT_NAME_SEED } from "@shared/provider-short-name";
 import type { Reminder, CreateReminderParams, IntakeComment, AttentionFlag, CreateIntakeCommentParams } from "./types";
 
 /**
@@ -142,6 +143,31 @@ export async function initRemindersTable(): Promise<void> {
   } catch (e) {
     console.error("[reminders-db] crm_providers.email column/index migration FAILED:", e);
   }
+
+  // Survey export: short_name — the provider's name as it appears on their tab
+  // in the client's survey workbook ("Amanda D", "Amber L", "Abena"). Nullable;
+  // a row without one falls back to the provider's first name, and the single
+  // definition of that fallback is providerShortName() in
+  // shared/provider-short-name.ts, which also explains why the name is stored
+  // rather than derived.
+  //
+  // The partial-unique index mirrors the email one above, and for the same
+  // reason: two providers must not carry the same stored short name, because
+  // two worksheets in one workbook cannot share a name. Partial (WHERE NOT
+  // NULL) so the many rows with no short name never collide with each other.
+  // It constrains STORED names only — it cannot see a computed fallback, so it
+  // is a guard rather than a guarantee. See the note in the shared module.
+  //
+  // Additive + idempotent — runs on boot, no RUN_MIGRATIONS dependency.
+  try {
+    await pool.query(`ALTER TABLE crm_providers ADD COLUMN IF NOT EXISTS short_name TEXT`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS crm_providers_short_name_lower_uniq ON crm_providers (lower(short_name)) WHERE short_name IS NOT NULL`);
+    console.log("[reminders-db] Ensured crm_providers.short_name column + case-insensitive partial-unique index");
+  } catch (e) {
+    console.error("[reminders-db] crm_providers.short_name column/index migration FAILED:", e);
+  }
+
+  await seedProviderShortNames();
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS provider_overrides (
@@ -511,6 +537,8 @@ export interface CrmProvider {
   credentials: string;
   location: string;
   email: string | null;    // Phase 1: universal join key (UNIQUE on lower(email)). NULL = not captured yet.
+  /** Survey-workbook tab name. NULL = none set; read via providerShortName(). */
+  shortName: string | null;
   specialties: string[];   // stored as JSON array
   ageGroups: string[];     // stored as JSON array
   insurances: string[];    // stored as JSON array
@@ -538,10 +566,76 @@ function normalizeEmailForStorage(email: string | undefined | null): string | nu
   return v === "" ? null : v;
 }
 
+/**
+ * One-shot seed of the 26 short names the client's template specifies.
+ *
+ * SELF-DISABLING, NOT `WHERE short_name IS NULL`. It runs only while EVERY row
+ * has a NULL short_name, so the first successful pass is the last one and every
+ * later boot costs one cheap EXISTS. The usual null-guarded backfill would
+ * re-run forever and quietly resurrect a name someone had deliberately changed
+ * or cleared; this cannot, because any non-null value anywhere stops it.
+ *
+ * EXACT NAME MATCH, NEVER FUZZY. A row is written only when its `name` matches
+ * exactly one provider. Zero matches or more than one is skipped and logged by
+ * name rather than guessed at: the roster was confirmed 26-for-26 against
+ * production on 2026-09-12, so a miss means the roster has moved since and a
+ * person should look at it. A wrong short name is a mislabelled tab in a report
+ * that goes to the practice, which is worse than a missing one.
+ *
+ * INACTIVE PROVIDERS ARE SEEDED TOO when they match. They get no tab, but they
+ * can still appear in historical submissions, and a name is useful there.
+ *
+ * Failure is logged and swallowed, like the migrations above it: a seed that
+ * cannot run must not stop the server from booting.
+ */
+async function seedProviderShortNames(): Promise<void> {
+  const pool = getPool();
+  try {
+    const { rows } = await pool.query(
+      `SELECT EXISTS (SELECT 1 FROM crm_providers WHERE short_name IS NOT NULL) AS seeded`,
+    );
+    if (rows[0]?.seeded) return;
+
+    const entries = Object.entries(PROVIDER_SHORT_NAME_SEED);
+    let applied = 0;
+    const skipped: string[] = [];
+
+    for (const [fullName, shortName] of entries) {
+      // Count first so an ambiguous name is reported rather than half-applied:
+      // UPDATE ... WHERE name = $1 would silently write both rows.
+      const { rows: countRows } = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM crm_providers WHERE name = $1`,
+        [fullName],
+      );
+      const n = countRows[0]?.n ?? 0;
+      if (n !== 1) {
+        skipped.push(`${fullName} (matched ${n} rows)`);
+        continue;
+      }
+      const res = await pool.query(
+        `UPDATE crm_providers SET short_name = $1, updated_at = NOW() WHERE name = $2 AND short_name IS NULL`,
+        [shortName, fullName],
+      );
+      applied += res.rowCount ?? 0;
+    }
+
+    console.log(
+      `[crm-providers] Seeded short_name for ${applied}/${entries.length} providers`,
+    );
+    if (skipped.length > 0) {
+      console.warn(
+        `[crm-providers] short_name seed skipped ${skipped.length} unmatched name(s): ${skipped.join("; ")}`,
+      );
+    }
+  } catch (e) {
+    console.error("[crm-providers] short_name seed FAILED:", e);
+  }
+}
+
 export async function getAllCrmProviders(): Promise<CrmProvider[]> {
   const pool = getPool();
   const result = await pool.query(`
-    SELECT id, name, credentials, location, email, specialties, age_groups, insurances, notes,
+    SELECT id, name, credentials, location, email, short_name, specialties, age_groups, insurances, notes,
            is_active, created_at, updated_at
     FROM crm_providers
     WHERE is_active = true
@@ -554,6 +648,7 @@ export async function getAllCrmProviders(): Promise<CrmProvider[]> {
     credentials: row.credentials,
     location: row.location,
     email: row.email ?? null,
+    shortName: row.short_name ?? null,
     specialties: JSON.parse(row.specialties || "[]"),
     ageGroups: JSON.parse(row.age_groups || "[]"),
     insurances: JSON.parse(row.insurances || "[]"),
@@ -585,7 +680,7 @@ export async function getCrmProviderById(id: number): Promise<CrmProvider | null
   const pool = getPool();
   const result = await pool.query(
     `
-    SELECT id, name, credentials, location, email, specialties, age_groups, insurances, notes,
+    SELECT id, name, credentials, location, email, short_name, specialties, age_groups, insurances, notes,
            is_active, created_at, updated_at
     FROM crm_providers WHERE id = $1
   `,
@@ -600,6 +695,7 @@ export async function getCrmProviderById(id: number): Promise<CrmProvider | null
     credentials: row.credentials,
     location: row.location,
     email: row.email ?? null,
+    shortName: row.short_name ?? null,
     specialties: JSON.parse(row.specialties || "[]"),
     ageGroups: JSON.parse(row.age_groups || "[]"),
     insurances: JSON.parse(row.insurances || "[]"),
@@ -702,7 +798,7 @@ export async function reactivateCrmProvider(id: number): Promise<boolean> {
 export async function getInactiveCrmProviders(): Promise<CrmProvider[]> {
   const pool = getPool();
   const result = await pool.query(`
-    SELECT id, name, credentials, location, email, specialties, age_groups, insurances, notes,
+    SELECT id, name, credentials, location, email, short_name, specialties, age_groups, insurances, notes,
            is_active, created_at, updated_at
     FROM crm_providers
     WHERE is_active = false
@@ -714,6 +810,7 @@ export async function getInactiveCrmProviders(): Promise<CrmProvider[]> {
     credentials: row.credentials,
     location: row.location,
     email: row.email ?? null,
+    shortName: row.short_name ?? null,
     specialties: JSON.parse(row.specialties || "[]"),
     ageGroups: JSON.parse(row.age_groups || "[]"),
     insurances: JSON.parse(row.insurances || "[]"),
