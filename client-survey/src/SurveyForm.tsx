@@ -461,17 +461,13 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
     return { ok: false as const, message: result.message };
   };
 
-  // Whether the client asked to be contacted — the only answer the confirmation
-  // screen reflects, and only as a sentence about what happens next.
-  const followUpRequested = answerOf("followUpRequested") === "Yes";
-
   return (
     <MultiStepForm
       screens={screens}
       modalityLabel={MODALITY_FOR_VARIANT[variant]}
       onSubmit={onSubmit}
       isComplete={complete}
-      successNode={<Confirmation followUpRequested={followUpRequested} />}
+      successNode={<Confirmation />}
     />
   );
 }
@@ -495,11 +491,19 @@ const SCREEN_DESCRIPTIONS: (string | undefined)[] = [
 /**
  * Confirmation.
  *
- * Thanks, and a line about follow-up only when it was asked for. No answers, no
- * name, no scores, no submission id: a lobby device is shared, and whatever is
- * on this screen is visible to whoever picks the phone up next.
+ * THE WORDS BELOW ARE THE PRACTICE'S, VERBATIM. They were written internally,
+ * discussed, and handed over as final copy on 2026-09-12. Do not tighten,
+ * reflow or re-punctuate them.
+ *
+ * ONE MESSAGE FOR EVERYONE. The follow-up line used to render only when the
+ * client had asked to be contacted; their copy says "If you requested a
+ * follow-up" and is written to cover both cases, so the conditional is gone
+ * rather than dormant and the screen no longer reads any answer at all.
+ *
+ * No answers, no name, no scores, no submission id: a lobby device is shared,
+ * and whatever is on this screen is visible to whoever picks the phone up next.
  */
-function Confirmation({ followUpRequested }: { followUpRequested: boolean }) {
+function Confirmation() {
   return (
     <div className="done">
       <div className="done__mark" aria-hidden="true">
@@ -507,16 +511,25 @@ function Confirmation({ followUpRequested }: { followUpRequested: boolean }) {
           <path d="M20 6 9 17l-5-5" />
         </svg>
       </div>
-      <h1 className="done__title">Thank you &mdash; your feedback has been recorded.</h1>
+      <h1 className="done__title">Thank you &mdash; your feedback has been recorded!</h1>
       <p className="done__body">
-        We read every response. It helps us take better care of the people we see.
+        We truly appreciate you taking the time to share your experience with us.
+        We read every response, and your feedback helps us learn, grow, and
+        continue providing the best possible care and support to the individuals
+        and families we serve.
       </p>
-      {followUpRequested && (
-        <p className="done__body">
-          You asked us to follow up, and someone from our team will reach out.
-        </p>
-      )}
-      <p className="done__body">You can close this page now.</p>
+      <p className="done__body">
+        Your voice matters and helps us continue making The Family Connection a
+        place where clients feel heard, supported, and connected.
+      </p>
+      <p className="done__body">
+        If you requested a follow-up, a member of our team will reach out to you
+        soon.
+      </p>
+      <p className="done__body done__body--strong">
+        Thank you for trusting The Family Connection to be part of your journey.
+      </p>
+      <p className="done__body">You may now close this page.</p>
     </div>
   );
 }
