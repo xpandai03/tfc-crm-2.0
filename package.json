@@ -34,7 +34,8 @@
     "test:age-bands": "tsx scripts/test-age-bands.ts",
     "test:survey-attach": "tsx scripts/test-survey-attach.ts",
     "test:survey-attach-claim": "tsx scripts/test-survey-attach-claim.ts",
-    "test:short-name": "tsx scripts/test-provider-short-name.ts"
+    "test:short-name": "tsx scripts/test-provider-short-name.ts",
+    "test:survey-aggregate": "tsx scripts/test-survey-aggregate.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1034.0",
