@@ -45,8 +45,16 @@ export const PROVIDER_NAME_CORRECTIONS: Record<string, string> = {
   "Ty Jones": "Tyra Jones",
 };
 
-/** Lowercased, punctuation-free token set — mirrors the agent's _name_tokens. */
-function nameTokens(text: string): Set<string> {
+/**
+ * Lowercased, punctuation-free token set — mirrors the agent's _name_tokens.
+ *
+ * EXPORTED so the reverse direction (a TherapyNotes option label back to a CRM
+ * provider, see server/therapy-notes/clinician-match.ts) can compare on the same
+ * tokens this file already uses. Copying four lines there would have been a
+ * second matcher that could drift from this one, which is the exact failure the
+ * header above describes.
+ */
+export function nameTokens(text: string): Set<string> {
   return new Set(text.toLowerCase().split(/[^a-z0-9]+/i).filter(Boolean));
 }
 

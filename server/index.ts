@@ -6,7 +6,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { configureAuth, authMiddleware } from "./auth";
-import { initRemindersTable, startReminderCron, startMonthlyReportCron, startSurveyAttachCron } from "./reminders";
+import { initRemindersTable, startReminderCron, startMonthlyReportCron, startSurveyAttachCron, startActiveCountsCron } from "./reminders";
 import { initTherapyNotesTable } from "./therapy-notes";
 import { initEmailSnapshotsTable } from "./email-snapshots";
 import { initAssignmentsTable } from "./assignments/db";
@@ -21,6 +21,7 @@ import { registerSurveyPublicRoutes } from "./survey/routes";
 import { registerSurveyAttachInternalRoutes } from "./survey/attach-routes";
 import { initSurveyMatchTable } from "./survey/match-db";
 import { initSurveyAttachTable } from "./survey/attach-db";
+import { initActiveCountsTable } from "./therapy-notes/active-counts-db";
 
 const app = express();
 const httpServer = createServer(app);
@@ -307,6 +308,7 @@ app.use((req, res, next) => {
     // and it is what makes a double-attach impossible: one row per submission,
     // claimed atomically. Additive CREATE TABLE IF NOT EXISTS, no ALTER.
     await initSurveyAttachTable();
+    await initActiveCountsTable();
     startReminderCron();
     // Monthly management report. Schedule + timezone are logged on the line
     // below at boot, so the deployed cadence is readable from the startup log
@@ -315,6 +317,10 @@ app.use((req, res, next) => {
     // Overnight survey → chart attach. Midnight Mountain, explicit timezone, and
     // the next fire time is logged on the line below at boot.
     startSurveyAttachCron();
+    // TherapyNotes active client counts — the survey export's denominator.
+    // 02:30 Mountain, after the attach batch: the agent holds one TherapyNotes
+    // license and serialises, so the two overnight jobs must not start together.
+    startActiveCountsCron();
     // Phase 3: load the crm_providers-derived email-axis directory, then keep it
     // fresh on an interval (mutations also refresh it on write). Sync resolvers
     // fall back to PROVIDER_LIST until/if this populates, so startup is safe.
