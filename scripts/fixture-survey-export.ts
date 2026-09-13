@@ -35,13 +35,20 @@
  * and are real on purpose: resolution, short names and offices are what is
  * being exercised.
  */
+import { writeFileSync } from "fs";
 import { getPool } from "../server/db/pool";
 import { initSyncTables } from "../server/sync/db";
 import { initRemindersTable } from "../server/reminders/db";
 import { aggregateSurveys, type RosterEntry, type SubmissionInput } from "../server/survey/aggregate";
+import { buildSurveyWorkbook } from "../server/survey/workbook";
 import { providerShortName } from "@shared/provider-short-name";
 
 const KEEP = process.argv.indexOf("--keep") !== -1;
+/** --workbook <path> also renders the workbook from this fixture's aggregate. */
+const WORKBOOK_AT = (() => {
+  const i = process.argv.indexOf("--workbook");
+  return i !== -1 ? process.argv[i + 1] : null;
+})();
 
 /** One rule removes the whole fixture. */
 const ID_MIN = 990200;
@@ -360,6 +367,15 @@ async function main(): Promise<void> {
     console.log(`  ${l.modality.padEnd(10)} ${l.key.padEnd(22)} rows=${String(l.rows.length).padStart(2)} ` +
       `(${withComment} commented)  counts=${JSON.stringify(l.counts)}`);
   });
+
+  if (WORKBOOK_AT) {
+    const { buffer, sheetNames, renamed } = buildSurveyWorkbook(r);
+    writeFileSync(WORKBOOK_AT, buffer);
+    console.log(`\n--- workbook ---`);
+    console.log(`  wrote ${WORKBOOK_AT} (${buffer.length} bytes)`);
+    console.log(`  ${sheetNames.length} sheets: ${JSON.stringify(sheetNames)}`);
+    console.log(`  renamed for collision: ${JSON.stringify(renamed)}`);
+  }
 
   if (r.warnings.length > 0) {
     console.log(`\n--- warnings ---`);
