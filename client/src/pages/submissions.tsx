@@ -15,6 +15,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, ExternalLink, Code2, FileText, Inbox, FileUp, Download, UserCheck, UserSearch, UserX, RefreshCw, Upload, CheckCircle2, AlertTriangle } from "lucide-react";
 import { SurveyMatchReviewDialog } from "@/components/survey-match-review";
+import { SurveyExportDialog } from "@/components/survey-export-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessReferralUpload } from "@shared/access-control";
@@ -436,6 +437,7 @@ export default function Submissions() {
   const [selectedSubmission, setSelectedSubmission] = useState<FormSubmission | null>(null);
   const [reviewingId, setReviewingId] = useState<number | null>(null);
   const [matchFilter, setMatchFilter] = useState<MatchFilter>("all");
+  const [exportOpen, setExportOpen] = useState(false);
   const { toast } = useToast();
   const qc = useQueryClient();
 
@@ -605,19 +607,37 @@ export default function Submissions() {
                 </Button>
               ))}
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 text-xs"
-              disabled={runMatching.isPending}
-              onClick={() => runMatching.mutate()}
-              data-testid="button-run-matching"
-            >
-              {runMatching.isPending
-                ? <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                : <RefreshCw className="h-3 w-3 mr-1" />}
-              Run matching
-            </Button>
+            <div className="flex items-center gap-1.5">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                disabled={runMatching.isPending}
+                onClick={() => runMatching.mutate()}
+                data-testid="button-run-matching"
+              >
+                {runMatching.isPending
+                  ? <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                  : <RefreshCw className="h-3 w-3 mr-1" />}
+                Run matching
+              </Button>
+              {/*
+                The survey workbook export. A page-scoped action over many
+                submissions, so it belongs in this toolbar row rather than among
+                the per-row controls further down — and a button, not a tab,
+                which is what the client asked for.
+              */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs gap-1.5"
+                onClick={() => setExportOpen(true)}
+                data-testid="button-survey-export"
+              >
+                <Download className="h-3 w-3" />
+                Export survey workbook
+              </Button>
+            </div>
           </div>
         )}
 
@@ -802,6 +822,9 @@ export default function Submissions() {
         onClose={() => setSelectedSubmission(null)}
         submission={selectedSubmission}
       />
+
+      {/* Survey workbook export — range picker and download. */}
+      <SurveyExportDialog open={exportOpen} onOpenChange={setExportOpen} />
     </PageLayout>
   );
 }
