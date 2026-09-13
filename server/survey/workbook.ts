@@ -115,6 +115,12 @@ const UNKNOWN_OFFICE_LABEL = "No office";
  */
 const RATING_FORMAT = "0.00";
 
+/** The template formats the completion percentage with the built-in `0%`. */
+const PERCENT_FORMAT = "0%";
+
+/** Beyond this many days between the reading and the period end, say so loudly. */
+const STALE_AFTER_DAYS = 35;
+
 /**
  * Widest a column a HEADER alone may force. The template wraps its headers and
  * keeps these columns 12-18 wide; without wrap-text, measuring the full string
@@ -298,8 +304,45 @@ export function sheetNameFor(desired: string, taken: string[]): string {
 // Survey Analysis
 // ============================================================================
 
+/**
+ * What the workbook says about its own denominator.
+ *
+ * SHOWN WITH ITS AGE, ALWAYS. A count is read overnight and a report may be run
+ * weeks later; showing the number with no indication of when it was taken is the
+ * one option that is not defensible. So the reading date is printed whether it
+ * is a day old or a month, and a gap past STALE_AFTER_DAYS says so in words
+ * rather than leaving the reader to do the subtraction.
+ */
+function activeCountsNote(
+  counts: ActiveClientCounts, periodEnd: string, rowsWithCount: number, providerRows: number,
+): string {
+  if (rowsWithCount === 0 || !counts.newestCapturedOn) {
+    return "Not available for this period. Active client counts are read from TherapyNotes " +
+      "overnight; none had been taken on or before this period ended, so this column and the " +
+      "% of Clients who Completed Survey column are both left blank.";
+  }
+  const days = Math.round(
+    (Date.parse(`${periodEnd}T00:00:00Z`) - Date.parse(`${counts.newestCapturedOn}T00:00:00Z`))
+    / 86_400_000,
+  );
+  const base =
+    `Read from TherapyNotes on ${counts.newestCapturedOn}, ${days} day${days === 1 ? "" : "s"} ` +
+    `before this period ended. Counts for ${rowsWithCount} of ${providerRows} provider(s); any ` +
+    `provider without one is left blank rather than shown as zero, and an office or practice ` +
+    `total is shown only when every provider in it has a count — a partial total would divide ` +
+    `all the surveys by only some of the clients.`;
+  return days > STALE_AFTER_DAYS
+    ? `${base} NOTE: that reading is more than ${STALE_AFTER_DAYS} days older than the period end, ` +
+      `so the percentages should be treated as approximate.`
+    : base;
+}
+
 /** Where one office's provider rows actually landed. 0-based, inclusive. */
-interface OfficeBlock { office: string; first: number; last: number; count: number }
+interface OfficeBlock {
+  office: string; first: number; last: number; count: number;
+  /** How many of this office's providers carry an active-client count. */
+  withCount: number;
+}
 
 const ANALYSIS_HEADERS = [
   "Providers", "Office", "Total Active Clients", "Total Surveys Completed",
@@ -330,7 +373,7 @@ function orderedOffices(agg: SurveyAggregate): string[] {
   });
 }
 
-function buildSurveyAnalysis(agg: SurveyAggregate): XLSX.WorkSheet {
+function buildSurveyAnalysis(agg: SurveyAggregate, counts: ActiveClientCounts): XLSX.WorkSheet {
   const s = new SheetWriter();
   ANALYSIS_HEADERS.forEach((h, i) => s.header(i, 0, h));
   ROLLUP_HEADERS.forEach((h, i) => s.header(11 + i, 0, h));
@@ -338,6 +381,9 @@ function buildSurveyAnalysis(agg: SurveyAggregate): XLSX.WorkSheet {
   const offices = orderedOffices(agg);
   const blocks: OfficeBlock[] = [];
   let row = 1;
+  // How many provider rows carry a denominator. Zero means the C column is
+  // empty, and every percentage formula above it must stay unwritten.
+  let rowsWithCount = 0;
 
   offices.forEach((office) => {
     const inOffice = agg.providers.filter((p) => p.office === office);
@@ -345,25 +391,46 @@ function buildSurveyAnalysis(agg: SurveyAggregate): XLSX.WorkSheet {
     inOffice.forEach((p) => {
       s.text(0, row, p.shortName);
       s.text(1, row, officeLabel(p.office));
-      // C (Total Active Clients) deliberately blank — TherapyNotes, not built.
       s.num(C_SURVEYS, row, p.surveyCount);
-      // E (%) deliberately omitted: =D/C over a blank C is #DIV/0! on every row.
+      // Total Active Clients, and the percentage that divides by it. BOTH or
+      // NEITHER: a formula written against a blank denominator is #DIV/0! on
+      // every row, which is worse than an empty cell and is exactly what the
+      // client's own template leaves blank on 25 of its 26 tabs.
+      const known = p.providerId === null ? undefined : counts.byProviderId[p.providerId];
+      if (known) {
+        s.num(C_ACTIVE, row, known.count);
+        s.formula(C_PCT, row, `${a1(C_SURVEYS, row)}/${a1(C_ACTIVE, row)}`, PERCENT_FORMAT);
+        rowsWithCount++;
+      }
       SCALE_KEYS.forEach((k, i) => s.num(C_FIRST_RATING + i, row, p.averages[k], RATING_FORMAT));
       row++;
     });
-    blocks.push({ office, first, last: row - 1, count: inOffice.length });
+    blocks.push({
+      office, first, last: row - 1, count: inOffice.length,
+      withCount: inOffice.filter((p) =>
+        p.providerId !== null && counts.byProviderId[p.providerId] !== undefined).length,
+    });
   });
 
   const firstProviderRow = 1;
   const lastProviderRow = row - 1;
+  const providerRows = agg.providers.length;
   const totalRow = row;
   const hasProviders = lastProviderRow >= firstProviderRow;
 
   s.text(0, totalRow, "Total");
   if (hasProviders) {
     const span = (col: number) => `${a1(col, firstProviderRow)}:${a1(col, lastProviderRow)}`;
-    s.formula(C_ACTIVE, totalRow, `SUM(${span(C_ACTIVE)})`);
     s.formula(C_SURVEYS, totalRow, `SUM(${span(C_SURVEYS)})`);
+    // A TOTAL NEEDS EVERY DENOMINATOR, not some of them. Summing the counts we
+    // happen to have and dividing all the surveys by it silently INFLATES the
+    // headline percentage — every survey counts, only some clients do. One
+    // provider missing a count therefore leaves the practice total blank, which
+    // is visible, rather than wrong, which is not.
+    if (rowsWithCount === providerRows) {
+      s.formula(C_ACTIVE, totalRow, `SUM(${span(C_ACTIVE)})`);
+      s.formula(C_PCT, totalRow, `${a1(C_SURVEYS, totalRow)}/${a1(C_ACTIVE, totalRow)}`, PERCENT_FORMAT);
+    }
     SCALE_KEYS.forEach((_, i) =>
       s.formula(C_FIRST_RATING + i, totalRow, `AVERAGE(${span(C_FIRST_RATING + i)})`, RATING_FORMAT));
   }
@@ -376,9 +443,12 @@ function buildSurveyAnalysis(agg: SurveyAggregate): XLSX.WorkSheet {
     // over an empty block would wrap onto the next office's rows.
     if (b.count > 0) {
       const span = (col: number) => `${a1(col, b.first)}:${a1(col, b.last)}`;
-      s.formula(12, rr, `SUM(${span(C_ACTIVE)})`);
       s.formula(13, rr, `SUM(${span(C_SURVEYS)})`);
-      // O (%) omitted, same reason as column E.
+      // Same rule per office: complete, or blank.
+      if (b.withCount === b.count) {
+        s.formula(12, rr, `SUM(${span(C_ACTIVE)})`);
+        s.formula(14, rr, `${a1(13, rr)}/${a1(12, rr)}`, PERCENT_FORMAT);
+      }
       SCALE_KEYS.forEach((_, i) =>
         s.formula(15 + i, rr, `AVERAGE(${span(C_FIRST_RATING + i)})`, RATING_FORMAT));
     }
@@ -386,8 +456,11 @@ function buildSurveyAnalysis(agg: SurveyAggregate): XLSX.WorkSheet {
   });
   s.text(11, rr, "Total");
   if (hasProviders) {
-    s.formula(12, rr, a1(C_ACTIVE, totalRow));
     s.formula(13, rr, a1(C_SURVEYS, totalRow));
+    if (rowsWithCount === providerRows) {
+      s.formula(12, rr, a1(C_ACTIVE, totalRow));
+      s.formula(14, rr, `${a1(13, rr)}/${a1(12, rr)}`, PERCENT_FORMAT);
+    }
     SCALE_KEYS.forEach((_, i) => s.formula(15 + i, rr, a1(C_FIRST_RATING + i, totalRow), RATING_FORMAT));
   }
 
@@ -404,9 +477,7 @@ function buildSurveyAnalysis(agg: SurveyAggregate): XLSX.WorkSheet {
   s.text(12, note, new Date().toISOString().slice(0, 16).replace("T", " ") + " UTC");
   note += 2;
   s.text(11, note, "Total Active Clients");
-  s.banner(12, note,
-    "Not yet available. It comes from TherapyNotes and nothing pulls it into the CRM yet, " +
-    "so this column and the % of Clients who Completed Survey column are both left blank.", 6);
+  s.banner(12, note, activeCountsNote(counts, agg.period.to, rowsWithCount, providerRows), 6);
 
   return s.finish();
 }
@@ -607,7 +678,7 @@ function listingRowsFor(p: ProviderAggregate) {
   return p.listingRows;
 }
 
-function buildProviderSheet(p: ProviderAggregate): XLSX.WorkSheet {
+function buildProviderSheet(p: ProviderAggregate, known: number | undefined): XLSX.WorkSheet {
   const s = new SheetWriter();
   const ratingHeaders = scaleQuestionsFor("in-person").map((q) => {
     switch (q.key) {
@@ -628,10 +699,14 @@ function buildProviderSheet(p: ProviderAggregate): XLSX.WorkSheet {
 
   s.header(1, 2, "Total Surveys Completed");
   s.header(1, 3, "Total Active Clients");
-  // C4 (Total Active Clients) is always blank, and D3 (=C3/C4) is therefore
-  // never written. A provider with nothing gets the furniture and no numbers —
-  // which is exactly what 25 of the template's 26 tabs show.
+  // Same both-or-neither rule as the analysis sheet: D3 (=C3/C4) is written only
+  // when C4 carries a denominator. A provider with nothing gets the furniture
+  // and no numbers, which is what 25 of the template's 26 tabs show.
   if (p.surveyCount > 0) s.num(2, 2, p.surveyCount);
+  if (known !== undefined) {
+    s.num(2, 3, known);
+    if (p.surveyCount > 0) s.formula(3, 2, "C3/C4", PERCENT_FORMAT);
+  }
 
   ratingHeaders.forEach((h, i) => s.header(1 + i, 4, h));
   if (p.surveyCount > 0) {
@@ -663,6 +738,19 @@ function buildProviderSheet(p: ProviderAggregate): XLSX.WorkSheet {
 // Assembly
 // ============================================================================
 
+/**
+ * Provider id → the active client count to use, and the day it was read.
+ *
+ * Passed IN rather than looked up here: this file does no I/O, and the count is
+ * selected as of the reporting period's end so a past report keeps returning the
+ * same denominator.
+ */
+export interface ActiveClientCounts {
+  byProviderId: Record<number, { count: number; capturedOn: string }>;
+  /** Newest reading used anywhere in this workbook, for the staleness note. */
+  newestCapturedOn: string | null;
+}
+
 export interface WorkbookResult {
   buffer: Buffer;
   sheetNames: string[];
@@ -670,7 +758,12 @@ export interface WorkbookResult {
   renamed: Record<string, string>;
 }
 
-export function buildSurveyWorkbook(agg: SurveyAggregate): WorkbookResult {
+const NO_COUNTS: ActiveClientCounts = { byProviderId: {}, newestCapturedOn: null };
+
+export function buildSurveyWorkbook(
+  agg: SurveyAggregate,
+  counts: ActiveClientCounts = NO_COUNTS,
+): WorkbookResult {
   const wb = XLSX.utils.book_new();
   const names: string[] = [];
   const renamed: Record<string, string> = {};
@@ -693,7 +786,7 @@ export function buildSurveyWorkbook(agg: SurveyAggregate): WorkbookResult {
 
   // The trailing space is the client's. A cross-sheet reference written against
   // "Survey Analysis" without it would not resolve.
-  add(buildSurveyAnalysis(agg), "Survey Analysis ");
+  add(buildSurveyAnalysis(agg, counts), "Survey Analysis ");
   add(buildRatingsSheet(agg), "In Person and TH Ratings");
   add(buildNeutralsSheet(agg), "Neutrals and Below");
 
@@ -714,7 +807,8 @@ export function buildSurveyWorkbook(agg: SurveyAggregate): WorkbookResult {
   tabOrder.forEach((p) => {
     const name = sheetNameFor(p.shortName, names);
     if (name !== p.shortName) renamed[p.shortName] = name;
-    add(buildProviderSheet(p), name);
+    const known = p.providerId === null ? undefined : counts.byProviderId[p.providerId]?.count;
+    add(buildProviderSheet(p, known), name);
   });
 
   const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;

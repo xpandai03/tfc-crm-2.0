@@ -493,9 +493,15 @@ console.log("\n[9] Structure, wording and the trailing space");
 
   // No rollup is computed in code: every rollup cell must be a formula.
   const ws = wb.sheets["Survey Analysis "];
-  const rollupCells = ["M2", "N2", "P2", "Q2", "R2", "S2", "M5", "N5", "P5"];
-  check("every rollup cell is a formula, not a number",
+  // M (Total Active Clients) and O (%) are absent here BY DESIGN: this workbook
+  // is built with no active-client counts, and a rollup that summed the
+  // denominators it happened to have would inflate the percentage above it.
+  // See scripts/test-active-counts.ts for the with-counts case.
+  const rollupCells = ["N2", "P2", "Q2", "R2", "S2", "N5", "P5"];
+  check("every rating rollup cell is a formula, not a number",
     rollupCells.every((c) => typeof ws[c]?.f === "string"));
+  check("...and with no counts, the denominator rollup is absent rather than partial",
+    ws["M2"] === undefined && ws["O2"] === undefined);
   check("...and none carries a cached value",
     rollupCells.every((c) => ws[c]?.v === undefined));
   check("the Total row is a formula too",

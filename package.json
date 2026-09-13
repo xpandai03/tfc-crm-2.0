@@ -38,6 +38,7 @@
     "test:survey-aggregate": "tsx scripts/test-survey-aggregate.ts",
     "test:survey-workbook": "tsx scripts/test-survey-workbook.ts",
     "test:survey-export": "tsx scripts/test-survey-export-route.ts",
+    "test:active-counts": "tsx scripts/test-active-counts.ts",
     "fixture:survey-export": "tsx scripts/fixture-survey-export.ts"
   },
   "dependencies": {

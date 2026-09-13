@@ -5,6 +5,7 @@
  */
 
 import cron from "node-cron";
+import { runActiveCountPass, type ActiveCountRunSummary } from "../therapy-notes/active-counts-runner";
 import { sendMonthlyReport } from "../reports/send";
 import { runScheduledAttach, ATTACH_BATCH_CAP } from "../survey/attach-runner";
 import { previousPeriod } from "../reports/monthly";
@@ -291,6 +292,78 @@ export function startSurveyAttachCron(): void {
     `Up to ${ATTACH_BATCH_CAP} submissions per run, one at a time, oldest first. ` +
     `Only surveys matched to a contact and carrying a name, date of birth, phone ` +
     `and therapist are eligible.`,
+  );
+}
+
+// ============================================================================
+// TherapyNotes active client counts — the survey export's denominator
+// ============================================================================
+
+/**
+ * 02:30 Mountain. Deliberately AFTER the midnight survey-attach batch rather
+ * than alongside it: the agent holds a single TherapyNotes license and
+ * serialises, so two overnight jobs starting together would queue and the
+ * second would run long. 02:30 also sits clear of any plausible staff use, and
+ * a three-minute browser pass during business hours would block scheduling.
+ *
+ * Mountain, explicitly. Containers run UTC and "30 2 * * *" read as UTC fires
+ * at 20:30 the previous evening, which is mid-shift.
+ */
+const DEFAULT_ACTIVE_COUNTS_SCHEDULE = "30 2 * * *";
+const ACTIVE_COUNTS_TIMEZONE = "America/Denver";
+
+let isCountingActive = false;
+
+/** Manual trigger, for a run after a failed overnight pass. */
+export async function triggerActiveCountPass(): Promise<ActiveCountRunSummary> {
+  return runActiveCountPass("manual");
+}
+
+async function runScheduledActiveCounts(): Promise<void> {
+  // The pass takes minutes. An overlapping start would contend for the agent's
+  // single license and produce two half-passes rather than one whole one.
+  if (isCountingActive) {
+    console.warn("[counts-cron] Previous pass still running — skipping this tick.");
+    return;
+  }
+  isCountingActive = true;
+  try {
+    await runActiveCountPass("scheduled");
+  } catch (error) {
+    console.error(
+      "[counts-cron] Unhandled error:",
+      error instanceof Error ? error.message : "unknown",
+    );
+  } finally {
+    isCountingActive = false;
+  }
+}
+
+export function startActiveCountsCron(): void {
+  const schedule = process.env.TN_ACTIVE_COUNTS_CRON_SCHEDULE || DEFAULT_ACTIVE_COUNTS_SCHEDULE;
+  const isOverridden = Boolean(process.env.TN_ACTIVE_COUNTS_CRON_SCHEDULE);
+
+  if (!cron.validate(schedule)) {
+    console.error(
+      `[counts-cron] INVALID schedule "${schedule}" — active counts NOT scheduled. ` +
+      `Fix TN_ACTIVE_COUNTS_CRON_SCHEDULE and redeploy.`,
+    );
+    return;
+  }
+
+  cron.schedule(schedule, () => { void runScheduledActiveCounts(); }, {
+    timezone: ACTIVE_COUNTS_TIMEZONE,
+  });
+
+  console.log(
+    `[counts-cron] TherapyNotes active counts scheduled: "${schedule}" ` +
+    `(${describeSchedule(schedule)}) timezone=${ACTIVE_COUNTS_TIMEZONE}` +
+    `${isOverridden ? " [OVERRIDDEN via TN_ACTIVE_COUNTS_CRON_SCHEDULE]" : " [default]"}`,
+  );
+  console.log(
+    `[counts-cron] Next fire: ${nextFireDescription(schedule, ACTIVE_COUNTS_TIMEZONE)}. ` +
+    `One login, every clinician option, counts stored dated. Nothing is subtracted; ` +
+    `the survey export reads the newest count on or before its period end.`,
   );
 }
 

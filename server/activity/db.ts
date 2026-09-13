@@ -34,6 +34,11 @@ export type ActivityType =
   | "therapy_notes_started"
   | "therapy_notes_created"
   | "therapy_notes_failed"
+  // One overnight pass reading every clinician's active client count out of
+  // TherapyNotes. Logged whether it succeeded, partially succeeded or returned
+  // nothing — a scheduled job that silently never fires is the failure mode this
+  // line exists to make visible.
+  | "tn_active_counts"
   | "referral_uploaded"
   | "scheduled_appointment_set"
   | "tn_schedule_started"

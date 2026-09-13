@@ -20,8 +20,9 @@
 import { getRecentSurveySubmissions } from "../sync/db";
 import { getAllCrmProviders, getInactiveCrmProviders } from "../reminders/db";
 import { providerShortName } from "@shared/provider-short-name";
+import { getActiveCountsAsOf } from "../therapy-notes/active-counts-db";
 import { aggregateSurveys, type RosterEntry, type SubmissionInput } from "./aggregate";
-import { buildSurveyWorkbook } from "./workbook";
+import { buildSurveyWorkbook, type ActiveClientCounts } from "./workbook";
 
 /**
  * Upper bound on rows pulled for one export. A quarter of real submissions is
@@ -41,6 +42,8 @@ export interface SurveyExportResult {
     departedCount: number;
     unresolvedCount: number;
     sheetCount: number;
+    /** Providers carrying a denominator for this period. */
+    providersWithCount: number;
     buildMs: number;
   };
 }
@@ -63,10 +66,14 @@ export function exportFilename(range: SurveyExportRange): string {
 export async function buildSurveyExport(range: SurveyExportRange): Promise<SurveyExportResult> {
   const started = Date.now();
 
-  const [active, inactive, rows] = await Promise.all([
+  const [active, inactive, rows, counts] = await Promise.all([
     getAllCrmProviders(),
     getInactiveCrmProviders(),
     getRecentSurveySubmissions(MAX_SUBMISSIONS),
+    // AS OF THE PERIOD END, not "now". A report for August run in December must
+    // use August's denominator, or the same report returns a different
+    // percentage every time it is run.
+    getActiveCountsAsOf(range.to),
   ]);
 
   const roster: RosterEntry[] = active.concat(inactive).map((p) => ({
@@ -84,8 +91,16 @@ export async function buildSurveyExport(range: SurveyExportRange): Promise<Surve
     payload: r.payload ?? {},
   }));
 
+  const activeCounts: ActiveClientCounts = { byProviderId: {}, newestCapturedOn: null };
+  counts.forEach((c) => {
+    activeCounts.byProviderId[c.providerId] = { count: c.activeCount, capturedOn: c.capturedOn };
+    if (!activeCounts.newestCapturedOn || c.capturedOn > activeCounts.newestCapturedOn) {
+      activeCounts.newestCapturedOn = c.capturedOn;
+    }
+  });
+
   const aggregate = aggregateSurveys({ roster, submissions, period: range });
-  const { buffer, sheetNames } = buildSurveyWorkbook(aggregate);
+  const { buffer, sheetNames } = buildSurveyWorkbook(aggregate, activeCounts);
 
   return {
     buffer,
@@ -96,6 +111,7 @@ export async function buildSurveyExport(range: SurveyExportRange): Promise<Surve
       departedCount: aggregate.departed.length,
       unresolvedCount: aggregate.unresolved.length,
       sheetCount: sheetNames.length,
+      providersWithCount: counts.length,
       buildMs: Date.now() - started,
     },
   };
