@@ -37,6 +37,7 @@
     "test:short-name": "tsx scripts/test-provider-short-name.ts",
     "test:survey-aggregate": "tsx scripts/test-survey-aggregate.ts",
     "test:survey-workbook": "tsx scripts/test-survey-workbook.ts",
+    "test:survey-export": "tsx scripts/test-survey-export-route.ts",
     "fixture:survey-export": "tsx scripts/fixture-survey-export.ts"
   },
   "dependencies": {

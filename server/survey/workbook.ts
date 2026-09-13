@@ -292,6 +292,22 @@ function buildSurveyAnalysis(agg: SurveyAggregate): XLSX.WorkSheet {
     SCALE_KEYS.forEach((_, i) => s.formula(15 + i, rr, a1(C_FIRST_RATING + i, totalRow)));
   }
 
+  // ---- what this file covers, and why one column is empty ---------------
+  // A saved workbook has to say what period it reports on, and the blank
+  // Total Active Clients column is the first thing anyone will ask about. Both
+  // sit clear of the rollup, which grows with the office count.
+  let note = rr + 3;
+  s.text(11, note, "Reporting period");
+  s.text(12, note, `${agg.period.from} to ${agg.period.to}`);
+  note++;
+  s.text(11, note, "Generated");
+  s.text(12, note, new Date().toISOString().slice(0, 16).replace("T", " ") + " UTC");
+  note += 2;
+  s.text(11, note, "Total Active Clients");
+  s.text(12, note,
+    "Not yet available. It comes from TherapyNotes and nothing pulls it into the CRM yet, " +
+    "so this column and the % of Clients who Completed Survey column are both left blank.");
+
   return s.finish();
 }
 
@@ -534,9 +550,15 @@ export function buildSurveyWorkbook(agg: SurveyAggregate): WorkbookResult {
   }
 
   // The client left this sheet empty with only a note about what belongs on it,
-  // and specified no columns. It is emitted named and empty rather than with
-  // invented headers; see the report.
-  add(new SheetWriter().finish(), "Data");
+  // and specified no columns. It carries ONE sentence saying so and no headers:
+  // anyone opening a sheet called "Data" and finding it blank will assume the
+  // export broke, and inventing columns to avoid that would be worse. The
+  // sentence is plainly prose, not a header row.
+  const dataSheet = new SheetWriter();
+  dataSheet.text(0, 0,
+    "This sheet is intentionally empty. It is meant to hold the raw survey data, " +
+    "but the columns for it have not been specified yet.");
+  add(dataSheet.finish(), "Data");
 
   // The trailing space is the client's. A cross-sheet reference written against
   // "Survey Analysis" without it would not resolve.

@@ -473,9 +473,15 @@ console.log("\n[9] Structure, wording and the trailing space");
   check("Survey Analysis keeps its trailing space",
     sheetNames[1] === "Survey Analysis " && wb.sheets["Survey Analysis"] === undefined);
   eq("...and the reader sees the same name", wb.names[1], "Survey Analysis ");
+  // The Data sheet carries ONE explanatory sentence and nothing else. A blank
+  // sheet named "Data" reads as a broken export; inventing columns would be
+  // worse. See server/survey/workbook.ts in buildSurveyWorkbook.
   const data = wb.sheets["Data"];
-  check("the Data sheet is emitted empty — no invented columns",
-    Object.keys(data).length === 0);
+  eq("the Data sheet holds exactly one cell", Object.keys(data), ["A1"]);
+  check("...which is prose, not a column header",
+    String(data["A1"].v).indexOf("intentionally empty") !== -1);
+  check("...and no invented columns anywhere on it",
+    Object.keys(data).every((k) => k === "A1"));
 
   // The template's telehealth headings are wrong in two places; the instrument's
   // real wording must appear instead.

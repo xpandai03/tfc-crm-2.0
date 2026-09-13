@@ -113,6 +113,7 @@ import { SURVEY_FORM_TYPE } from "@shared/survey-questions";
 import { isSurveyPayload } from "./pdf/survey-template";
 import { extractReferralData } from "./referral/extract";
 import * as XLSX from "xlsx";
+import { buildSurveyExport, currentQuarter } from "./survey/export";
 import * as path from "path";
 import { z } from "zod";
 
@@ -7960,6 +7961,88 @@ export async function registerRoutes(
       const message = error instanceof Error ? error.message : "Referral XLSX export failed";
       console.error("[export] referrals XLSX Error:", message);
       return res.status(500).json({ error: message });
+    }
+  });
+
+  // ==========================================================================
+  // Client survey export — GET /api/export/survey-workbook.xlsx
+  //
+  // Registered HERE, inside registerRoutes, which server/index.ts calls AFTER
+  // app.use(authMiddleware) — so this route is authenticated by construction.
+  // It must never move to server/survey/routes.ts: that router is mounted
+  // BEFORE the middleware so the public survey forms work without a session,
+  // and this workbook carries client names and their comments on 27 of its 30
+  // sheets.
+  // ==========================================================================
+
+  /**
+   * WHO CAN PULL THE WORKBOOK. Today: any authenticated staff member, which is
+   * exactly who can already reach the Submissions page and download any single
+   * submission's PDF from it. So this changes convenience and aggregation, not
+   * who can see what — and it is deliberately NOT narrowed here without a
+   * decision from the practice.
+   *
+   * TO NARROW IT, this is the one line: swap the authentication check for an
+   * allow-list the way requireReportBuilder does (canBuildReports) or the way
+   * the referral upload does (canAccessReferralUpload). The button on the
+   * Submissions page is gated on the same predicate, so both move together.
+   */
+  const requireSurveyExport = (req: any, res: any): string | null => {
+    if (!(req.isAuthenticated && req.isAuthenticated())) {
+      res.status(401).json({ error: "Authentication required" });
+      return null;
+    }
+    return (req.user?.email ?? "").toLowerCase().trim();
+  };
+
+  /** The audit entry. Same mechanism as logIdentifiedExport above. */
+  const logSurveyExport = async (
+    email: string, range: { from: string; to: string }, stats: Record<string, number>,
+  ): Promise<void> => {
+    await logActivity({
+      type: "report_exported",
+      actorEmail: email,
+      entityType: "report",
+      entityName: "client_survey_workbook",
+      metadata: {
+        format: "xlsx",
+        range: `${range.from}..${range.to}`,
+        rowCount: stats.submissionsInPeriod,
+        sheetCount: stats.sheetCount,
+        includeIdentifiers: true,
+      },
+    });
+  };
+
+  app.get("/api/export/survey-workbook.xlsx", async (req: any, res) => {
+    try {
+      const email = requireSurveyExport(req, res);
+      if (!email) return;
+
+      const fallback = currentQuarter();
+      const from = validReportDate(req.query.from) ?? fallback.from;
+      const to = validReportDate(req.query.to) ?? fallback.to;
+      if (from > to) {
+        return res.status(400).json({ error: "The start date must be on or before the end date." });
+      }
+
+      const { buffer, filename, stats } = await buildSurveyExport({ from, to });
+
+      // Always logged, not conditionally: every one of these carries client
+      // names by design, so there is no un-identified variant to skip.
+      await logSurveyExport(email, { from, to }, stats as unknown as Record<string, number>);
+      console.log(
+        `[export] survey workbook ${from}..${to}: ${stats.submissionsInPeriod} submissions, ` +
+        `${stats.sheetCount} sheets, ${stats.buildMs}ms`,
+      );
+
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      return res.send(buffer);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Survey export failed";
+      console.error("[export] survey workbook Error:", message);
+      return res.status(500).json({ error: "The survey export could not be built. Please try again, or tell us if it keeps failing." });
     }
   });
 
