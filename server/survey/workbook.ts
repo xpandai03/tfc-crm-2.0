@@ -91,6 +91,13 @@ export const LISTING_MODE: ListingMode = "all";
  */
 export const INCLUDE_NA_COLUMN = false;
 
+/**
+ * A count table this wide or narrower may share a band with the next one. The
+ * Yes/No tables are 3 columns (Office + Yes + No); the satisfaction tables are
+ * 6 and stand alone, exactly as the client's template arranges them.
+ */
+const NARROW_TABLE_MAX = 4;
+
 /** Office row order. Anything the data carries beyond these sorts after. */
 const OFFICE_ORDER = ["ABQ", "LL", "RR"];
 
@@ -100,6 +107,32 @@ const UNKNOWN_OFFICE_LABEL = "No office";
 // ============================================================================
 // Cell plumbing
 // ============================================================================
+
+/**
+ * The client's template formats every rating column with the built-in `0.00`
+ * (numFmtId 2). Raw means print as 7.857142857142857 otherwise, which is the
+ * single ugliest thing in the generated file.
+ */
+const RATING_FORMAT = "0.00";
+
+/**
+ * Widest a column a HEADER alone may force. The template wraps its headers and
+ * keeps these columns 12-18 wide; without wrap-text, measuring the full string
+ * would widen a column far past its data.
+ */
+const HEADER_MAX_WIDTH = 22;
+
+/** Narrowest a column may be, so a one-character header still reads. */
+const MIN_WIDTH = 9;
+
+/**
+ * Widest a column may be. The comment columns hold free text up to 1000
+ * characters and the library cannot write wrap-text, so a comment runs on one
+ * line however wide the column is; 60 is enough to read the opening of one
+ * without pushing every other column off the screen. The template's widest is
+ * 30, on the same columns.
+ */
+const MAX_WIDTH = 60;
 
 type Cell = XLSX.CellObject;
 type SheetData = Record<string, Cell | unknown>;
@@ -114,6 +147,7 @@ function a1(col: number, row: number): string {
 class SheetWriter {
   private data: SheetData = {};
   private merges: XLSX.Range[] = [];
+  private widths: Record<number, number> = {};
   private maxCol = 0;
   private maxRow = 0;
 
@@ -128,19 +162,78 @@ class SheetWriter {
     this.touch(col, row);
     if (v === "") return;
     this.data[a1(col, row)] = { t: "s", v };
+    // Only the first line of a multi-line comment drives the width; the library
+    // cannot write wrap-text, so the rest would never be visible anyway.
+    this.widen(col, v.split("\n")[0].length);
   }
 
-  /** A numeric cell. NULL is skipped — an absent average must stay absent. */
-  num(col: number, row: number, value: number | null | undefined): void {
+  /**
+   * A column header. Measured like any text, but capped: the client's template
+   * WRAPS its headers, so "% of Clients who Completed Survey " sits happily
+   * over a 15-wide column there. The library cannot write wrap-text, so an
+   * unmodified measurement gives a 37-wide column — over a column that is
+   * deliberately empty, at that.
+   */
+  header(col: number, row: number, value: string): void {
+    const v = (value ?? "").toString();
+    this.touch(col, row);
+    if (v === "") return;
+    this.data[a1(col, row)] = { t: "s", v };
+    this.widen(col, Math.min(v.length, HEADER_MAX_WIDTH));
+  }
+
+  /**
+   * A heading or label that spans a table: written, merged across `span`
+   * columns, and DELIBERATELY NOT MEASURED.
+   *
+   * Measuring it is the bug this exists to prevent. A question prompt like "Was
+   * the facility clean and inviting?" sits in the same column as the Location
+   * values beneath it, so letting it set the width gives a 60-character column
+   * holding the word "ABQ". The template merges these for the same reason.
+   */
+  banner(col: number, row: number, value: string, span: number): void {
+    const v = (value ?? "").toString();
+    this.touch(col, row);
+    if (v === "") return;
+    this.data[a1(col, row)] = { t: "s", v };
+    if (span > 1) this.merge(col, row, col + span - 1, row);
+  }
+
+  /**
+   * A numeric cell. NULL is skipped — an absent average must stay absent.
+   *
+   * `fmt` is an Excel number-format code. SheetJS writes these from the cell's
+   * `z` property even though it drops every other style: verified, `z: "0.00"`
+   * emits numFmtId="2", the same built-in the client's template applies to the
+   * rating columns.
+   */
+  num(col: number, row: number, value: number | null | undefined, fmt?: string): void {
     this.touch(col, row);
     if (value === null || value === undefined || !isFinite(value)) return;
-    this.data[a1(col, row)] = { t: "n", v: value };
+    const cell: Cell = { t: "n", v: value };
+    if (fmt) cell.z = fmt;
+    this.data[a1(col, row)] = cell;
+    this.widen(col, fmt === RATING_FORMAT ? 6 : String(value).length);
   }
 
   /** A formula cell. Written without a cached value; Excel computes on open. */
-  formula(col: number, row: number, f: string): void {
+  formula(col: number, row: number, f: string, fmt?: string): void {
     this.touch(col, row);
-    this.data[a1(col, row)] = { t: "n", f };
+    const cell: Cell = { t: "n", f };
+    if (fmt) cell.z = fmt;
+    this.data[a1(col, row)] = cell;
+  }
+
+  /**
+   * Widths are MEASURED, not declared, for the same reason formula ranges are:
+   * a hardcoded width goes wrong the moment the content changes, and a comment
+   * column is the one place where that is guaranteed. Each column grows to its
+   * widest cell, then MAX_WIDTH caps it — a 1000-character comment must not
+   * produce a 1000-character column.
+   */
+  private widen(col: number, chars: number): void {
+    const want = Math.min(Math.max(chars + 2, MIN_WIDTH), MAX_WIDTH);
+    if (!this.widths[col] || this.widths[col] < want) this.widths[col] = want;
   }
 
   merge(col: number, row: number, colEnd: number, rowEnd: number): void {
@@ -148,10 +241,16 @@ class SheetWriter {
     this.merges.push({ s: { c: col, r: row }, e: { c: colEnd, r: rowEnd } });
   }
 
+  /** Force a column at least this wide, for one the content under-measures. */
+  atLeast(col: number, chars: number): void { this.widen(col, chars); }
+
   finish(): XLSX.WorkSheet {
     const ws = this.data as XLSX.WorkSheet;
     ws["!ref"] = `A1:${a1(this.maxCol, this.maxRow)}`;
     if (this.merges.length > 0) ws["!merges"] = this.merges;
+    const cols: XLSX.ColInfo[] = [];
+    for (let c = 0; c <= this.maxCol; c++) cols.push({ wch: this.widths[c] ?? MIN_WIDTH });
+    ws["!cols"] = cols;
     return ws;
   }
 }
@@ -233,8 +332,8 @@ function orderedOffices(agg: SurveyAggregate): string[] {
 
 function buildSurveyAnalysis(agg: SurveyAggregate): XLSX.WorkSheet {
   const s = new SheetWriter();
-  ANALYSIS_HEADERS.forEach((h, i) => s.text(i, 0, h));
-  ROLLUP_HEADERS.forEach((h, i) => s.text(11 + i, 0, h));
+  ANALYSIS_HEADERS.forEach((h, i) => s.header(i, 0, h));
+  ROLLUP_HEADERS.forEach((h, i) => s.header(11 + i, 0, h));
 
   const offices = orderedOffices(agg);
   const blocks: OfficeBlock[] = [];
@@ -249,7 +348,7 @@ function buildSurveyAnalysis(agg: SurveyAggregate): XLSX.WorkSheet {
       // C (Total Active Clients) deliberately blank — TherapyNotes, not built.
       s.num(C_SURVEYS, row, p.surveyCount);
       // E (%) deliberately omitted: =D/C over a blank C is #DIV/0! on every row.
-      SCALE_KEYS.forEach((k, i) => s.num(C_FIRST_RATING + i, row, p.averages[k]));
+      SCALE_KEYS.forEach((k, i) => s.num(C_FIRST_RATING + i, row, p.averages[k], RATING_FORMAT));
       row++;
     });
     blocks.push({ office, first, last: row - 1, count: inOffice.length });
@@ -266,7 +365,7 @@ function buildSurveyAnalysis(agg: SurveyAggregate): XLSX.WorkSheet {
     s.formula(C_ACTIVE, totalRow, `SUM(${span(C_ACTIVE)})`);
     s.formula(C_SURVEYS, totalRow, `SUM(${span(C_SURVEYS)})`);
     SCALE_KEYS.forEach((_, i) =>
-      s.formula(C_FIRST_RATING + i, totalRow, `AVERAGE(${span(C_FIRST_RATING + i)})`));
+      s.formula(C_FIRST_RATING + i, totalRow, `AVERAGE(${span(C_FIRST_RATING + i)})`, RATING_FORMAT));
   }
 
   // ---- office rollup, every range from a recorded block ----------------
@@ -281,7 +380,7 @@ function buildSurveyAnalysis(agg: SurveyAggregate): XLSX.WorkSheet {
       s.formula(13, rr, `SUM(${span(C_SURVEYS)})`);
       // O (%) omitted, same reason as column E.
       SCALE_KEYS.forEach((_, i) =>
-        s.formula(15 + i, rr, `AVERAGE(${span(C_FIRST_RATING + i)})`));
+        s.formula(15 + i, rr, `AVERAGE(${span(C_FIRST_RATING + i)})`, RATING_FORMAT));
     }
     rr++;
   });
@@ -289,7 +388,7 @@ function buildSurveyAnalysis(agg: SurveyAggregate): XLSX.WorkSheet {
   if (hasProviders) {
     s.formula(12, rr, a1(C_ACTIVE, totalRow));
     s.formula(13, rr, a1(C_SURVEYS, totalRow));
-    SCALE_KEYS.forEach((_, i) => s.formula(15 + i, rr, a1(C_FIRST_RATING + i, totalRow)));
+    SCALE_KEYS.forEach((_, i) => s.formula(15 + i, rr, a1(C_FIRST_RATING + i, totalRow), RATING_FORMAT));
   }
 
   // ---- what this file covers, and why one column is empty ---------------
@@ -297,6 +396,7 @@ function buildSurveyAnalysis(agg: SurveyAggregate): XLSX.WorkSheet {
   // Total Active Clients column is the first thing anyone will ask about. Both
   // sit clear of the rollup, which grows with the office count.
   let note = rr + 3;
+  s.atLeast(12, 40);
   s.text(11, note, "Reporting period");
   s.text(12, note, `${agg.period.from} to ${agg.period.to}`);
   note++;
@@ -304,9 +404,9 @@ function buildSurveyAnalysis(agg: SurveyAggregate): XLSX.WorkSheet {
   s.text(12, note, new Date().toISOString().slice(0, 16).replace("T", " ") + " UTC");
   note += 2;
   s.text(11, note, "Total Active Clients");
-  s.text(12, note,
+  s.banner(12, note,
     "Not yet available. It comes from TherapyNotes and nothing pulls it into the CRM yet, " +
-    "so this column and the % of Clients who Completed Survey column are both left blank.");
+    "so this column and the % of Clients who Completed Survey column are both left blank.", 6);
 
   return s.finish();
 }
@@ -332,12 +432,11 @@ function writeCountTable(
   withTotal: boolean,
 ): { width: number; height: number } {
   const options = visibleOptions(q);
-  s.text(atCol, atRow, q.prompt);
-  s.merge(atCol, atRow, atCol + options.length, atRow);
+  s.banner(atCol, atRow, q.prompt, options.length + 1);
 
   const headRow = atRow + 1;
-  s.text(atCol, headRow, "Office");
-  options.forEach((o, i) => s.text(atCol + 1 + i, headRow, o));
+  s.header(atCol, headRow, "Office");
+  options.forEach((o, i) => s.header(atCol + 1 + i, headRow, o));
 
   const first = headRow + 1;
   rowLabels.forEach((label, i) => {
@@ -371,28 +470,55 @@ function buildRatingsSheet(agg: SurveyAggregate): XLSX.WorkSheet {
   const inPerson = agg.ratings.filter((q) => q.modality === "In Person");
   const telehealth = agg.ratings.filter((q) => q.modality === "Telehealth");
 
-  s.text(0, 0, "IN PERSON");
-  let row = 2;
-  let leftWidth = 0;
-  inPerson.forEach((q) => {
-    const { width, height } = writeCountTable(
-      s, 0, row, q, officeRows, (l) => officeBucket[l], true);
-    leftWidth = Math.max(leftWidth, width);
-    row += height + 2;
-  });
+  /**
+   * Lay a modality's five tables the way the template does: the wide
+   * satisfaction table gets a band to itself, and the narrow Yes/No tables pair
+   * up two to a band. Purely to stop the sheet running to forty rows when the
+   * client's own is under thirty.
+   *
+   * The pairing is decided from MEASURED width, not from a table's position, so
+   * switching INCLUDE_NA_COLUMN on widens the Yes/No tables and they stop
+   * pairing on their own rather than colliding.
+   */
+  function layout(
+    tables: QuestionBreakdown[], atCol: number, rowLabels: string[],
+    bucketFor: (label: string) => string, withTotal: boolean,
+  ): number {
+    let row = 2;
+    let widest = 0;
+    let i = 0;
+    while (i < tables.length) {
+      const left = writeCountTable(s, atCol, row, tables[i], rowLabels, bucketFor, withTotal);
+      let bandWidth = left.width;
+      let bandHeight = left.height;
+      const nextIsNarrow =
+        i + 1 < tables.length && left.width <= NARROW_TABLE_MAX &&
+        visibleOptions(tables[i + 1]).length + 1 <= NARROW_TABLE_MAX;
+      if (nextIsNarrow) {
+        const rightCol = atCol + left.width + 1;
+        const right = writeCountTable(s, rightCol, row, tables[i + 1], rowLabels, bucketFor, withTotal);
+        bandWidth = left.width + 1 + right.width;
+        bandHeight = Math.max(left.height, right.height);
+        i += 2;
+      } else {
+        i += 1;
+      }
+      widest = Math.max(widest, bandWidth);
+      row += bandHeight + 2;
+    }
+    return widest;
+  }
+
+  s.banner(0, 0, "IN PERSON", 1);
+  const inPersonWidth = layout(inPerson, 0, officeRows, (l) => officeBucket[l], true);
 
   // The telehealth block starts one clear column after the widest in-person
-  // table, so widening a table (an N/A column) shifts this instead of colliding.
-  const thCol = leftWidth + 2;
-  s.text(thCol, 0, "TELEHEALTH");
-  row = 2;
-  telehealth.forEach((q) => {
-    // Telehealth is location-agnostic: one bucket, and no Total row — matching
-    // the template, where the TH tables carry neither.
-    const { height } = writeCountTable(
-      s, thCol, row, q, [TELEHEALTH_BUCKET], () => TELEHEALTH_BUCKET, false);
-    row += height + 2;
-  });
+  // band, so a widened table shifts this instead of colliding with it.
+  const thCol = inPersonWidth + 2;
+  s.banner(thCol, 0, "TELEHEALTH", 1);
+  // Telehealth is location-agnostic: one bucket, and no Total row — matching
+  // the template, where the TH tables carry neither.
+  layout(telehealth, thCol, [TELEHEALTH_BUCKET], () => TELEHEALTH_BUCKET, false);
 
   return s.finish();
 }
@@ -406,20 +532,24 @@ function writeNegativeBlock(
   withLocation: boolean,
 ): { width: number; height: number } {
   let r = atRow;
-  s.text(atCol, r, listing.prompt);
-  r++;
-
-  // Count rows, one per negative option, labelled as the template labels them.
-  Object.keys(listing.counts).forEach((option) => {
-    s.text(atCol, r, `Total "${option}" responses`);
-    s.num(atCol + 3, r, listing.counts[option]);
-    r++;
-  });
 
   const headers = withLocation
     ? ["Location", "Provider", "Client Name", "Response", "Comments"]
     : ["Provider", "Client Name", "Response", "Comments"];
-  headers.forEach((h, i) => s.text(atCol + i, r, h));
+
+  s.banner(atCol, r, listing.prompt, headers.length + 1);
+  r++;
+
+  // Count rows, one per negative option, labelled as the template labels them.
+  // The value sits one column PAST the listing headers, where the template puts
+  // it — mid-table it reads as part of a row rather than as a total.
+  Object.keys(listing.counts).forEach((option) => {
+    s.banner(atCol, r, `Total "${option}" responses`, headers.length);
+    s.num(atCol + headers.length, r, listing.counts[option]);
+    r++;
+  });
+
+  headers.forEach((h, i) => s.header(atCol + i, r, h));
   r++;
 
   // Every row belongs here whether or not it carries a comment — the client's
@@ -433,7 +563,8 @@ function writeNegativeBlock(
     r++;
   });
 
-  return { width: headers.length, height: r - atRow };
+  // +1: the count value sits one column past the headers.
+  return { width: headers.length + 1, height: r - atRow };
 }
 
 function buildNeutralsSheet(agg: SurveyAggregate): XLSX.WorkSheet {
@@ -441,7 +572,7 @@ function buildNeutralsSheet(agg: SurveyAggregate): XLSX.WorkSheet {
   const inPerson = agg.negatives.filter((l) => l.modality === "In Person");
   const telehealth = agg.negatives.filter((l) => l.modality === "Telehealth");
 
-  s.text(0, 0, "IN-PERSON NEUTRALS OR BELOW");
+  s.banner(0, 0, "IN-PERSON NEUTRALS OR BELOW", 1);
   let row = 1;
   let leftWidth = 0;
   inPerson.forEach((l) => {
@@ -451,7 +582,7 @@ function buildNeutralsSheet(agg: SurveyAggregate): XLSX.WorkSheet {
   });
 
   const thCol = leftWidth + 2;
-  s.text(thCol, 0, "TELEHEALTH NEUTRALS OR BELOW");
+  s.banner(thCol, 0, "TELEHEALTH NEUTRALS OR BELOW", 1);
   row = 1;
   telehealth.forEach((l) => {
     // No Location column on the telehealth side — telehealth is one bucket, and
@@ -495,22 +626,22 @@ function buildProviderSheet(p: ProviderAggregate): XLSX.WorkSheet {
   s.text(1, 1, p.shortName);
   s.merge(1, 1, 4, 1);
 
-  s.text(1, 2, "Total Surveys Completed");
-  s.text(1, 3, "Total Active Clients");
+  s.header(1, 2, "Total Surveys Completed");
+  s.header(1, 3, "Total Active Clients");
   // C4 (Total Active Clients) is always blank, and D3 (=C3/C4) is therefore
   // never written. A provider with nothing gets the furniture and no numbers —
   // which is exactly what 25 of the template's 26 tabs show.
   if (p.surveyCount > 0) s.num(2, 2, p.surveyCount);
 
-  ratingHeaders.forEach((h, i) => s.text(1 + i, 4, h));
+  ratingHeaders.forEach((h, i) => s.header(1 + i, 4, h));
   if (p.surveyCount > 0) {
-    SCALE_KEYS.forEach((k, i) => s.num(1 + i, 5, p.averages[k]));
+    SCALE_KEYS.forEach((k, i) => s.num(1 + i, 5, p.averages[k], RATING_FORMAT));
   }
 
-  s.text(0, 7, "Name");
-  s.text(1, 7, "Question");
-  s.text(2, 7, "Number Score");
-  s.text(3, 7, "Comments");
+  s.header(0, 7, "Name");
+  s.header(1, 7, "Question");
+  s.header(2, 7, "Number Score");
+  s.header(3, 7, "Comments");
   s.merge(3, 7, 10, 7);
 
   // ONLY responses carrying a comment. The aggregate already holds exactly
@@ -555,9 +686,9 @@ export function buildSurveyWorkbook(agg: SurveyAggregate): WorkbookResult {
   // export broke, and inventing columns to avoid that would be worse. The
   // sentence is plainly prose, not a header row.
   const dataSheet = new SheetWriter();
-  dataSheet.text(0, 0,
+  dataSheet.banner(0, 0,
     "This sheet is intentionally empty. It is meant to hold the raw survey data, " +
-    "but the columns for it have not been specified yet.");
+    "but the columns for it have not been specified yet.", 6);
   add(dataSheet.finish(), "Data");
 
   // The trailing space is the client's. A cross-sheet reference written against
@@ -566,7 +697,21 @@ export function buildSurveyWorkbook(agg: SurveyAggregate): WorkbookResult {
   add(buildRatingsSheet(agg), "In Person and TH Ratings");
   add(buildNeutralsSheet(agg), "Neutrals and Below");
 
-  agg.providers.forEach((p) => {
+  // Tab ORDER follows the template: grouped by office in the same order the
+  // analysis sheet uses, alphabetical within an office. The aggregate sorts by
+  // name alone, which put the tabs in an order that contradicted the analysis
+  // sheet sitting two tabs to the left. Ordering is layout, so it belongs here.
+  const officeRank = (office: string): number => {
+    const i = OFFICE_ORDER.indexOf(office);
+    if (i !== -1) return i;
+    return office === UNKNOWN_OFFICE ? OFFICE_ORDER.length + 1 : OFFICE_ORDER.length;
+  };
+  const tabOrder = agg.providers.slice().sort((a, b) => {
+    const d = officeRank(a.office) - officeRank(b.office);
+    return d !== 0 ? d : a.shortName.localeCompare(b.shortName);
+  });
+
+  tabOrder.forEach((p) => {
     const name = sheetNameFor(p.shortName, names);
     if (name !== p.shortName) renamed[p.shortName] = name;
     add(buildProviderSheet(p), name);
