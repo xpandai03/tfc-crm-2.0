@@ -81,6 +81,20 @@ export interface AttachPayloadFields {
    * schema has always had this as Optional; it is metadata, not a key.
    */
   contactId: number | null;
+  /**
+   * The TherapyNotes chart this submission's match resolved to, when it
+   * resolved to one.
+   *
+   * NULL is an ordinary case, not a degraded one: a survey attached before
+   * matching ran, or matched to a CRM contact that has never been linked to a
+   * chart, has no id and is selected by name exactly as it always was.
+   *
+   * When it is set, it tells the agent WHICH record to open — which is what
+   * lets a common surname or two people sharing a date of birth stop being a
+   * refusal. It says nothing about whether to file: the agent still verifies
+   * all four fields against the chart it opens.
+   */
+  chartId: string | null;
 }
 
 export type Eligibility =
@@ -137,7 +151,17 @@ export async function checkEligibility(submission: FormSubmission): Promise<Elig
   if (state.status !== "matched" || !state.matchedContactId) {
     return { eligible: false, code: "no_match" };
   }
-  return { eligible: true, fields: { ...identity.fields, contactId: state.matchedContactId } };
+  // The chart id rides along when the match found one. It is NOT part of the
+  // eligibility rule — a match without a chart id is exactly as eligible as it
+  // was yesterday, and is selected by name.
+  return {
+    eligible: true,
+    fields: {
+      ...identity.fields,
+      contactId: state.matchedContactId,
+      chartId: state.matchedChartId || null,
+    },
+  };
 }
 
 /**
@@ -166,7 +190,7 @@ export async function checkEligibility(submission: FormSubmission): Promise<Elig
  */
 export function checkIdentityEligibility(
   submission: FormSubmission,
-): { eligible: true; fields: Omit<AttachPayloadFields, "contactId"> } | { eligible: false; code: AttachIneligibleCode } {
+): { eligible: true; fields: Omit<AttachPayloadFields, "contactId" | "chartId"> } | { eligible: false; code: AttachIneligibleCode } {
   if (submission.formType !== SURVEY_FORM_TYPE) {
     return { eligible: false, code: "not_a_survey" };
   }
@@ -213,6 +237,52 @@ export function attachDocumentName(submission: FormSubmission): string {
 }
 
 /**
+ * The request body, from the fields eligibility produced.
+ *
+ * ONE BUILDER FOR BOTH TRIGGERS. The button and the overnight batch differ in
+ * what they will ACCEPT — the batch is scoped to matched submissions, the
+ * button is not — and in nothing else. They have always sent the same shape,
+ * and extracting it here means they cannot drift into sending different ones:
+ * there is no second place to add a field to and forget.
+ *
+ * Pure, so what is actually sent can be asserted rather than inferred from the
+ * source of the function that sends it.
+ */
+export function buildAttachBody(params: {
+  submissionId: number;
+  fields: AttachPayloadFields;
+  documentName: string;
+  /** Defaults to the deployed CRM; injectable so a test need not set env. */
+  baseUrl?: string;
+}): Record<string, unknown> {
+  const { submissionId, fields, documentName } = params;
+  const baseUrl = (params.baseUrl ?? process.env.APP_URL ?? "https://tfc-crm-2-0.fly.dev")
+    .replace(/\/$/, "");
+  return {
+    first_name: fields.firstName,
+    last_name: fields.lastName,
+    dob: fields.dob,
+    phone: fields.phone,
+    clinician_name: fields.clinicianName,
+    pdf_url: `${baseUrl}/api/internal/survey-pdf/${submissionId}`,
+    document_name: documentName,
+    // Omitted rather than null when there is no contact. The agent's schema has
+    // it Optional, and sending an explicit null says something different from
+    // not saying it at all.
+    ...(fields.contactId !== null ? { contact_id: fields.contactId } : {}),
+    // Omitted rather than null for the same reason as contact_id: the agent
+    // treats absent as "select by name", and an explicit null would be a third
+    // thing to reason about on both sides.
+    //
+    // TRIMMED, and a blank counts as absent. The agent collapses blanks too, so
+    // this changes nothing end to end — but sending "   " would mean the CRM
+    // asserting it knows a record when it does not, and the place to stop that
+    // is where the claim is made.
+    ...((fields.chartId ?? "").trim() ? { expected_chart_id: fields.chartId!.trim() } : {}),
+  };
+}
+
+/**
  * Claim, dispatch, record. The only function that talks to the agent.
  *
  * The claim happens BEFORE the dispatch and the outcome is written after, so a
@@ -241,7 +311,7 @@ export async function attachOne(params: {
     : ((): Eligibility => {
         const id = checkIdentityEligibility(submission);
         return id.eligible
-          ? { eligible: true, fields: { ...id.fields, contactId: null } }
+          ? { eligible: true, fields: { ...id.fields, contactId: null, chartId: null } }
           : id;
       })();
   if (!elig.eligible) {
@@ -272,38 +342,42 @@ export async function attachOne(params: {
   // A manual attach on a row that IS matched still carries its contact id — the
   // id is useful metadata and withholding it would make the manual path record
   // less than the scheduled one for no reason.
-  if (trigger === "manual" && elig.fields.contactId === null) {
+  //
+  // The chart id comes from the same lookup, and on its own terms: a matched
+  // row can carry a chart id without a contact id, so this is deliberately not
+  // nested inside the contact branch.
+  if (trigger === "manual" && (elig.fields.contactId === null || elig.fields.chartId === null)) {
     const state = await getMatchState(submissionId).catch(() => null);
-    if (state?.status === "matched" && state.matchedContactId) {
-      elig.fields.contactId = state.matchedContactId;
+    if (state?.status === "matched") {
+      if (elig.fields.contactId === null && state.matchedContactId) {
+        elig.fields.contactId = state.matchedContactId;
+      }
+      if (elig.fields.chartId === null && state.matchedChartId) {
+        elig.fields.chartId = state.matchedChartId;
+      }
     }
   }
 
-  const baseUrl = (process.env.APP_URL || "https://tfc-crm-2-0.fly.dev").replace(/\/$/, "");
-  const body = {
-    first_name: elig.fields.firstName,
-    last_name: elig.fields.lastName,
-    dob: elig.fields.dob,
-    phone: elig.fields.phone,
-    clinician_name: elig.fields.clinicianName,
-    pdf_url: `${baseUrl}/api/internal/survey-pdf/${submissionId}`,
-    document_name: attachDocumentName(submission),
-    // Omitted rather than null when there is no contact. The agent's schema has
-    // it Optional, and sending an explicit null says something different from
-    // not saying it at all.
-    ...(elig.fields.contactId !== null ? { contact_id: elig.fields.contactId } : {}),
-  };
+  const body = buildAttachBody({
+    submissionId,
+    fields: elig.fields,
+    documentName: attachDocumentName(submission),
+  });
 
   let status: "attached" | "failed" = "failed";
   let reason: string | null = "unknown_error";
   let tnPatientUrl: string | null = null;
+  let selectionMode: string | null = null;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ATTACH_TIMEOUT_MS);
   try {
     console.log(
       `[survey-attach] DISPATCH id=${submissionId} ` +
-      `contact=${elig.fields.contactId ?? "none"} trigger=${trigger}`,
+      `contact=${elig.fields.contactId ?? "none"} trigger=${trigger} ` +
+      // Presence only. A chart id names one patient's record as directly as a
+      // name does, so it is not written to a log line.
+      `expected_chart=${elig.fields.chartId ? "yes" : "no"}`,
     );
     const res = await fetch(SURVEY_ATTACH_AGENT_URL, {
       method: "POST",
@@ -318,8 +392,15 @@ export async function attachOne(params: {
       reason = "agent_unreachable";
     } else {
       // The route answers synchronously with SurveyAttachOutput.
-      let parsed: { status?: string; failure_reason?: string; tn_patient_url?: string } | null = null;
+      let parsed: {
+        status?: string; failure_reason?: string; tn_patient_url?: string;
+        selection_mode?: string;
+      } | null = null;
       try { parsed = JSON.parse(text); } catch { parsed = null; }
+      // Recorded on BOTH outcomes. The question it answers is usually asked
+      // about a refusal, so capturing it only on success would lose it exactly
+      // when it is wanted.
+      selectionMode = typeof parsed?.selection_mode === "string" ? parsed.selection_mode : null;
       if (parsed?.status === "success") {
         status = "attached";
         reason = null;
@@ -338,7 +419,7 @@ export async function attachOne(params: {
   }
 
   const durationMs = Date.now() - t0;
-  await recordAttachOutcome({ submissionId, status, reason, durationMs, tnPatientUrl });
+  await recordAttachOutcome({ submissionId, status, reason, durationMs, tnPatientUrl, selectionMode });
 
   // Audit trail. entityName is a FIXED string: logActivity persists it and the
   // Activity page renders it, so a client's name here would put them in a feed.

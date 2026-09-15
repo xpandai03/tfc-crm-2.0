@@ -37,6 +37,7 @@ export const ATTACH_FAILURE_REASONS = [
   "patient_not_found",
   "multiple_candidates",
   "result_set_possibly_truncated",
+  "expected_chart_not_in_results",
   "chart_not_opened",
   "field_unreadable",
   "name_mismatch",
@@ -79,6 +80,13 @@ export const ATTACH_FAILURE_TEXT: Record<AttachFailureReason, string> = {
   result_set_possibly_truncated:
     `The TherapyNotes search returned too many results to be sure the right ` +
     `patient was among them, so nothing was filed. ${FALL_BACK}`,
+  // Only reachable when the CRM named a specific chart. It means the record we
+  // hold is no longer the one TherapyNotes returns — so the sentence points at
+  // the chart rather than at the survey, which is where the problem is.
+  expected_chart_not_in_results:
+    `The patient record the CRM expected was not found in TherapyNotes. The ` +
+    `patient may have been merged into another record or discharged since last ` +
+    `night, so nothing was filed. ${FALL_BACK}`,
   name_mismatch:
     `The name on the chart is not the name on the survey, so nothing was filed. ` +
     `Check you have the right client. ${FALL_BACK}`,

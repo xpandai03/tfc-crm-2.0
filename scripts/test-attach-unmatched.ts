@@ -12,7 +12,7 @@
  * by construction, and the live run is a human step.
  */
 import { readFileSync } from "fs";
-import { checkIdentityEligibility } from "../server/survey/attach-runner";
+import { buildAttachBody, checkIdentityEligibility } from "../server/survey/attach-runner";
 import { attachIneligibleText, attachFailureText } from "@shared/survey-attach-reasons";
 import { SURVEY_FORM_TYPE } from "@shared/survey-questions";
 
@@ -169,17 +169,39 @@ console.log("\n[7] Nothing links an attached survey to a contact");
 console.log("\n[8] The payload, and what changed about it");
 {
   const runner = read("server/survey/attach-runner.ts");
-  // Every identifying field has ALWAYS come from the submission. The matched
-  // path added contact_id and nothing else.
-  ["first_name: elig.fields.firstName", "last_name: elig.fields.lastName",
-   "dob: elig.fields.dob", "phone: elig.fields.phone",
-   "clinician_name: elig.fields.clinicianName"].forEach((f) => {
-    check(`${f.split(":")[0]} still comes from the submission`, runner.indexOf(f) !== -1);
+  // The payload moved into buildAttachBody when the chart id was added, so these
+  // are now asserted by BUILDING one rather than by reading the source of the
+  // function that sends it. Same claims, better evidence.
+  const body = buildAttachBody({
+    submissionId: 7,
+    fields: {
+      firstName: "Test", lastName: "LS", dob: "04/12/1990",
+      phone: "(505) 555-0143", clinicianName: "Amanda Davison (ABQ)",
+      contactId: null, chartId: null,
+    },
+    documentName: "Client Survey",
+    baseUrl: "https://crm.test",
   });
-  check("contact_id is omitted rather than sent as null",
-    /elig\.fields\.contactId !== null \? \{ contact_id/.test(runner));
+  // Every identifying field has ALWAYS come from the submission. The matched
+  // path added contact_id, and the chart id came later; nothing else.
+  ([["first_name", "Test"], ["last_name", "LS"], ["dob", "04/12/1990"],
+    ["phone", "(505) 555-0143"], ["clinician_name", "Amanda Davison (ABQ)"]] as const)
+    .forEach(([k, v]) => {
+      check(`${k} still comes from the submission`, body[k] === v);
+    });
+  check("contact_id is omitted rather than sent as null", !("contact_id" in body));
+  check("...and is present when there is one",
+    buildAttachBody({
+      submissionId: 7,
+      fields: {
+        firstName: "Test", lastName: "LS", dob: "04/12/1990",
+        phone: "(505) 555-0143", clinicianName: "Amanda Davison (ABQ)",
+        contactId: 42, chartId: null,
+      },
+      documentName: "Client Survey",
+    }).contact_id === 42);
   check("a manual attach on a MATCHED row still carries its contact id",
-    /trigger === "manual" && elig\.fields\.contactId === null/.test(runner));
+    /trigger === "manual" && \(elig\.fields\.contactId === null/.test(runner));
 }
 
 // ===========================================================================

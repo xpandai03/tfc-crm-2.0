@@ -49,6 +49,11 @@ export interface AttachRow {
   durationMs: number | null;
   /** The TherapyNotes chart this was filed to. NULL unless it succeeded. */
   tnPatientUrl: string | null;
+  /**
+   * How the record was chosen: "chart_id", "name", or NULL for an attempt that
+   * ran before the CRM started sending chart ids. Diagnostic, never rendered.
+   */
+  selectionMode: string | null;
   startedAt: string;
   finishedAt: string | null;
   updatedAt: string;
@@ -83,6 +88,15 @@ export async function initSurveyAttachTable(): Promise<void> {
   } catch (e) {
     console.error("[survey-attach] tn_patient_url column migration FAILED:", e);
   }
+  // Which path the agent used to choose the record — "chart_id" or "name".
+  // Additive and nullable, exactly as above: every existing row keeps its
+  // meaning, and a NULL reads as "this ran before the CRM sent chart ids",
+  // which is the truth about those rows.
+  try {
+    await pool.query(`ALTER TABLE survey_attach_attempts ADD COLUMN IF NOT EXISTS selection_mode TEXT`);
+  } catch (e) {
+    console.error("[survey-attach] selection_mode column migration FAILED:", e);
+  }
   console.log("[survey-attach] Table initialized");
 }
 
@@ -95,6 +109,7 @@ const mapRow = (r: Record<string, unknown>): AttachRow => ({
   actorEmail: String(r.actor_email ?? "system"),
   durationMs: (r.duration_ms as number | null) ?? null,
   tnPatientUrl: (r.tn_patient_url as string | null) ?? null,
+  selectionMode: (r.selection_mode as string | null) ?? null,
   startedAt: String(r.started_at),
   finishedAt: r.finished_at ? String(r.finished_at) : null,
   updatedAt: String(r.updated_at),
@@ -154,15 +169,25 @@ export async function recordAttachOutcome(params: {
   durationMs: number;
   /** The chart, on success. Never overwritten with NULL by a later failure. */
   tnPatientUrl?: string | null;
+  /**
+   * How the agent chose the record: "chart_id" when the CRM named one and the
+   * search surfaced it, "name" for the name-and-date-of-birth narrowing.
+   *
+   * NOT SHOWN TO STAFF. It answers a question asked afterwards — "why did this
+   * refuse?" — where the difference between "we could not tell which of two
+   * people it was" and "the record we expected has gone" is the whole answer.
+   */
+  selectionMode?: string | null;
 }): Promise<void> {
   await getPool().query(
     `UPDATE survey_attach_attempts
         SET status = $2, reason = $3, duration_ms = $4,
             tn_patient_url = COALESCE($5, tn_patient_url),
+            selection_mode = COALESCE($6, selection_mode),
             finished_at = NOW(), updated_at = NOW()
       WHERE submission_id = $1`,
     [params.submissionId, params.status, params.reason, params.durationMs,
-     params.tnPatientUrl ?? null],
+     params.tnPatientUrl ?? null, params.selectionMode ?? null],
   );
 }
 
