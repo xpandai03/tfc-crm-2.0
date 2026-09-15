@@ -109,6 +109,8 @@ interface MatchState {
   candidateIds: number[];
   resolvedBy: string | null;
   resolvedAt: string | null;
+  /** When the matcher last reached a verdict on this row. */
+  updatedAt: string;
 }
 
 interface MatchCounts {
@@ -314,6 +316,31 @@ function MatchReasonNote({ state }: { state: MatchState | undefined }) {
   if (!isMatchReason(state.reason)) return null;
   return (
     <span className="text-[11px] text-amber-700/90">{REASON_SHORT[state.reason]}</span>
+  );
+}
+
+/**
+ * When this row was last looked at.
+ *
+ * Matching runs on its own now — on arrival, and again after the overnight
+ * TherapyNotes pull — so nobody presses a button and nobody can see that
+ * anything happened. Without this line, a row reading "no date of birth" is
+ * indistinguishable from a row nothing has ever examined, and the honest
+ * question "is the automatic matching actually running?" has no answer on the
+ * screen.
+ *
+ * A TIME, NOT IDENTITY. The only value rendered is a timestamp on the match
+ * record itself. It says nothing about who the person is or what they answered.
+ */
+function MatchCheckedNote({ state }: { state: MatchState | undefined }) {
+  if (!state?.updatedAt) return null;
+  return (
+    <span
+      className="text-[11px] text-muted-foreground/80 shrink-0"
+      title={`Last matched ${formatExactTime(state.updatedAt)}`}
+    >
+      checked {formatRelativeTime(state.updatedAt)}
+    </span>
   );
 }
 
@@ -690,6 +717,7 @@ export default function Submissions() {
                         </Badge>
                         {isSurveySubmission(sub) && <MatchBadge state={stateFor(sub.id)} />}
                         {isSurveySubmission(sub) && <MatchReasonNote state={stateFor(sub.id)} />}
+                        {isSurveySubmission(sub) && <MatchCheckedNote state={stateFor(sub.id)} />}
                       </div>
                       <span
                         className="text-xs text-muted-foreground flex-shrink-0 tabular-nums"

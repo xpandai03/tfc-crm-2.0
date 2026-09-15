@@ -42,6 +42,7 @@
     "test:survey-borders": "tsx scripts/test-survey-borders.ts",
     "test:survey-export": "tsx scripts/test-survey-export-route.ts",
     "test:active-counts": "tsx scripts/test-active-counts.ts",
+    "test:auto-matching": "tsx scripts/test-survey-auto-matching.ts",
     "fixture:survey-export": "tsx scripts/fixture-survey-export.ts"
   },
   "dependencies": {

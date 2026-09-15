@@ -326,6 +326,28 @@ export function registerSurveyPublicRoutes(app: Express): void {
       });
 
       console.log(`[survey] Ingested: id=${id} variant=${variant} source=${SURVEY_SOURCE}`);
+
+      // MATCH ON ARRIVAL, OUTSIDE THE REQUEST PATH.
+      //
+      // setImmediate, not await: this endpoint is the one a client is waiting
+      // on, behind a minimum completion time and a rate limit, and a match reads
+      // every contact and every stored TherapyNotes patient. Putting that
+      // between Submit and the confirmation screen would trade a staff
+      // convenience for the one latency a client actually experiences.
+      //
+      // The row is already committed above, so the match has something real to
+      // read and nothing here can roll it back. Failing to MATCH is not an error
+      // — the row goes to review, which is what review is for. Failing to RUN is,
+      // and is logged as one.
+      setImmediate(() => {
+        void import("./match-runner")
+          .then((m) => m.matchOneSubmission(id))
+          .catch((e) => console.error(
+            `[survey] arrival match FAILED for id=${id}:`,
+            e instanceof Error ? e.message : "unknown",
+          ));
+      });
+
       return res.json({ success: true });
     } catch (error) {
       console.error(

@@ -110,7 +110,11 @@ ok("...and the tooltip warns it takes about a minute", pageSrc.includes("Takes a
 // ---------------------------------------------------------------------------
 console.log("\n[4] The scheduled job — timezone, cap, and a logged next fire");
 ok("registered with node-cron", cronSrc.includes("startSurveyAttachCron"));
-ok("midnight by default", cronSrc.includes('DEFAULT_ATTACH_SCHEDULE = "0 0 * * *"'));
+// WAS midnight. Moved to 03:30 so it runs AFTER the 03:00 TherapyNotes patient
+// pull and its re-match, rather than three hours before them — see
+// scripts/test-survey-auto-matching.ts [9] for the ordering this belongs to.
+ok("03:30 by default, after the nightly pull",
+   cronSrc.includes('DEFAULT_ATTACH_SCHEDULE = "30 3 * * *"'));
 ok("EXPLICIT timezone, America/Denver",
   cronSrc.includes('ATTACH_TIMEZONE = "America/Denver"')
   && /cron\.schedule\(schedule, \(\) => \{ void runSurveyAttachBatch\(\); \}, \{ timezone: ATTACH_TIMEZONE \}\)/.test(cronSrc));

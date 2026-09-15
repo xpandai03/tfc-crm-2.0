@@ -7,6 +7,7 @@
 import cron from "node-cron";
 import { runActiveCountPass, type ActiveCountRunSummary } from "../therapy-notes/active-counts-runner";
 import { runTnPatientPull, type TnPatientPullSummary } from "../therapy-notes/tn-patients-runner";
+import { runSurveyMatching } from "../survey/match-runner";
 import { sendMonthlyReport } from "../reports/send";
 import { runScheduledAttach, ATTACH_BATCH_CAP } from "../survey/attach-runner";
 import { previousPeriod } from "../reports/monthly";
@@ -228,7 +229,20 @@ export async function triggerMonthlyReport(): Promise<void> {
 // working day, competing with exactly what this is designed to avoid. The
 // timezone option is the whole point of the expression.
 
-const DEFAULT_ATTACH_SCHEDULE = "0 0 * * *"; // midnight, Mountain
+/**
+ * 03:30 Mountain — AFTER the patient pull and its re-match, not before.
+ *
+ * It used to run at midnight, which was backwards: a survey submitted at 4pm
+ * naming a TherapyNotes-only patient could not match until the 03:00 pull, so
+ * the attach that had already run at midnight found nothing and the survey
+ * waited for the FOLLOWING night. Thirty-two hours for a pipeline the client
+ * thinks of as "it goes to the chart".
+ *
+ * Pull (03:00) -> re-match (immediately, local only) -> attach (03:30) puts the
+ * whole thing in one night. Thirty minutes is headroom over a two-minute pull
+ * and a matching pass measured in seconds.
+ */
+const DEFAULT_ATTACH_SCHEDULE = "30 3 * * *"; // 03:30, Mountain
 const ATTACH_TIMEZONE = "America/Denver";
 
 let isAttaching = false;
@@ -403,7 +417,36 @@ async function runScheduledTnPatients(): Promise<void> {
   }
   isPullingPatients = true;
   try {
-    await runTnPatientPull("scheduled");
+    const summary = await runTnPatientPull("scheduled");
+    // RE-MATCH ONLY AFTER A PULL THAT REPLACED THE SNAPSHOT.
+    //
+    // This is what catches yesterday afternoon's TherapyNotes-only patient: they
+    // were unmatchable when the survey arrived and are matchable now. A failed
+    // or partial pull leaves the table untouched, so there is nothing new to
+    // match against and re-running would only burn a pass over unchanged data.
+    //
+    // No gap is needed before it. Matching reads the local tables and never
+    // touches TherapyNotes, so it does not queue behind the agent's licence.
+    if (summary.ok && summary.replaced) {
+      try {
+        const m = await runSurveyMatching();
+        console.log(
+          `[patients-cron] re-match after pull: ${m.considered} considered, ` +
+          `${m.matched} matched (${m.matchedWithChart} with a chart), ` +
+          `${m.review} in review, ${m.skippedHumanResolved} left to their human decision`,
+        );
+      } catch (e) {
+        console.error(
+          "[patients-cron] re-match after pull FAILED:",
+          e instanceof Error ? e.message : "unknown",
+        );
+      }
+    } else {
+      console.log(
+        `[patients-cron] pull did not replace the snapshot — no re-match ` +
+        `(nothing new to match against)`,
+      );
+    }
   } catch (error) {
     console.error(
       "[patients-cron] Unhandled error:",
