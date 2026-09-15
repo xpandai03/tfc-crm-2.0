@@ -42,6 +42,7 @@
  */
 
 import * as XLSX from "xlsx";
+import { addBordersAndBoldHeaders, type HeaderRefs } from "./xlsx-borders";
 import {
   MAX_SHEET_NAME_LENGTH,
   FORBIDDEN_SHEET_NAME_CHARS,
@@ -140,6 +141,9 @@ const MIN_WIDTH = 9;
  */
 const MAX_WIDTH = 60;
 
+/** A finished sheet plus the cells written as headers, for the bold pass. */
+interface BuiltSheet { ws: XLSX.WorkSheet; headers: string[] }
+
 type Cell = XLSX.CellObject;
 type SheetData = Record<string, Cell | unknown>;
 
@@ -154,6 +158,7 @@ class SheetWriter {
   private data: SheetData = {};
   private merges: XLSX.Range[] = [];
   private widths: Record<number, number> = {};
+  private headerRefs: string[] = [];
   private maxCol = 0;
   private maxRow = 0;
 
@@ -184,9 +189,14 @@ class SheetWriter {
     const v = (value ?? "").toString();
     this.touch(col, row);
     if (v === "") return;
-    this.data[a1(col, row)] = { t: "s", v };
+    const ref = a1(col, row);
+    this.data[ref] = { t: "s", v };
+    this.headerRefs.push(ref);
     this.widen(col, Math.min(v.length, HEADER_MAX_WIDTH));
   }
+
+  /** The cells written as headers, for the bold post-pass. */
+  headers(): string[] { return this.headerRefs; }
 
   /**
    * A heading or label that spans a table: written, merged across `span`
@@ -373,7 +383,7 @@ function orderedOffices(agg: SurveyAggregate): string[] {
   });
 }
 
-function buildSurveyAnalysis(agg: SurveyAggregate, counts: ActiveClientCounts): XLSX.WorkSheet {
+function buildSurveyAnalysis(agg: SurveyAggregate, counts: ActiveClientCounts): BuiltSheet {
   const s = new SheetWriter();
   ANALYSIS_HEADERS.forEach((h, i) => s.header(i, 0, h));
   ROLLUP_HEADERS.forEach((h, i) => s.header(11 + i, 0, h));
@@ -479,7 +489,7 @@ function buildSurveyAnalysis(agg: SurveyAggregate, counts: ActiveClientCounts): 
   s.text(11, note, "Total Active Clients");
   s.banner(12, note, activeCountsNote(counts, agg.period.to, rowsWithCount, providerRows), 6);
 
-  return s.finish();
+  return { ws: s.finish(), headers: s.headers() };
 }
 
 // ============================================================================
@@ -531,7 +541,7 @@ function writeCountTable(
   return { width: options.length + 1, height };
 }
 
-function buildRatingsSheet(agg: SurveyAggregate): XLSX.WorkSheet {
+function buildRatingsSheet(agg: SurveyAggregate): BuiltSheet {
   const s = new SheetWriter();
   const offices = orderedOffices(agg);
   const officeRows = offices.map(officeLabel);
@@ -591,7 +601,7 @@ function buildRatingsSheet(agg: SurveyAggregate): XLSX.WorkSheet {
   // the template, where the TH tables carry neither.
   layout(telehealth, thCol, [TELEHEALTH_BUCKET], () => TELEHEALTH_BUCKET, false);
 
-  return s.finish();
+  return { ws: s.finish(), headers: s.headers() };
 }
 
 // ============================================================================
@@ -638,7 +648,7 @@ function writeNegativeBlock(
   return { width: headers.length + 1, height: r - atRow };
 }
 
-function buildNeutralsSheet(agg: SurveyAggregate): XLSX.WorkSheet {
+function buildNeutralsSheet(agg: SurveyAggregate): BuiltSheet {
   const s = new SheetWriter();
   const inPerson = agg.negatives.filter((l) => l.modality === "In Person");
   const telehealth = agg.negatives.filter((l) => l.modality === "Telehealth");
@@ -662,7 +672,7 @@ function buildNeutralsSheet(agg: SurveyAggregate): XLSX.WorkSheet {
     row += height + 2;
   });
 
-  return s.finish();
+  return { ws: s.finish(), headers: s.headers() };
 }
 
 // ============================================================================
@@ -678,7 +688,7 @@ function listingRowsFor(p: ProviderAggregate) {
   return p.listingRows;
 }
 
-function buildProviderSheet(p: ProviderAggregate, known: number | undefined): XLSX.WorkSheet {
+function buildProviderSheet(p: ProviderAggregate, known: number | undefined): BuiltSheet {
   const s = new SheetWriter();
   const ratingHeaders = scaleQuestionsFor("in-person").map((q) => {
     switch (q.key) {
@@ -731,7 +741,7 @@ function buildProviderSheet(p: ProviderAggregate, known: number | undefined): XL
     s.merge(3, row, 10, row);
   });
 
-  return s.finish();
+  return { ws: s.finish(), headers: s.headers() };
 }
 
 // ============================================================================
@@ -768,9 +778,15 @@ export function buildSurveyWorkbook(
   const names: string[] = [];
   const renamed: Record<string, string> = {};
 
-  function add(ws: XLSX.WorkSheet, name: string): void {
+  // Sheet index is 1-based and follows append order, which is how SheetJS names
+  // the worksheet parts (xl/worksheets/sheetN.xml). Collected here so the border
+  // pass can bold exactly the cells written as headers rather than guessing from
+  // row position.
+  const headerRefs: HeaderRefs[] = [];
+  function add(ws: XLSX.WorkSheet, name: string, headers: string[] = []): void {
     XLSX.utils.book_append_sheet(wb, ws, name);
     names.push(name);
+    if (headers.length > 0) headerRefs.push({ sheetIndex: names.length, refs: headers });
   }
 
   // The client left this sheet empty with only a note about what belongs on it,
@@ -786,9 +802,12 @@ export function buildSurveyWorkbook(
 
   // The trailing space is the client's. A cross-sheet reference written against
   // "Survey Analysis" without it would not resolve.
-  add(buildSurveyAnalysis(agg, counts), "Survey Analysis ");
-  add(buildRatingsSheet(agg), "In Person and TH Ratings");
-  add(buildNeutralsSheet(agg), "Neutrals and Below");
+  const analysis = buildSurveyAnalysis(agg, counts);
+  add(analysis.ws, "Survey Analysis ", analysis.headers);
+  const ratings = buildRatingsSheet(agg);
+  add(ratings.ws, "In Person and TH Ratings", ratings.headers);
+  const neutrals = buildNeutralsSheet(agg);
+  add(neutrals.ws, "Neutrals and Below", neutrals.headers);
 
   // Tab ORDER follows the template: grouped by office in the same order the
   // analysis sheet uses, alphabetical within an office. The aggregate sorts by
@@ -808,9 +827,15 @@ export function buildSurveyWorkbook(
     const name = sheetNameFor(p.shortName, names);
     if (name !== p.shortName) renamed[p.shortName] = name;
     const known = p.providerId === null ? undefined : counts.byProviderId[p.providerId]?.count;
-    add(buildProviderSheet(p, known), name);
+    const tab = buildProviderSheet(p, known);
+    add(tab.ws, name, tab.headers);
   });
 
-  const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+  const raw = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+  // Thin borders on every populated cell and bold on the headers. SheetJS writes
+  // neither, so this replaces xl/styles.xml in the finished ZIP — the same
+  // technique server/dashboard/xlsx-images.ts uses for chart images. It changes
+  // no formula, value, range or width.
+  const buffer = Buffer.from(addBordersAndBoldHeaders(raw, headerRefs));
   return { buffer, sheetNames: names, renamed };
 }
