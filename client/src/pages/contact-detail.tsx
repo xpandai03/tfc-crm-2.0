@@ -86,6 +86,7 @@ import {
   joinModalityPriorities,
 } from "@shared/modality-utils";
 import { SERVICE_TYPES } from "@shared/service-types";
+import { AGE_BASIS_NOTE, bandedServiceType, isChildServiceType } from "@shared/age-bands";
 import { CANONICAL_INSURANCES, isLegacyInsurance } from "@shared/insurance";
 import { PAPERWORK_STATUSES } from "@shared/paperwork-status";
 import { buildTimelineEvents, formatFullDate, matchSnapshotForEmailEvent, type EmailSnapshotMeta, type TimelineEvent } from "@/lib/timeline";
@@ -1283,8 +1284,24 @@ export default function ContactDetail() {
   const dateAdded = formatDate(contact?.dateAdded);
   // Show requesting-for + therapy type (matches waitlist card display)
   // Falls back to serviceRequested only if both are empty
+  //
+  // "My Child" is shown BANDED — Minor / Adolescent / 18+ — from the child's
+  // date of birth, AS OF TODAY. This page is operational: someone reading it is
+  // finding a therapist and needs the child's age now, which is the same basis
+  // the waitlist uses (waitlist-columns.tsx:311). The report surfaces
+  // deliberately band by age on the REFERRAL date instead, so the two can
+  // legitimately disagree about a child who has just had a birthday — which is
+  // what the note under Intake Details is for.
+  //
+  // Every other service type passes through bandedServiceType untouched, and a
+  // child with no readable date of birth keeps its stored value. Nothing here
+  // writes: the stored `requesting_for` is unchanged and the edit control below
+  // still binds to it.
+  const bandedRequestingFor = contact?.requestingFor
+    ? bandedServiceType(contact.requestingFor, contact.patientDob)
+    : contact?.requestingFor;
   const serviceSubtitle = [
-    contact?.requestingFor,
+    bandedRequestingFor,
     contact?.reasonForTherapy,
   ].filter(Boolean).join(" · ") || contact?.serviceRequested || "Unknown Service";
   const contactStatus = contact?.status || "intake";
@@ -1898,7 +1915,23 @@ export default function ContactDetail() {
                       ) : (
                         <>
                           {contact?.requestingFor && (
-                            <div><span className="text-muted-foreground text-xs">Requesting For:</span><p className="font-medium text-foreground">{contact.requestingFor}</p></div>
+                            <div>
+                              <span className="text-muted-foreground text-xs">Requesting For:</span>
+                              <p className="font-medium text-foreground" data-testid="text-requestingFor-banded">
+                                {bandedRequestingFor}
+                              </p>
+                              {/* Only a value that actually got banded carries the note.
+                                  It is here because this page and a report can disagree
+                                  about a child who has just had a birthday, and
+                                  unlabelled that reads as a bug rather than as two
+                                  questions with two answers. */}
+                              {isChildServiceType(contact.requestingFor) &&
+                                bandedRequestingFor !== contact.requestingFor && (
+                                <p className="text-[11px] text-muted-foreground mt-0.5">
+                                  {AGE_BASIS_NOTE.today}
+                                </p>
+                              )}
+                            </div>
                           )}
                           {contact?.reasonForSeeking && (
                             <div><span className="text-muted-foreground text-xs">Reason:</span><p className="font-medium text-foreground">{contact.reasonForSeeking}</p></div>
