@@ -389,11 +389,13 @@ function AttachButton({
     answers?: { therapist?: unknown };
   };
   const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  // NO MATCH IS REQUIRED. The agent finds the patient in TherapyNotes and checks
+  // all four fields against the chart; a CRM contact was never part of that.
+  // Requiring one made every pre-CRM patient — about half the active caseload —
+  // permanently unattachable, which is the gap this closes.
   let ineligible: string | null = null;
   if (attachState?.status === "attached") ineligible = "already_attached";
   else if (attachState?.status === "running" || isPending) ineligible = "in_progress";
-  else if (!matchState || matchState.status === "review") ineligible = "awaiting_review";
-  else if (matchState.status !== "matched" || !matchState.matchedContactId) ineligible = "no_match";
   else if (str(p.client?.name).split(/\s+/).filter(Boolean).length < 2) ineligible = "no_name";
   else if (!/^\d{4}-\d{2}-\d{2}$/.test(str(p.client?.dateOfBirth))) ineligible = "no_dob";
   else if (str(p.client?.phone).replace(/\D/g, "").length < 7) ineligible = "no_phone";
@@ -408,14 +410,18 @@ function AttachButton({
       size="sm"
       className="h-7 text-xs"
       disabled={!!ineligible}
-      title={ineligible ? attachIneligibleText(ineligible) : "File this survey to the patient's chart in TherapyNotes"}
+      title={ineligible
+        ? attachIneligibleText(ineligible)
+        : "Files this survey to the patient's chart in TherapyNotes. Takes about a " +
+          "minute — it signs in and checks the name, date of birth, phone and " +
+          "therapist against the chart before filing anything."}
       onClick={onAttach}
       data-testid={`button-attach-${submission.id}`}
     >
       {running ? (
         <>
           <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-          Filing to chart…
+          Checking TherapyNotes…
         </>
       ) : attached ? (
         <>

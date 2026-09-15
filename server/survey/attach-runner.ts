@@ -74,7 +74,13 @@ export interface AttachPayloadFields {
   dob: string;
   phone: string;
   clinicianName: string;
-  contactId: number;
+  /**
+   * The CRM contact, when there is one. NULL for a manual attach on an
+   * unmatched survey — roughly half the practice's active patients predate the
+   * CRM, so requiring a contact made them unattachable forever. The agent's own
+   * schema has always had this as Optional; it is metadata, not a key.
+   */
+  contactId: number | null;
 }
 
 export type Eligibility =
@@ -123,14 +129,46 @@ function splitName(full: string): { firstName: string; lastName: string } | null
  * by construction rather than by both remembering the same list.
  */
 export async function checkEligibility(submission: FormSubmission): Promise<Eligibility> {
-  if (submission.formType !== SURVEY_FORM_TYPE) {
-    return { eligible: false, code: "not_a_survey" };
-  }
+  const identity = checkIdentityEligibility(submission);
+  if (!identity.eligible) return identity;
 
   const state = await getMatchState(submission.id);
   if (!state || state.status === "review") return { eligible: false, code: "awaiting_review" };
   if (state.status !== "matched" || !state.matchedContactId) {
     return { eligible: false, code: "no_match" };
+  }
+  return { eligible: true, fields: { ...identity.fields, contactId: state.matchedContactId } };
+}
+
+/**
+ * May this submission be sent to a chart on its OWN details, with no contact?
+ *
+ * THE RULE, all of which must hold:
+ *   1. it is a survey
+ *   2. it carries a usable legal name (at least two tokens)
+ *   3. it carries a real date of birth
+ *   4. it carries a phone — the agent requires one, and a survey taken before
+ *      the form asked for it simply cannot be verified
+ *   5. it names a therapist
+ *
+ * NO MATCH IS REQUIRED, and that is the point of this function. The agent finds
+ * the patient in TherapyNotes and verifies all four fields against the chart; a
+ * CRM contact was never part of that and never needed to be. Requiring one made
+ * every pre-CRM patient — about half the active caseload — permanently
+ * unattachable, which is the gap this exists to close.
+ *
+ * WHAT IS SENT IS UNCHANGED EITHER WAY. Every field below comes from the
+ * submission, exactly as it did before. The matched path added a contact id and
+ * nothing else, so no data changes hands differently.
+ *
+ * Synchronous and pure: the button and the server derive the same verdict from
+ * the same code rather than from two copies of the same list.
+ */
+export function checkIdentityEligibility(
+  submission: FormSubmission,
+): { eligible: true; fields: Omit<AttachPayloadFields, "contactId"> } | { eligible: false; code: AttachIneligibleCode } {
+  if (submission.formType !== SURVEY_FORM_TYPE) {
+    return { eligible: false, code: "not_a_survey" };
   }
 
   const p = (submission.payload ?? {}) as {
@@ -152,10 +190,7 @@ export async function checkEligibility(submission: FormSubmission): Promise<Elig
   const clinician = typeof p.answers?.therapist === "string" ? p.answers.therapist.trim() : "";
   if (!clinician) return { eligible: false, code: "no_therapist" };
 
-  return {
-    eligible: true,
-    fields: { ...split, dob, phone, clinicianName: clinician, contactId: state.matchedContactId },
-  };
+  return { eligible: true, fields: { ...split, dob, phone, clinicianName: clinician } };
 }
 
 // ---------------------------------------------------------------------------
@@ -196,7 +231,19 @@ export async function attachOne(params: {
   const submission = await getSubmissionById(submissionId);
   if (!submission) return { submissionId, status: "skipped", reason: "not_a_survey", durationMs: 0 };
 
-  const elig = await checkEligibility(submission);
+  // THE ONLY DIFFERENCE BETWEEN THE TWO PATHS. The overnight batch stays scoped
+  // to matched submissions exactly as it was: it runs unattended, and a chart it
+  // picked without a human looking is not something to widen. A staff member
+  // pressing the button has looked at the row, and the agent verifies all four
+  // fields against the chart before it files anything.
+  const elig: Eligibility = trigger === "scheduled"
+    ? await checkEligibility(submission)
+    : ((): Eligibility => {
+        const id = checkIdentityEligibility(submission);
+        return id.eligible
+          ? { eligible: true, fields: { ...id.fields, contactId: null } }
+          : id;
+      })();
   if (!elig.eligible) {
     console.warn(`[survey-attach] SKIPPED id=${submissionId} reason=${elig.code}`);
     return { submissionId, status: "skipped", reason: elig.code, durationMs: 0 };
@@ -222,6 +269,16 @@ export async function attachOne(params: {
     return { submissionId, status: "skipped", reason: code, durationMs: 0 };
   }
 
+  // A manual attach on a row that IS matched still carries its contact id — the
+  // id is useful metadata and withholding it would make the manual path record
+  // less than the scheduled one for no reason.
+  if (trigger === "manual" && elig.fields.contactId === null) {
+    const state = await getMatchState(submissionId).catch(() => null);
+    if (state?.status === "matched" && state.matchedContactId) {
+      elig.fields.contactId = state.matchedContactId;
+    }
+  }
+
   const baseUrl = (process.env.APP_URL || "https://tfc-crm-2-0.fly.dev").replace(/\/$/, "");
   const body = {
     first_name: elig.fields.firstName,
@@ -231,16 +288,23 @@ export async function attachOne(params: {
     clinician_name: elig.fields.clinicianName,
     pdf_url: `${baseUrl}/api/internal/survey-pdf/${submissionId}`,
     document_name: attachDocumentName(submission),
-    contact_id: elig.fields.contactId,
+    // Omitted rather than null when there is no contact. The agent's schema has
+    // it Optional, and sending an explicit null says something different from
+    // not saying it at all.
+    ...(elig.fields.contactId !== null ? { contact_id: elig.fields.contactId } : {}),
   };
 
   let status: "attached" | "failed" = "failed";
   let reason: string | null = "unknown_error";
+  let tnPatientUrl: string | null = null;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ATTACH_TIMEOUT_MS);
   try {
-    console.log(`[survey-attach] DISPATCH id=${submissionId} contact=${elig.fields.contactId} trigger=${trigger}`);
+    console.log(
+      `[survey-attach] DISPATCH id=${submissionId} ` +
+      `contact=${elig.fields.contactId ?? "none"} trigger=${trigger}`,
+    );
     const res = await fetch(SURVEY_ATTACH_AGENT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-API-Key": process.env.TN_API_KEY! },
@@ -254,11 +318,15 @@ export async function attachOne(params: {
       reason = "agent_unreachable";
     } else {
       // The route answers synchronously with SurveyAttachOutput.
-      let parsed: { status?: string; failure_reason?: string } | null = null;
+      let parsed: { status?: string; failure_reason?: string; tn_patient_url?: string } | null = null;
       try { parsed = JSON.parse(text); } catch { parsed = null; }
       if (parsed?.status === "success") {
         status = "attached";
         reason = null;
+        // The chart the agent actually filed to. Recorded on the attempt so the
+        // outcome is checkable, and so a later match has something to reconcile
+        // against rather than guessing which chart this went to.
+        tnPatientUrl = typeof parsed.tn_patient_url === "string" ? parsed.tn_patient_url : null;
       } else {
         reason = parsed?.failure_reason || "unknown_error";
       }
@@ -270,7 +338,7 @@ export async function attachOne(params: {
   }
 
   const durationMs = Date.now() - t0;
-  await recordAttachOutcome({ submissionId, status, reason, durationMs });
+  await recordAttachOutcome({ submissionId, status, reason, durationMs, tnPatientUrl });
 
   // Audit trail. entityName is a FIXED string: logActivity persists it and the
   // Activity page renders it, so a client's name here would put them in a feed.

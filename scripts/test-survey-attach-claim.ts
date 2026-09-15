@@ -96,8 +96,11 @@ async function main() {
   console.log("\n[shape] The row records what the report needs and nothing more");
   const row = await getAttachRow(ID);
   eq("the stored fields", Object.keys(row ?? {}).sort(),
+    // tnPatientUrl records WHICH chart the agent filed to. It matters most on an
+    // UNMATCHED survey, where there is no contact link and this is the only thing
+    // on the row saying where the survey actually went.
     ["actorEmail", "contactId", "durationMs", "finishedAt", "reason", "startedAt",
-     "status", "submissionId", "trigger", "updatedAt"]);
+     "status", "submissionId", "tnPatientUrl", "trigger", "updatedAt"]);
   ok("a duration is recorded", typeof row?.durationMs === "number");
   ok("a finish time is recorded", !!row?.finishedAt);
 
