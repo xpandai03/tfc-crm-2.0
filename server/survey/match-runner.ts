@@ -19,7 +19,8 @@ import {
   markAutoMatchResult,
   setSubmissionContactId,
 } from "./match-db";
-import { matchSubmission, type SubmittedIdentity } from "./matching";
+import { collapseIdentities, matchSubmission, type ContactIdentity, type SubmittedIdentity } from "./matching";
+import { getTnPatientIdentities, linkContactToChart } from "../therapy-notes/tn-patients-db";
 
 export interface MatchRunSummary {
   considered: number;
@@ -27,6 +28,12 @@ export interface MatchRunSummary {
   matched: number;
   review: number;
   byReason: Record<string, number>;
+  /** How many identities each population contributed, after collapsing. */
+  crmContacts: number;
+  tnPatients: number;
+  identities: number;
+  /** Matches that resolved to a TherapyNotes chart. The point of the build. */
+  matchedWithChart: number;
 }
 
 /**
@@ -68,19 +75,51 @@ function identityOf(payload: unknown): SubmittedIdentity | null {
 }
 
 export async function runSurveyMatching(): Promise<MatchRunSummary> {
-  const [submissions, contacts, humanResolved] = await Promise.all([
+  const [submissions, contacts, humanResolved, tnPatients] = await Promise.all([
     getRecentSurveySubmissions(1000),
     getContactIdentityIndex(),
     getHumanResolvedIds(),
+    // The population the matcher could not see. An empty table — no pull has
+    // run yet, or last night's failed — simply means matching behaves exactly
+    // as it did before this build.
+    getTnPatientIdentities().catch(() => []),
   ]);
+
+  // ONE IDENTITY PER PERSON, ACROSS BOTH POPULATIONS. A CRM contact carrying a
+  // chart id and the TherapyNotes patient with that chart are the same person
+  // and must arrive as ONE candidate — two would agree on name and date of
+  // birth and be correctly called ambiguous, turning a well-known patient into
+  // a review item.
+  const tnIdentities: ContactIdentity[] = tnPatients.map((p) => ({
+    contactId: null,
+    name: p.name,
+    email: null,
+    phone: p.phone || null,
+    patientDob: p.dob,
+    chartId: p.chartId,
+    clinicians: p.clinicians,
+    source: "therapynotes" as const,
+  }));
+  const identities = collapseIdentities(contacts, tnIdentities);
 
   const summary: MatchRunSummary = {
     considered: 0,
     skippedHumanResolved: 0,
     matched: 0,
     review: 0,
+    crmContacts: contacts.length,
+    tnPatients: tnIdentities.length,
+    identities: identities.length,
+    matchedWithChart: 0,
     byReason: {},
   };
+
+  // Counts only. The collapse total being lower than the sum is the shared
+  // population; it is the one number that says the link is working.
+  console.log(
+    `[survey-match] ${contacts.length} CRM contacts + ${tnIdentities.length} ` +
+    `TherapyNotes patients -> ${identities.length} identities after collapsing`,
+  );
 
   for (const sub of submissions) {
     if (humanResolved.has(sub.id)) {
@@ -101,18 +140,27 @@ export async function runSurveyMatching(): Promise<MatchRunSummary> {
       continue;
     }
 
-    const outcome = matchSubmission(identity, contacts);
+    const outcome = matchSubmission(identity, identities);
     await markAutoMatchResult({
       submissionId: sub.id,
       status: outcome.status,
       reason: outcome.reason,
       contactId: outcome.contactId,
+      chartId: outcome.status === "matched" ? outcome.chartId : null,
       candidateIds: outcome.candidateIds,
     });
     // Mirror the link onto the submission itself. On a review verdict this
     // CLEARS any previously written contact_id, so a row that stops matching
     // (a contact edited, a duplicate appearing) does not keep a stale link.
     await setSubmissionContactId(sub.id, outcome.status === "matched" ? outcome.contactId : null);
+
+    // A match that resolved a CRM contact AND a chart records the link, so the
+    // next pull's collapse has something to collapse on. Written only from
+    // evidence — never guessed, never backfilled.
+    if (outcome.status === "matched" && outcome.contactId !== null && outcome.chartId) {
+      await linkContactToChart(outcome.contactId, outcome.chartId).catch(() => { /* best effort */ });
+    }
+    if (outcome.status === "matched" && outcome.chartId) summary.matchedWithChart += 1;
 
     summary.considered += 1;
     if (outcome.status === "matched") summary.matched += 1;

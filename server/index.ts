@@ -6,7 +6,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { configureAuth, authMiddleware } from "./auth";
-import { initRemindersTable, startReminderCron, startMonthlyReportCron, startSurveyAttachCron, startActiveCountsCron } from "./reminders";
+import { initRemindersTable, startReminderCron, startMonthlyReportCron, startSurveyAttachCron, startActiveCountsCron, startTnPatientsCron } from "./reminders";
 import { initTherapyNotesTable } from "./therapy-notes";
 import { initEmailSnapshotsTable } from "./email-snapshots";
 import { initAssignmentsTable } from "./assignments/db";
@@ -22,6 +22,7 @@ import { registerSurveyAttachInternalRoutes } from "./survey/attach-routes";
 import { initSurveyMatchTable } from "./survey/match-db";
 import { initSurveyAttachTable } from "./survey/attach-db";
 import { initActiveCountsTable } from "./therapy-notes/active-counts-db";
+import { initTnPatientsTable } from "./therapy-notes/tn-patients-db";
 
 const app = express();
 const httpServer = createServer(app);
@@ -309,6 +310,7 @@ app.use((req, res, next) => {
     // claimed atomically. Additive CREATE TABLE IF NOT EXISTS, no ALTER.
     await initSurveyAttachTable();
     await initActiveCountsTable();
+    await initTnPatientsTable();
     startReminderCron();
     // Monthly management report. Schedule + timezone are logged on the line
     // below at boot, so the deployed cadence is readable from the startup log
@@ -321,6 +323,10 @@ app.use((req, res, next) => {
     // 02:30 Mountain, after the attach batch: the agent holds one TherapyNotes
     // license and serialises, so the two overnight jobs must not start together.
     startActiveCountsCron();
+    // TherapyNotes patient identity, so matching can see the ~half of the
+    // caseload that predates the CRM. 03:00 Mountain, after the count pass:
+    // one license, one session at a time.
+    startTnPatientsCron();
     // Phase 3: load the crm_providers-derived email-axis directory, then keep it
     // fresh on an interval (mutations also refresh it on write). Sync resolvers
     // fall back to PROVIDER_LIST until/if this populates, so startup is safe.
