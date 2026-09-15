@@ -32,6 +32,8 @@ export interface SurveyMatchRow {
   status: MatchStatus;
   reason: string;
   matchedContactId: number | null;
+  /** The TherapyNotes chart, when this resolved to one. */
+  matchedChartId: string | null;
   candidateIds: number[];
   resolvedBy: string | null;
   resolvedAt: string | null;
@@ -142,6 +144,7 @@ const mapRow = (r: Record<string, unknown>): SurveyMatchRow => ({
   status: r.status as MatchStatus,
   reason: r.reason as string,
   matchedContactId: (r.matched_contact_id as number | null) ?? null,
+  matchedChartId: (r.matched_chart_id as string | null) ?? null,
   candidateIds: parseIds(r.candidate_ids),
   resolvedBy: (r.resolved_by as string | null) ?? null,
   resolvedAt: r.resolved_at ? String(r.resolved_at) : null,
@@ -167,16 +170,23 @@ export async function markAutoMatchResult(params: {
   status: "matched" | "review";
   reason: MatchReason;
   contactId: number | null;
+  /**
+   * The TherapyNotes chart this resolved to, when it resolved to one. NULL on a
+   * review verdict, so a row that stops matching stops carrying a chart — the
+   * same rule matched_contact_id already follows.
+   */
+  chartId?: string | null;
   candidateIds: number[];
 }): Promise<void> {
   await getPool().query(
     `INSERT INTO survey_match_reviews
-       (submission_id, status, reason, matched_contact_id, candidate_ids, updated_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())
+       (submission_id, status, reason, matched_contact_id, matched_chart_id, candidate_ids, updated_at)
+     VALUES ($1, $2, $3, $4, $6, $5, NOW())
      ON CONFLICT (submission_id) DO UPDATE SET
        status             = EXCLUDED.status,
        reason             = EXCLUDED.reason,
        matched_contact_id = EXCLUDED.matched_contact_id,
+       matched_chart_id   = EXCLUDED.matched_chart_id,
        candidate_ids      = EXCLUDED.candidate_ids,
        updated_at         = NOW()
      WHERE survey_match_reviews.resolved_by IS NULL`,
@@ -186,6 +196,7 @@ export async function markAutoMatchResult(params: {
       params.reason,
       params.contactId,
       JSON.stringify(params.candidateIds),
+      params.chartId ?? null,
     ],
   );
 }

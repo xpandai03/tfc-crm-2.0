@@ -77,7 +77,11 @@ export { REASON_LABEL };
 
 /** What the matcher needs to know about one contact. Nothing more is read. */
 export interface ContactIdentity {
-  contactId: number;
+  /**
+   * The CRM contact. NULL for a TherapyNotes-only patient, who has no CRM row
+   * — which is the entire population this build exists to make matchable.
+   */
+  contactId: number | null;
   name: string;
   email: string | null;
   phone: string | null;
@@ -88,6 +92,21 @@ export interface ContactIdentity {
    * candidates that are otherwise identical.
    */
   assignedProvider?: string | null;
+  /**
+   * The TherapyNotes chart. Set on a TherapyNotes patient, and on a CRM contact
+   * that has been linked to one. It is the ONLY thing that links the two
+   * populations, and it is what collapseIdentities() collapses on.
+   */
+  chartId?: string | null;
+  /**
+   * For a TherapyNotes patient, every clinician they are assigned to. A patient
+   * under two clinicians is ONE row with two values, never two rows — the
+   * survey names one therapist and it has to be enough that it is one of
+   * theirs. Empty for a CRM contact, which uses assignedProvider instead.
+   */
+  clinicians?: string[];
+  /** Where this identity came from. Reported so a match can say which. */
+  source?: "crm" | "therapynotes";
 }
 
 /** The identity a client typed into the survey. */
@@ -103,8 +122,14 @@ export interface SubmittedIdentity {
 export interface MatchOutcome {
   status: "matched" | "review";
   reason: MatchReason;
-  /** Set only when status is "matched". */
+  /** Set only when status is "matched", and only for a CRM contact. */
   contactId: number | null;
+  /**
+   * The TherapyNotes chart, when the matched identity has one. This is the
+   * point of the build: an attach can then go straight to the right record
+   * instead of searching for it.
+   */
+  chartId: string | null;
   /**
    * Contacts worth showing a human, most relevant first. On a match this is the
    * single matched contact; on review it is whatever partial evidence exists,
@@ -167,6 +192,12 @@ function validDate(y: number, m: number, d: number): string | null {
 export function nameKey(raw: string | null | undefined): string {
   if (!raw) return "";
   return String(raw)
+    // A PARENTHESISED SEGMENT IS NOT PART OF THE NAME. 136 of the 1,011
+    // TherapyNotes rows carry one — a preferred or shortened name the chart
+    // records alongside the legal one — and it is the most likely reason a
+    // results-table name does not equal the chart name. Stripped for BOTH
+    // populations, because one person has to key the same in each.
+    .replace(/\([^)]*\)/g, " ")
     // NFD splits "á" into "a" + a combining accent; the range below is the
     // combining-diacritical-marks block, written as escapes rather than literal
     // characters so it survives any re-encoding of this file.
@@ -280,6 +311,20 @@ function ownersOf<T>(
  *   "corroborates" at least one candidate owns it
  *   "contradicts"  it is on record, and no candidate owns it
  */
+/**
+ * A stable key for one identity, across both populations.
+ *
+ * NOT contactId. A TherapyNotes-only patient has none, so keying on it made
+ * EVERY such patient compare equal to every other — and corroboration() asks
+ * "does any candidate own this phone", which then answered yes for a number
+ * belonging to a different person entirely. That is the precise failure this
+ * design exists to prevent, and it was introduced by widening the population
+ * without widening the key.
+ */
+function identityKey(c: ContactIdentity): string {
+  return c.contactId !== null ? `c:${c.contactId}` : `t:${c.chartId ?? ""}`;
+}
+
 function corroboration(
   candidates: ContactIdentity[],
   contacts: ContactIdentity[],
@@ -289,9 +334,79 @@ function corroboration(
   if (!submittedKey) return { verdict: "unknown", owners: [] };
   const owners = ownersOf(contacts, submittedKey, keyOf);
   if (owners.length === 0) return { verdict: "unknown", owners: [] };
-  const ids = new Set(owners.map((o) => o.contactId));
-  const corroborates = candidates.some((c) => ids.has(c.contactId));
+  const ids = new Set(owners.map(identityKey));
+  const corroborates = candidates.some((c) => ids.has(identityKey(c)));
   return { verdict: corroborates ? "corroborates" : "contradicts", owners };
+}
+
+/**
+ * One identity per person, across both populations.
+ *
+ * THE LINK IS THE CHART ID, AND IT IS THE ONLY LINK. A CRM contact that carries
+ * one is the same person as the TherapyNotes patient with that chart; a contact
+ * without one cannot be linked and stays separate. There is no name-based
+ * merging here — that would be a second, fuzzier matcher hiding inside this one.
+ *
+ * The CRM row WINS the merge and absorbs the TherapyNotes fields. That order is
+ * deliberate: the contact id is what the review queue, the attach flow and every
+ * existing consumer key on, so a linked person must keep it. What it gains is
+ * the chart id and the clinician list.
+ *
+ * Without this, a person in both systems would arrive as two identities agreeing
+ * on name and date of birth, and the matcher would correctly call that
+ * ambiguous — turning a well-known patient into a review item, which is the
+ * opposite of the point.
+ */
+export function collapseIdentities(
+  crm: ContactIdentity[],
+  tn: ContactIdentity[],
+): ContactIdentity[] {
+  const byChart = new Map<string, ContactIdentity>();
+  crm.forEach((c) => {
+    const id = (c.chartId ?? "").trim();
+    if (id) byChart.set(id, c);
+  });
+
+  const out: ContactIdentity[] = crm.map((c) => ({ ...c, source: "crm" as const }));
+  for (const t of tn) {
+    const id = (t.chartId ?? "").trim();
+    const linked = id ? byChart.get(id) : undefined;
+    if (linked) {
+      // Same person. Fold the TherapyNotes fields onto the CRM row rather than
+      // adding a second candidate. The contact's own name, date of birth and
+      // phone are left alone: they are what staff maintain, and the EHR copy is
+      // here to make the person FINDABLE, not to overwrite them.
+      const merged = out.find((c) => c.contactId === linked.contactId);
+      if (merged) {
+        merged.chartId = id;
+        merged.clinicians = t.clinicians ?? [];
+        merged.source = "crm";
+      }
+      continue;
+    }
+    out.push({ ...t, source: "therapynotes" as const });
+  }
+  return out;
+}
+
+/**
+ * Does the therapist a survey named match this identity?
+ *
+ * A CRM contact has ONE assigned provider. A TherapyNotes patient has every
+ * clinician they are assigned to, and the survey names one of them — so for that
+ * population this is membership, not equality. Zero patients are shared-care
+ * today; the shape is here because one will be, and discovering that through a
+ * wrong match is not the way to find out.
+ */
+function providerMatches(c: ContactIdentity, wanted: string): boolean {
+  if (!wanted) return false;
+  if (providerKey(c.assignedProvider) === wanted && providerKey(c.assignedProvider) !== "") {
+    return true;
+  }
+  return (c.clinicians ?? []).some((cl) => {
+    const k = providerKey(cl);
+    return k !== "" && k === wanted;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -328,12 +443,12 @@ export function matchSubmission(
   if (!dob) {
     // Nothing can be trusted without a readable date of birth, and a name-only
     // search is the fuzzy tier this design refuses to have.
-    return { status: "review", reason: "unparseable_dob", contactId: null, candidateIds: [] };
+    return { status: "review", reason: "unparseable_dob", contactId: null, chartId: null, candidateIds: [] };
   }
 
   const key = nameKey(submitted.name);
   if (!key) {
-    return { status: "review", reason: "no_name", contactId: null, candidateIds: [] };
+    return { status: "review", reason: "no_name", contactId: null, chartId: null, candidateIds: [] };
   }
 
   // --- 1. Candidates: name AND date of birth, both exact after normalisation.
@@ -353,7 +468,10 @@ export function matchSubmission(
 
   // Candidates offered to a human when we decline to decide. Name agreement is
   // listed first because a shared date of birth alone is weak evidence.
-  const partialCandidates = [...nameOnly, ...dobOnly].slice(0, 10).map((c) => c.contactId);
+  // CRM ids only. A TherapyNotes-only identity has none, and the review queue
+  // renders contacts — so it is excluded here rather than represented by a
+  // placeholder the UI would have to learn about.
+  const partialCandidates = dedupeIds([...nameOnly, ...dobOnly]);
 
   if (candidates.length === 0) {
     // Say WHICH criterion failed, which is what the client asked for. "The name
@@ -361,7 +479,7 @@ export function matchSubmission(
     // this name" send a staff member to two different places, and a single
     // "no candidates" told them neither.
     const reason: MatchReason = nameOnly.length > 0 ? "dob_mismatch" : "no_candidates";
-    return { status: "review", reason, contactId: null, candidateIds: partialCandidates };
+    return { status: "review", reason, contactId: null, chartId: null, candidateIds: partialCandidates };
   }
 
   // --- 2. Phone. Corroborates or contradicts; never narrows.
@@ -373,6 +491,7 @@ export function matchSubmission(
       status: "review",
       reason: "phone_contradiction",
       contactId: null,
+      chartId: null,
       candidateIds: dedupeIds([...candidates, ...phone.owners]),
     };
   }
@@ -384,6 +503,7 @@ export function matchSubmission(
       status: "review",
       reason: "email_contradiction",
       contactId: null,
+      chartId: null,
       candidateIds: dedupeIds([...candidates, ...email.owners]),
     };
   }
@@ -394,7 +514,8 @@ export function matchSubmission(
       status: "matched",
       reason: matchedReasonFor(phone.verdict === "corroborates", email.verdict === "corroborates"),
       contactId: candidates[0].contactId,
-      candidateIds: [candidates[0].contactId],
+      chartId: candidates[0].chartId ?? null,
+      candidateIds: dedupeIds([candidates[0]]),
     };
   }
 
@@ -404,23 +525,21 @@ export function matchSubmission(
   // field above as well. This is the ONE place a tie is broken, and only the
   // provider breaks it.
   const wanted = providerKey(submitted.provider);
-  const allIds = candidates.map((c) => c.contactId);
+  const allIds = dedupeIds(candidates);
 
   if (!wanted) {
-    return { status: "review", reason: "multiple_candidates", contactId: null, candidateIds: allIds };
+    return { status: "review", reason: "multiple_candidates", contactId: null, chartId: null, candidateIds: allIds };
   }
 
-  const withProvider = candidates.filter((c) => {
-    const k = providerKey(c.assignedProvider);
-    return k !== "" && k === wanted;
-  });
+  const withProvider = candidates.filter((c) => providerMatches(c, wanted));
 
   if (withProvider.length === 1) {
     return {
       status: "matched",
       reason: "name_dob_provider",
       contactId: withProvider[0].contactId,
-      candidateIds: [withProvider[0].contactId],
+      chartId: withProvider[0].chartId ?? null,
+      candidateIds: dedupeIds([withProvider[0]]),
     };
   }
 
@@ -430,6 +549,7 @@ export function matchSubmission(
     status: "review",
     reason: withProvider.length === 0 ? "provider_no_match" : "provider_ambiguous",
     contactId: null,
+    chartId: null,
     candidateIds: allIds,
   };
 }
@@ -447,7 +567,9 @@ function dedupeIds(rows: ContactIdentity[]): number[] {
   const seen = new Set<number>();
   const out: number[] = [];
   for (const r of rows) {
-    if (seen.has(r.contactId)) continue;
+    // A TherapyNotes-only identity has no contact id. Skipped rather than
+    // coerced, so nothing downstream ever sees a 0 or a -1 standing in for one.
+    if (r.contactId === null || seen.has(r.contactId)) continue;
     seen.add(r.contactId);
     out.push(r.contactId);
     if (out.length >= 10) break;

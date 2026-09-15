@@ -6,6 +6,7 @@
 
 import cron from "node-cron";
 import { runActiveCountPass, type ActiveCountRunSummary } from "../therapy-notes/active-counts-runner";
+import { runTnPatientPull, type TnPatientPullSummary } from "../therapy-notes/tn-patients-runner";
 import { sendMonthlyReport } from "../reports/send";
 import { runScheduledAttach, ATTACH_BATCH_CAP } from "../survey/attach-runner";
 import { previousPeriod } from "../reports/monthly";
@@ -364,6 +365,80 @@ export function startActiveCountsCron(): void {
     `[counts-cron] Next fire: ${nextFireDescription(schedule, ACTIVE_COUNTS_TIMEZONE)}. ` +
     `One login, every clinician option, counts stored dated. Nothing is subtracted; ` +
     `the survey export reads the newest count on or before its period end.`,
+  );
+}
+
+// ============================================================================
+// TherapyNotes patient identity — the population the matcher could not see
+// ============================================================================
+
+/**
+ * 03:00 Mountain, the slot the pull's own report recommends.
+ *
+ * The agent holds one TherapyNotes license and serialises, so the three
+ * overnight jobs are spaced rather than stacked:
+ *
+ *   00:00  survey -> chart attach
+ *   02:30  active client counts   (~2 min measured)
+ *   03:00  patient identity pull  (~2 min measured)
+ *
+ * Thirty minutes of headroom on a two-minute job. Closer than that and a count
+ * pass running long would not fail — it would take the lock and leave this one
+ * waiting, which looks like a hang rather than a queue.
+ */
+const DEFAULT_TN_PATIENTS_SCHEDULE = "0 3 * * *";
+const TN_PATIENTS_TIMEZONE = "America/Denver";
+
+let isPullingPatients = false;
+
+/** Manual trigger, for a run after a failed overnight pull. */
+export async function triggerTnPatientPull(): Promise<TnPatientPullSummary> {
+  return runTnPatientPull("manual");
+}
+
+async function runScheduledTnPatients(): Promise<void> {
+  if (isPullingPatients) {
+    console.warn("[patients-cron] Previous pull still running — skipping this tick.");
+    return;
+  }
+  isPullingPatients = true;
+  try {
+    await runTnPatientPull("scheduled");
+  } catch (error) {
+    console.error(
+      "[patients-cron] Unhandled error:",
+      error instanceof Error ? error.message : "unknown",
+    );
+  } finally {
+    isPullingPatients = false;
+  }
+}
+
+export function startTnPatientsCron(): void {
+  const schedule = process.env.TN_PATIENTS_CRON_SCHEDULE || DEFAULT_TN_PATIENTS_SCHEDULE;
+  const isOverridden = Boolean(process.env.TN_PATIENTS_CRON_SCHEDULE);
+
+  if (!cron.validate(schedule)) {
+    console.error(
+      `[patients-cron] INVALID schedule "${schedule}" — patient pull NOT scheduled. ` +
+      `Fix TN_PATIENTS_CRON_SCHEDULE and redeploy.`,
+    );
+    return;
+  }
+
+  cron.schedule(schedule, () => { void runScheduledTnPatients(); }, {
+    timezone: TN_PATIENTS_TIMEZONE,
+  });
+
+  console.log(
+    `[patients-cron] TherapyNotes patient pull scheduled: "${schedule}" ` +
+    `(${describeSchedule(schedule)}) timezone=${TN_PATIENTS_TIMEZONE}` +
+    `${isOverridden ? " [OVERRIDDEN via TN_PATIENTS_CRON_SCHEDULE]" : " [default]"}`,
+  );
+  console.log(
+    `[patients-cron] Next fire: ${nextFireDescription(schedule, TN_PATIENTS_TIMEZONE)}. ` +
+    `One login, every clinician, identity stored verbatim. A PARTIAL pull leaves ` +
+    `the previous snapshot intact rather than replacing it with a fragment.`,
   );
 }
 

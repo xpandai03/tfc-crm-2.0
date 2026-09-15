@@ -39,6 +39,9 @@ export type ActivityType =
   // nothing — a scheduled job that silently never fires is the failure mode this
   // line exists to make visible.
   | "tn_active_counts"
+  // One overnight pull of TherapyNotes patient identity. Logged whether it
+  // replaced the snapshot or left the previous one standing.
+  | "tn_patient_pull"
   | "referral_uploaded"
   | "scheduled_appointment_set"
   | "tn_schedule_started"

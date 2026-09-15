@@ -35,6 +35,7 @@
     "test:survey-attach": "tsx scripts/test-survey-attach.ts",
     "test:survey-attach-claim": "tsx scripts/test-survey-attach-claim.ts",
     "test:attach-unmatched": "tsx scripts/test-attach-unmatched.ts",
+    "test:tn-patients": "tsx scripts/test-tn-patient-matching.ts",
     "test:short-name": "tsx scripts/test-provider-short-name.ts",
     "test:survey-aggregate": "tsx scripts/test-survey-aggregate.ts",
     "test:survey-workbook": "tsx scripts/test-survey-workbook.ts",
