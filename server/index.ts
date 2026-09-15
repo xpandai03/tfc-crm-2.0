@@ -22,6 +22,7 @@ import { registerSurveyAttachInternalRoutes } from "./survey/attach-routes";
 import { initSurveyMatchTable } from "./survey/match-db";
 import { initSurveyAttachTable } from "./survey/attach-db";
 import { initActiveCountsTable } from "./therapy-notes/active-counts-db";
+import { initActiveCountOverridesTable } from "./survey/active-count-overrides-db";
 import { initTnPatientsTable } from "./therapy-notes/tn-patients-db";
 
 const app = express();
@@ -310,6 +311,7 @@ app.use((req, res, next) => {
     // claimed atomically. Additive CREATE TABLE IF NOT EXISTS, no ALTER.
     await initSurveyAttachTable();
     await initActiveCountsTable();
+    await initActiveCountOverridesTable();
     await initTnPatientsTable();
     startReminderCron();
     // Monthly management report. Schedule + timezone are logged on the line

@@ -21,6 +21,7 @@ import { getRecentSurveySubmissions } from "../sync/db";
 import { getAllCrmProviders, getInactiveCrmProviders } from "../reminders/db";
 import { providerShortName } from "@shared/provider-short-name";
 import { getActiveCountsAsOf } from "../therapy-notes/active-counts-db";
+import { getOverridesForPeriod } from "./active-count-overrides-db";
 import { aggregateSurveys, type RosterEntry, type SubmissionInput } from "./aggregate";
 import { buildSurveyWorkbook, type ActiveClientCounts } from "./workbook";
 
@@ -42,8 +43,10 @@ export interface SurveyExportResult {
     departedCount: number;
     unresolvedCount: number;
     sheetCount: number;
-    /** Providers carrying a denominator for this period. */
+    /** Providers carrying a denominator for this period, pulled or typed. */
     providersWithCount: number;
+    /** How many of those were typed by a person for this period. */
+    overriddenCount: number;
     buildMs: number;
   };
 }
@@ -66,7 +69,7 @@ export function exportFilename(range: SurveyExportRange): string {
 export async function buildSurveyExport(range: SurveyExportRange): Promise<SurveyExportResult> {
   const started = Date.now();
 
-  const [active, inactive, rows, counts] = await Promise.all([
+  const [active, inactive, rows, counts, overrides] = await Promise.all([
     getAllCrmProviders(),
     getInactiveCrmProviders(),
     getRecentSurveySubmissions(MAX_SUBMISSIONS),
@@ -74,6 +77,10 @@ export async function buildSurveyExport(range: SurveyExportRange): Promise<Surve
     // use August's denominator, or the same report returns a different
     // percentage every time it is run.
     getActiveCountsAsOf(range.to),
+    // Numbers the ops lead typed FOR THIS EXACT RANGE. Never for another one —
+    // see server/survey/active-count-overrides-db.ts for why the key is the
+    // period rather than a date the number applies until.
+    getOverridesForPeriod(range.from, range.to),
   ]);
 
   const roster: RosterEntry[] = active.concat(inactive).map((p) => ({
@@ -99,6 +106,31 @@ export async function buildSurveyExport(range: SurveyExportRange): Promise<Surve
     }
   });
 
+  // THE OVERRIDE WINS, AND SAYS WHAT IT REPLACED.
+  //
+  // Applied on top rather than folded into the query, so the pulled figure
+  // survives into the workbook as the thing the marker compares against. An
+  // override for a provider the pull had NOTHING for is a real case and is
+  // allowed: the reason to have a denominator does not depend on the agent
+  // having managed to read one. Such a provider now counts as having a count,
+  // which is what lets their office total complete.
+  //
+  // Nothing here subtracts anything. There is no dummy-record rule, no name
+  // prefix, no heuristic — the number is whatever a person typed.
+  overrides.forEach((o) => {
+    const pulled = activeCounts.byProviderId[o.providerId] ?? null;
+    activeCounts.byProviderId[o.providerId] = {
+      count: o.activeCount,
+      capturedOn: pulled?.capturedOn ?? null,
+      override: {
+        pulled: pulled?.count ?? null,
+        setBy: o.setBy,
+        setAt: o.setAt,
+        note: o.note,
+      },
+    };
+  });
+
   const aggregate = aggregateSurveys({ roster, submissions, period: range });
   const { buffer, sheetNames } = buildSurveyWorkbook(aggregate, activeCounts);
 
@@ -111,7 +143,8 @@ export async function buildSurveyExport(range: SurveyExportRange): Promise<Surve
       departedCount: aggregate.departed.length,
       unresolvedCount: aggregate.unresolved.length,
       sheetCount: sheetNames.length,
-      providersWithCount: counts.length,
+      providersWithCount: Object.keys(activeCounts.byProviderId).length,
+      overriddenCount: overrides.length,
       buildMs: Date.now() - started,
     },
   };

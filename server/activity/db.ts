@@ -31,6 +31,11 @@ export type ActivityType =
   | "email_template_created"
   | "email_template_updated"
   | "report_exported"
+  // A person typed a Total Active Clients figure for a reporting period, or
+  // cleared one. Logged because the number it replaces came from a machine and
+  // the number replacing it came from a judgement — the audit trail is the
+  // difference between the two.
+  | "active_count_override"
   | "therapy_notes_started"
   | "therapy_notes_created"
   | "therapy_notes_failed"
