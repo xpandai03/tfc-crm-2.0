@@ -47,6 +47,8 @@ export interface AttachRow {
   trigger: string;
   actorEmail: string;
   durationMs: number | null;
+  /** The TherapyNotes chart this was filed to. NULL unless it succeeded. */
+  tnPatientUrl: string | null;
   startedAt: string;
   finishedAt: string | null;
   updatedAt: string;
@@ -71,6 +73,16 @@ export async function initSurveyAttachTable(): Promise<void> {
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_survey_attach_status ON survey_attach_attempts(status)`,
   );
+  // The chart the agent filed to, captured off a successful attach. Additive and
+  // nullable — every existing row keeps its meaning, and a failed attempt has no
+  // chart by definition. Recorded because a manual attach on an UNMATCHED survey
+  // leaves no contact link: without this there would be nothing on the row
+  // saying where the survey actually went.
+  try {
+    await pool.query(`ALTER TABLE survey_attach_attempts ADD COLUMN IF NOT EXISTS tn_patient_url TEXT`);
+  } catch (e) {
+    console.error("[survey-attach] tn_patient_url column migration FAILED:", e);
+  }
   console.log("[survey-attach] Table initialized");
 }
 
@@ -82,6 +94,7 @@ const mapRow = (r: Record<string, unknown>): AttachRow => ({
   trigger: String(r.trigger ?? "manual"),
   actorEmail: String(r.actor_email ?? "system"),
   durationMs: (r.duration_ms as number | null) ?? null,
+  tnPatientUrl: (r.tn_patient_url as string | null) ?? null,
   startedAt: String(r.started_at),
   finishedAt: r.finished_at ? String(r.finished_at) : null,
   updatedAt: String(r.updated_at),
@@ -139,13 +152,17 @@ export async function recordAttachOutcome(params: {
   status: "attached" | "failed";
   reason: string | null;
   durationMs: number;
+  /** The chart, on success. Never overwritten with NULL by a later failure. */
+  tnPatientUrl?: string | null;
 }): Promise<void> {
   await getPool().query(
     `UPDATE survey_attach_attempts
         SET status = $2, reason = $3, duration_ms = $4,
+            tn_patient_url = COALESCE($5, tn_patient_url),
             finished_at = NOW(), updated_at = NOW()
       WHERE submission_id = $1`,
-    [params.submissionId, params.status, params.reason, params.durationMs],
+    [params.submissionId, params.status, params.reason, params.durationMs,
+     params.tnPatientUrl ?? null],
   );
 }
 

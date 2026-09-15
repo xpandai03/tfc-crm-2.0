@@ -71,8 +71,8 @@ export const ATTACH_FAILURE_TEXT: Record<AttachFailureReason, string> = {
   // --- Things about the patient, which is what staff can actually act on ----
   patient_not_found:
     `No patient with this name and date of birth was found in TherapyNotes. ` +
-    `This often happens when the chart holds a middle name the client did not ` +
-    `type. Nothing is wrong with the survey. ${FALL_BACK}`,
+    `Either they are not in TherapyNotes at all, or the chart holds a middle ` +
+    `name the client did not type. Nothing is wrong with the survey. ${FALL_BACK}`,
   multiple_candidates:
     `More than one patient in TherapyNotes matches this name and date of birth, ` +
     `so the survey was not filed to any of them. ${FALL_BACK}`,
@@ -158,11 +158,17 @@ export function attachFailureText(reason: string | null | undefined): string {
  */
 export const ATTACH_INELIGIBLE_TEXT = {
   not_a_survey: "Only client surveys can be filed to a chart.",
+  // THESE TWO NO LONGER GATE THE BUTTON. A survey can be filed on its own
+  // details, with no CRM contact — the agent verifies name, date of birth,
+  // phone and therapist against the chart, and never needed a contact for any
+  // of it. The codes remain because the OVERNIGHT run is still scoped to
+  // matched submissions, and it reports these when it skips one.
   awaiting_review:
-    "This survey is not matched to a contact yet. Review the identity first, " +
-    "then it can be filed.",
+    "Not filed overnight because the identity has not been reviewed yet. It can " +
+    "still be filed by hand using the button.",
   no_match:
-    "This survey has no matching contact, so there is no chart to file it to.",
+    "Not filed overnight because there is no matching contact. It can still be " +
+    "filed by hand using the button — TherapyNotes is checked directly.",
   no_phone:
     "This survey was submitted before the form asked for a phone number, and " +
     "TherapyNotes cannot be checked without one. Download the PDF and attach it " +

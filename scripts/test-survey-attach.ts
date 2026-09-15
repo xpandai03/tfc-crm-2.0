@@ -102,7 +102,10 @@ ok("the button is disabled while running",
   pageSrc.includes('ineligible = "in_progress"'));
 ok("disabled is driven by the ineligibility code, not a separate flag",
   pageSrc.includes("disabled={!!ineligible}"));
-ok("the button shows that it is running", pageSrc.includes("Filing to chart…"));
+// Reworded when the button stopped requiring a match: it now names the thing it
+// is waiting on, because a minute of silence needs to say where the minute went.
+ok("the button shows what it is waiting on", pageSrc.includes("Checking TherapyNotes…"));
+ok("...and the tooltip warns it takes about a minute", pageSrc.includes("Takes about a "));
 
 // ---------------------------------------------------------------------------
 console.log("\n[4] The scheduled job — timezone, cap, and a logged next fire");
@@ -168,8 +171,13 @@ for (const k of Object.keys(ATTACH_INELIGIBLE_TEXT)) {
 }
 eq("an unknown ineligibility falls back safely",
   attachIneligibleText("nope"), "This survey cannot be filed to a chart.");
-ok("awaiting_review explains the next step is the review queue",
-  /Review the identity first/.test(ATTACH_INELIGIBLE_TEXT.awaiting_review));
+// awaiting_review and no_match NO LONGER gate the button — a survey can be filed
+// on its own details with no CRM contact. They remain as the OVERNIGHT run's
+// skip reasons, so their wording now has to say the manual path is still open
+// rather than sending someone to the review queue first.
+ok("awaiting_review says the manual path is still available",
+  /can still be filed by hand/.test(ATTACH_INELIGIBLE_TEXT.awaiting_review));
+ok("no_match says the same", /can still be filed by hand/.test(ATTACH_INELIGIBLE_TEXT.no_match));
 
 console.log("\n[7] The download button survives a failed attach");
 ok("Download PDF is rendered for every survey row, ungated by attach state",
