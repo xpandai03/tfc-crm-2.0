@@ -44,6 +44,7 @@
     "test:active-counts": "tsx scripts/test-active-counts.ts",
     "test:auto-matching": "tsx scripts/test-survey-auto-matching.ts",
     "test:attach-chart-id": "tsx scripts/test-attach-chart-id.ts",
+    "test:count-overrides": "tsx scripts/test-active-count-overrides.ts",
     "fixture:survey-export": "tsx scripts/fixture-survey-export.ts"
   },
   "dependencies": {

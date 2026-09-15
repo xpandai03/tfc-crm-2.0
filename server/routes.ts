@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { providerShortName } from "@shared/provider-short-name";
 import { createServer, type Server } from "http";
 import {
   createReminder as createReminderInDb,
@@ -8043,6 +8044,150 @@ export async function registerRoutes(
       const message = error instanceof Error ? error.message : "Survey export failed";
       console.error("[export] survey workbook Error:", message);
       return res.status(500).json({ error: "The survey export could not be built. Please try again, or tell us if it keeps failing." });
+    }
+  });
+
+  // ==========================================================================
+  // Total Active Clients — the ops lead's override
+  //
+  // The nightly pull counts who is active TONIGHT. A client discharged on the
+  // 20th was active for most of the month and completed a survey, but is gone
+  // from the count on the 30th, so the denominator shrinks while the numerator
+  // stays. The practice's dummy records push it the other way. Neither is a
+  // judgement software should make, so these three routes let a person make it.
+  //
+  // SAME GUARD AS THE EXPORT. Whoever may download the workbook may set the
+  // numbers in it; a separate permission for the same act would be a second
+  // thing to keep in step. requireSurveyExport also returns the email, which is
+  // what gets recorded as who set it.
+  //
+  // NO PHI. Provider ids, counts and dates.
+  // ==========================================================================
+
+  /** Every provider for a period, with the pulled figure and any override. */
+  app.get("/api/survey/active-count-overrides", async (req: any, res) => {
+    try {
+      const email = requireSurveyExport(req, res);
+      if (!email) return;
+      const fallback = currentQuarter();
+      const from = validReportDate(req.query.from) ?? fallback.from;
+      const to = validReportDate(req.query.to) ?? fallback.to;
+      if (from > to) {
+        return res.status(400).json({ error: "The start date must be on or before the end date." });
+      }
+
+      const { getOverridesForPeriod } = await import("./survey/active-count-overrides-db");
+      const { getActiveCountsAsOf } = await import("./therapy-notes/active-counts-db");
+      const [providers, counts, overrides] = await Promise.all([
+        getAllCrmProviders(),
+        // The same selection the export makes, so the figure shown here is the
+        // figure the workbook would use. Reading it a second way would let the
+        // screen and the file disagree.
+        getActiveCountsAsOf(to),
+        getOverridesForPeriod(from, to),
+      ]);
+
+      const pulled = new Map(counts.map((c) => [c.providerId, c]));
+      const over = new Map(overrides.map((o) => [o.providerId, o]));
+      const rows = providers.map((p: any) => {
+        const pu = pulled.get(p.id);
+        const ov = over.get(p.id);
+        return {
+          providerId: p.id,
+          name: p.name,
+          shortName: providerShortName({ name: p.name, shortName: p.shortName }),
+          office: p.location ?? "",
+          pulledCount: pu?.activeCount ?? null,
+          pulledOn: pu?.capturedOn ?? null,
+          override: ov
+            ? { count: ov.activeCount, note: ov.note, setBy: ov.setBy, setAt: ov.setAt }
+            : null,
+        };
+      });
+      return res.json({ from, to, rows });
+    } catch (error) {
+      console.error("[active-count-overrides] list failed:",
+        error instanceof Error ? error.message : "unknown");
+      return res.status(500).json({ error: "The active client counts could not be loaded." });
+    }
+  });
+
+  /** Set one. An upsert: changing his mind is the expected case. */
+  app.put("/api/survey/active-count-overrides", async (req: any, res) => {
+    try {
+      const email = requireSurveyExport(req, res);
+      if (!email) return;
+      const { providerId, from, to, count, note } = req.body ?? {};
+
+      const pid = Number(providerId);
+      if (!Number.isInteger(pid) || pid <= 0) {
+        return res.status(400).json({ error: "A provider is required." });
+      }
+      const f = validReportDate(from);
+      const t = validReportDate(to);
+      if (!f || !t || f > t) {
+        return res.status(400).json({ error: "A valid reporting period is required." });
+      }
+      // A denominator cannot be negative or fractional, and a typo of 4500 for
+      // 45 would silently flatten a percentage to 0%, so the ceiling is a real
+      // guard rather than decoration.
+      const n = Number(count);
+      if (!Number.isInteger(n) || n < 0 || n > 10000) {
+        return res.status(400).json({ error: "Enter a whole number between 0 and 10,000." });
+      }
+
+      const { setOverride } = await import("./survey/active-count-overrides-db");
+      const saved = await setOverride({
+        providerId: pid, periodFrom: f, periodTo: t, activeCount: n,
+        note: typeof note === "string" && note.trim() !== "" ? note.trim().slice(0, 500) : null,
+        setBy: email,
+      });
+      console.log(`[active-count-overrides] SET provider=${pid} period=${f}..${t} by=${email}`);
+      await logActivity({
+        type: "active_count_override", actorEmail: email, entityType: "report",
+        entityName: "Total Active Clients override",
+        metadata: { providerId: pid, from: f, to: t, count: n },
+      }).catch(() => { /* best effort */ });
+      return res.json({ success: true, override: saved });
+    } catch (error) {
+      console.error("[active-count-overrides] set failed:",
+        error instanceof Error ? error.message : "unknown");
+      return res.status(500).json({ error: "That number could not be saved. Please try again." });
+    }
+  });
+
+  /**
+   * Clear one. A DELETE, so the pulled figure returns because there is nothing
+   * left preferring anything else — no "cleared" state, and no way to leave a
+   * blank behind.
+   */
+  app.delete("/api/survey/active-count-overrides/:providerId", async (req: any, res) => {
+    try {
+      const email = requireSurveyExport(req, res);
+      if (!email) return;
+      const pid = parseInt(req.params.providerId, 10);
+      const f = validReportDate(req.query.from);
+      const t = validReportDate(req.query.to);
+      if (!Number.isInteger(pid) || !f || !t) {
+        return res.status(400).json({ error: "A provider and a reporting period are required." });
+      }
+      const { clearOverride } = await import("./survey/active-count-overrides-db");
+      const removed = await clearOverride(pid, f, t);
+      console.log(`[active-count-overrides] CLEARED provider=${pid} period=${f}..${t} by=${email}`);
+      if (removed) {
+        await logActivity({
+          type: "active_count_override", actorEmail: email, entityType: "report",
+          entityName: "Total Active Clients override cleared",
+          metadata: { providerId: pid, from: f, to: t },
+        }).catch(() => { /* best effort */ });
+      }
+      // Idempotent: clearing something already clear is success, not 404. The
+      // caller wanted no override and there is no override.
+      return res.json({ success: true, removed });
+    } catch (error) {
+      console.error("[active-count-overrides] clear failed:",
+        error instanceof Error ? error.message : "unknown");
+      return res.status(500).json({ error: "That number could not be cleared. Please try again." });
     }
   });
 

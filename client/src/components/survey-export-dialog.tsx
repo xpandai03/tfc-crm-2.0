@@ -17,7 +17,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Download, Loader2 } from "lucide-react";
+import { Download, Loader2, SlidersHorizontal } from "lucide-react";
+import { ActiveCountOverrides } from "@/components/active-count-overrides";
 import { useToast } from "@/hooks/use-toast";
 
 /** The calendar quarter we are in, which is what the client reports on. */
@@ -41,6 +42,9 @@ export function SurveyExportDialog({
   const [from, setFrom] = useState(quarter.from);
   const [to, setTo] = useState(quarter.to);
   const [busy, setBusy] = useState(false);
+  // Collapsed by default. Most exports use the pulled figures unchanged, and a
+  // panel of 26 editable numbers is not what the Export button is for.
+  const [showCounts, setShowCounts] = useState(false);
   const { toast } = useToast();
 
   const rangeValid = Boolean(from) && Boolean(to) && from <= to;
@@ -90,7 +94,7 @@ export function SurveyExportDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!busy) onOpenChange(v); }}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className={showCounts ? "sm:max-w-lg" : "sm:max-w-md"}>
         <DialogHeader>
           <DialogTitle>Export survey workbook</DialogTitle>
         </DialogHeader>
@@ -133,13 +137,34 @@ export function SurveyExportDialog({
           )}
 
           {/*
-            The client will open this and ask about both of these, so say it
-            here as well as in the workbook itself.
+            Total Active Clients is CONNECTED — it has been since the nightly
+            pull shipped. This paragraph still said it was not, which would have
+            read as a contradiction directly above a panel for editing it.
           */}
+          <div className="rounded border">
+            <button
+              type="button"
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium hover:bg-muted/50"
+              onClick={() => setShowCounts((v) => !v)}
+              disabled={busy || !rangeValid}
+              data-testid="button-toggle-active-counts"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              Total Active Clients
+              <span className="ml-auto text-muted-foreground font-normal">
+                {showCounts ? "Hide" : "Adjust"}
+              </span>
+            </button>
+            {showCounts && rangeValid && (
+              <div className="px-3 pb-3 pt-1 border-t">
+                <ActiveCountOverrides from={from} to={to} />
+              </div>
+            )}
+          </div>
+
           <p className="text-xs text-muted-foreground border-l-2 pl-3">
-            Two things are deliberately blank for now: <strong>Total Active Clients</strong>,
-            which comes from TherapyNotes and is not connected yet, and the{" "}
-            <strong>Data</strong> sheet, which is waiting on the columns the practice wants on it.
+            The <strong>Data</strong> sheet is still deliberately blank — it is waiting
+            on the columns the practice wants on it.
           </p>
         </div>
 

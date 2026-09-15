@@ -232,6 +232,28 @@ class SheetWriter {
     this.widen(col, fmt === RATING_FORMAT ? 6 : String(value).length);
   }
 
+  /**
+   * Attach an Excel cell comment to a cell already written.
+   *
+   * SheetJS DOES write these — verified against the raw XML, which gains
+   * xl/comments1.xml and a VML drawing. That matters because most of this file
+   * is written around what the library cannot do; this is one of the things it
+   * can.
+   *
+   * Used for exactly one thing: marking a Total Active Clients figure a person
+   * typed. The comment carries who, when, and what the pull had said, so the
+   * substitution is inspectable at the cell rather than inferred from a note
+   * elsewhere. It is NOT the only marker — see the banner on the analysis
+   * sheet — because a comment is a small red triangle and a reader may never
+   * hover over it.
+   */
+  comment(col: number, row: number, text: string, author = "TFC CRM"): void {
+    const cell = this.data[a1(col, row)] as Cell | undefined;
+    if (!cell) return;
+    (cell as any).c = [{ a: author, t: text }];
+    (cell as any).c.hidden = true;
+  }
+
   /** A formula cell. Written without a cached value; Excel computes on open. */
   formula(col: number, row: number, f: string, fmt?: string): void {
     this.touch(col, row);
@@ -347,6 +369,24 @@ function activeCountsNote(
     : base;
 }
 
+/**
+ * What the marker on an overridden figure says.
+ *
+ * Names the pulled number it replaced, so a reader can see the size of the
+ * adjustment rather than only that one happened. "No overnight reading" is a
+ * real and different case: a provider the pull could not read still gets a
+ * denominator when someone types one.
+ */
+function overrideComment(cell: ActiveCountCell): string {
+  const o = cell.override!;
+  const was = o.pulled === null
+    ? "There was no overnight reading for this provider on or before the period end."
+    : `The overnight reading was ${o.pulled}.`;
+  const when = o.setAt.slice(0, 16).replace("T", " ");
+  return `Set by hand: ${cell.count}. ${was} Entered by ${o.setBy} on ${when} UTC.` +
+    (o.note ? `\nNote: ${o.note}` : "");
+}
+
 /** Where one office's provider rows actually landed. 0-based, inclusive. */
 interface OfficeBlock {
   office: string; first: number; last: number; count: number;
@@ -394,6 +434,9 @@ function buildSurveyAnalysis(agg: SurveyAggregate, counts: ActiveClientCounts): 
   // How many provider rows carry a denominator. Zero means the C column is
   // empty, and every percentage formula above it must stay unwritten.
   let rowsWithCount = 0;
+  // Short names of providers whose figure a person typed. Named in the banner
+  // so the substitution is visible without hovering a single cell.
+  const overridden: string[] = [];
 
   offices.forEach((office) => {
     const inOffice = agg.providers.filter((p) => p.office === office);
@@ -409,7 +452,15 @@ function buildSurveyAnalysis(agg: SurveyAggregate, counts: ActiveClientCounts): 
       const known = p.providerId === null ? undefined : counts.byProviderId[p.providerId];
       if (known) {
         s.num(C_ACTIVE, row, known.count);
+        // THE FORMULA IS UNCHANGED. It divides by the cell, and the cell now
+        // holds whichever number won. An override moves the value, never the
+        // arithmetic — the percentage stays Excel's, exactly as the client's
+        // own template has it.
         s.formula(C_PCT, row, `${a1(C_SURVEYS, row)}/${a1(C_ACTIVE, row)}`, PERCENT_FORMAT);
+        if (known.override) {
+          s.comment(C_ACTIVE, row, overrideComment(known));
+          overridden.push(p.shortName);
+        }
         rowsWithCount++;
       }
       SCALE_KEYS.forEach((k, i) => s.num(C_FIRST_RATING + i, row, p.averages[k], RATING_FORMAT));
@@ -488,6 +539,17 @@ function buildSurveyAnalysis(agg: SurveyAggregate, counts: ActiveClientCounts): 
   note += 2;
   s.text(11, note, "Total Active Clients");
   s.banner(12, note, activeCountsNote(counts, agg.period.to, rowsWithCount, providerRows), 6);
+  if (overridden.length > 0) {
+    note++;
+    s.text(11, note, "Manually set");
+    s.banner(12, note,
+      `${overridden.length} of these figures ${overridden.length === 1 ? "was" : "were"} ` +
+      `set by hand for this period rather than read from TherapyNotes: ` +
+      `${overridden.join(", ")}. Hover the figure for who set it, when, and what ` +
+      `the overnight reading had said. This is the intended way to account for ` +
+      `clients discharged part-way through the period and for the practice's test ` +
+      `records; nothing is subtracted automatically.`, 6);
+  }
 
   return { ws: s.finish(), headers: s.headers() };
 }
@@ -688,7 +750,7 @@ function listingRowsFor(p: ProviderAggregate) {
   return p.listingRows;
 }
 
-function buildProviderSheet(p: ProviderAggregate, known: number | undefined): BuiltSheet {
+function buildProviderSheet(p: ProviderAggregate, known: ActiveCountCell | undefined): BuiltSheet {
   const s = new SheetWriter();
   const ratingHeaders = scaleQuestionsFor("in-person").map((q) => {
     switch (q.key) {
@@ -714,8 +776,15 @@ function buildProviderSheet(p: ProviderAggregate, known: number | undefined): Bu
   // and no numbers, which is what 25 of the template's 26 tabs show.
   if (p.surveyCount > 0) s.num(2, 2, p.surveyCount);
   if (known !== undefined) {
-    s.num(2, 3, known);
+    s.num(2, 3, known.count);
+    // Unchanged: the formula divides by C4 whatever C4 holds.
     if (p.surveyCount > 0) s.formula(3, 2, "C3/C4", PERCENT_FORMAT);
+    if (known.override) {
+      s.comment(2, 3, overrideComment(known));
+      // A tab has room the analysis row does not, so the marker is also plain
+      // text beside the figure. Nobody has to hover anything to see it.
+      s.text(3, 3, "← set by hand");
+    }
   }
 
   ratingHeaders.forEach((h, i) => s.header(1 + i, 4, h));
@@ -755,8 +824,32 @@ function buildProviderSheet(p: ProviderAggregate, known: number | undefined): Bu
  * selected as of the reporting period's end so a past report keeps returning the
  * same denominator.
  */
+/**
+ * What a provider's Total Active Clients cell should say, and where it came
+ * from.
+ *
+ * BOTH NUMBERS ARE CARRIED, never just the winner. When the ops lead sets 45
+ * against a pulled 43, the workbook says so and says what the pulled figure
+ * was — a substituted number with nothing to compare it against is the version
+ * of this feature that quietly damages trust in the report.
+ */
+export interface ActiveCountCell {
+  /** The number to write. The override when there is one, else the pulled count. */
+  count: number;
+  /** When the pulled reading was taken. Null when there is no pulled reading. */
+  capturedOn: string | null;
+  /** Set when a person typed this number. */
+  override?: {
+    /** What the nightly pull said, or null when it had nothing for this provider. */
+    pulled: number | null;
+    setBy: string;
+    setAt: string;
+    note: string | null;
+  };
+}
+
 export interface ActiveClientCounts {
-  byProviderId: Record<number, { count: number; capturedOn: string }>;
+  byProviderId: Record<number, ActiveCountCell>;
   /** Newest reading used anywhere in this workbook, for the staleness note. */
   newestCapturedOn: string | null;
 }
@@ -826,7 +919,7 @@ export function buildSurveyWorkbook(
   tabOrder.forEach((p) => {
     const name = sheetNameFor(p.shortName, names);
     if (name !== p.shortName) renamed[p.shortName] = name;
-    const known = p.providerId === null ? undefined : counts.byProviderId[p.providerId]?.count;
+    const known = p.providerId === null ? undefined : counts.byProviderId[p.providerId];
     const tab = buildProviderSheet(p, known);
     add(tab.ws, name, tab.headers);
   });
