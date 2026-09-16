@@ -1,13 +1,12 @@
 /**
  * Total Active Clients — setting the number by hand for a reporting period.
  *
- * WHY IT LIVES IN THE EXPORT DIALOG. An override is scoped to a period, and
- * this is the only screen in the CRM where a person has already chosen one. On
- * a provider record it would need its own period picker, and a number typed
- * against the wrong period is precisely the failure this feature exists to
- * avoid. The client has also asked for a Submissions view showing these figures
- * alongside the export — when that is built this panel can move to it, and the
- * three routes underneath will not change.
+ * WHERE IT LIVES. Inside the Survey Insights snapshot on the Submissions page.
+ * It was in the export dialog first, because that was then the only screen
+ * where a period had been chosen; the snapshot is now that screen AND it shows
+ * the figures being corrected, so the correction belongs beside them. It MOVED
+ * rather than being copied — two places to set one number is two places for
+ * them to disagree — and the three routes underneath did not change.
  *
  * WHAT IT SHOWS. Every active provider, the figure the nightly pull read, and
  * an input. Typing a number and leaving the field saves it; clearing the field
@@ -33,7 +32,14 @@ interface OverrideRow {
   override: { count: number; note: string | null; setBy: string; setAt: string } | null;
 }
 
-export function ActiveCountOverrides({ from, to }: { from: string; to: string }) {
+export function ActiveCountOverrides({
+  from, to, onChange,
+}: {
+  from: string;
+  to: string;
+  /** Fired after a save or a clear, so the caller can re-read what changed. */
+  onChange?: () => void;
+}) {
   const [rows, setRows] = useState<OverrideRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -121,6 +127,8 @@ export function ActiveCountOverrides({ from, to }: { from: string; to: string })
             setAt: body?.override?.setAt ?? new Date().toISOString(),
           },
         }));
+      // The snapshot above is showing the figure that just changed.
+      onChange?.();
     } catch (e) {
       // Put the box back to what is actually stored, so the screen never shows
       // a number the export will not use.

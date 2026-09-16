@@ -114,7 +114,7 @@ import { SURVEY_FORM_TYPE } from "@shared/survey-questions";
 import { isSurveyPayload } from "./pdf/survey-template";
 import { extractReferralData } from "./referral/extract";
 import * as XLSX from "xlsx";
-import { buildSurveyExport, currentQuarter } from "./survey/export";
+import { buildSurveyExport, currentQuarter, currentMonth } from "./survey/export";
 import * as path from "path";
 import { z } from "zod";
 
@@ -8044,6 +8044,34 @@ export async function registerRoutes(
       const message = error instanceof Error ? error.message : "Survey export failed";
       console.error("[export] survey workbook Error:", message);
       return res.status(500).json({ error: "The survey export could not be built. Please try again, or tell us if it keeps failing." });
+    }
+  });
+
+  /**
+   * The Survey Insights snapshot — two tables for the Submissions page.
+   *
+   * Same guard as the export, because it is the same information in a lighter
+   * form: whoever may download the workbook may glance at its headline numbers.
+   *
+   * NO PHI. Provider names are staff names; everything else is a count.
+   */
+  app.get("/api/survey/snapshot", async (req: any, res) => {
+    try {
+      const email = requireSurveyExport(req, res);
+      if (!email) return;
+      const fallback = currentMonth();
+      const from = validReportDate(req.query.from) ?? fallback.from;
+      const to = validReportDate(req.query.to) ?? fallback.to;
+      if (from > to) {
+        return res.status(400).json({ error: "The start date must be on or before the end date." });
+      }
+      const { buildSurveySnapshot } = await import("./survey/snapshot");
+      const snapshot = await buildSurveySnapshot({ from, to });
+      return res.json(snapshot);
+    } catch (error) {
+      console.error("[survey-snapshot] build failed:",
+        error instanceof Error ? error.message : "unknown");
+      return res.status(500).json({ error: "The snapshot could not be built." });
     }
   });
 

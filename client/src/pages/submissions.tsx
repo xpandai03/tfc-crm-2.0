@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, ExternalLink, Code2, FileText, Inbox, FileUp, Download, UserCheck, UserSearch, UserX, RefreshCw, Upload, CheckCircle2, AlertTriangle } from "lucide-react";
 import { SurveyMatchReviewDialog } from "@/components/survey-match-review";
 import { SurveyExportDialog } from "@/components/survey-export-dialog";
+import { SurveySnapshot } from "@/components/survey-snapshot";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessReferralUpload } from "@shared/access-control";
@@ -612,6 +613,20 @@ export default function Submissions() {
             </Link>
           )}
         </div>
+
+        {/*
+          The mid-month glance, ABOVE the filter and the list.
+
+          Above, because it is about the period rather than about any row, and
+          reading it is what someone came here to do or it is not — it should
+          not be found by scrolling past the submissions. Collapsed, because
+          most people opening Submissions came to look at a submission, and it
+          fetches nothing until it is opened, so the page costs them nothing.
+
+          On this page rather than a tab of its own, for the same reason the
+          review queue is: the client has asked repeatedly for fewer tabs.
+        */}
+        <SurveySnapshot />
 
         {/*
           Survey identity filter. The review queue lives HERE rather than in its

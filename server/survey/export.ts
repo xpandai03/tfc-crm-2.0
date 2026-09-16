@@ -22,7 +22,7 @@ import { getAllCrmProviders, getInactiveCrmProviders } from "../reminders/db";
 import { providerShortName } from "@shared/provider-short-name";
 import { getActiveCountsAsOf } from "../therapy-notes/active-counts-db";
 import { getOverridesForPeriod } from "./active-count-overrides-db";
-import { aggregateSurveys, type RosterEntry, type SubmissionInput } from "./aggregate";
+import { aggregateSurveys, type RosterEntry, type SubmissionInput, type SurveyAggregate } from "./aggregate";
 import { buildSurveyWorkbook, type ActiveClientCounts } from "./workbook";
 
 /**
@@ -61,14 +61,49 @@ export function currentQuarter(now: Date = new Date()): SurveyExportRange {
   return { from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10) };
 }
 
+/**
+ * The calendar month we are in.
+ *
+ * The SNAPSHOT's default, where the quarter is the export's. Different defaults
+ * because they answer different questions: the export is the month-end
+ * document, and the snapshot is what the ops lead reads mid-month to see who
+ * needs reminding — a quarter-to-date figure would tell him nothing about this
+ * month's reminding.
+ */
+export function currentMonth(now: Date = new Date()): SurveyExportRange {
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  const start = new Date(Date.UTC(y, m, 1));
+  const end = new Date(Date.UTC(y, m + 1, 0));
+  return { from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10) };
+}
+
 /** `TFC-Client-Survey-2026-07-01_to_2026-09-30.xlsx` — the range is in the name. */
 export function exportFilename(range: SurveyExportRange): string {
   return `TFC-Client-Survey-${range.from}_to_${range.to}.xlsx`;
 }
 
-export async function buildSurveyExport(range: SurveyExportRange): Promise<SurveyExportResult> {
-  const started = Date.now();
+/**
+ * Everything a report about one period needs, read and merged once.
+ *
+ * EXTRACTED SO THE SNAPSHOT AND THE WORKBOOK CANNOT DISAGREE. The Submissions
+ * snapshot shows the same three numbers the export writes, and the client will
+ * check one against the other — he has said so. Two code paths reading the same
+ * tables is two chances to select a different count, apply an override
+ * differently, or resolve a therapist label to a different provider. So there
+ * is one path, and the snapshot is a second RENDERING of it rather than a
+ * second calculation.
+ */
+export interface SurveyPeriodData {
+  aggregate: SurveyAggregate;
+  activeCounts: ActiveClientCounts;
+  /** How many figures a person typed for this period. */
+  overrideCount: number;
+}
 
+export async function loadSurveyPeriodData(
+  range: SurveyExportRange,
+): Promise<SurveyPeriodData> {
   const [active, inactive, rows, counts, overrides] = await Promise.all([
     getAllCrmProviders(),
     getInactiveCrmProviders(),
@@ -132,6 +167,12 @@ export async function buildSurveyExport(range: SurveyExportRange): Promise<Surve
   });
 
   const aggregate = aggregateSurveys({ roster, submissions, period: range });
+  return { aggregate, activeCounts, overrideCount: overrides.length };
+}
+
+export async function buildSurveyExport(range: SurveyExportRange): Promise<SurveyExportResult> {
+  const started = Date.now();
+  const { aggregate, activeCounts, overrideCount } = await loadSurveyPeriodData(range);
   const { buffer, sheetNames } = buildSurveyWorkbook(aggregate, activeCounts);
 
   return {
@@ -144,7 +185,7 @@ export async function buildSurveyExport(range: SurveyExportRange): Promise<Surve
       unresolvedCount: aggregate.unresolved.length,
       sheetCount: sheetNames.length,
       providersWithCount: Object.keys(activeCounts.byProviderId).length,
-      overriddenCount: overrides.length,
+      overriddenCount: overrideCount,
       buildMs: Date.now() - started,
     },
   };
