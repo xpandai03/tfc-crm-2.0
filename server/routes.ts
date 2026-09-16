@@ -6173,6 +6173,39 @@ export async function registerRoutes(
         return res.status(422).json({ error: `Invalid schedule inputs: ${invalid.join("; ")}` });
       }
 
+      // ---- The appointment-confirmation snapshot must already exist ----
+      //
+      // The agent fetches /api/internal/contact-snapshot-pdf/:id and files the
+      // result into the patient's chart as "Initial Appointment Confirmation
+      // Email". That route renders the snapshot saved when the confirmation is
+      // SENT, so before the send it correctly 404s and the run dies — but it dies
+      // at phase 7, AFTER the patient has been created. On 16 September that left
+      // a contact with a chart, one PDF, no appointment and no way to resume.
+      //
+      // The old precondition gate checked this and was removed in the Phase 1
+      // redesign, which preserved provider/date/time as explicit-input validation
+      // and left the document preconditions as advice in the modal. This restores
+      // it where it is load-bearing. The button disable is a courtesy; a request
+      // that reaches here has to be refused on its own merits.
+      //
+      // Deliberately NOT generating the snapshot on demand: it is filed as a
+      // record of an email the client received, and manufacturing one when no
+      // email was sent puts a false clinical record in a chart.
+      const hasConfirmationSnapshot = await hasSnapshotForTemplate(
+        contactId,
+        APPOINTMENT_CONFIRMATION_TEMPLATE_ID
+      );
+      if (!hasConfirmationSnapshot) {
+        const reason =
+          "Send the initial appointment confirmation email first — the agent files a copy of it to the patient's chart, and it cannot do that before the email exists.";
+        await logActivity({
+          type: "tn_schedule_failed", actorEmail: userEmail, entityType: "contact",
+          entityId: String(contactId), entityName: contactName,
+          metadata: { contactId, failureReason: reason, precondition: "appointment_confirmation_snapshot" },
+        });
+        return res.status(422).json({ error: reason });
+      }
+
       if (!process.env.TN_API_KEY) {
         return res.status(500).json({ error: "TherapyNotes API key not configured" });
       }

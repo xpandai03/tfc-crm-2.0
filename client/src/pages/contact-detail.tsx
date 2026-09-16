@@ -654,7 +654,16 @@ export default function ContactDetail() {
     enabled: !!contactId && canUseTnV2,
   });
 
-  // Precondition checks (C7): all three must pass for the button to be clickable.
+  // Preconditions surfaced in the tooltip. The ONE that is enforced is the
+  // appointment-confirmation snapshot: the server refuses with 422 without it
+  // (see POST /api/therapy-notes/create-with-schedule), because the agent files
+  // a copy of that email into the chart and cannot do it before the email
+  // exists. The rest are advice — provider, date, time and modality are
+  // confirmed in the modal and validated server-side from what is submitted.
+  //
+  // The comment that stood here said "all three must pass for the button to be
+  // clickable". Nothing had made that true since the Phase 1 redesign removed
+  // the gate, and it is why this looked protected when it was not.
   const tnV2Preconditions = useMemo(() => {
     const missing: string[] = [];
     if (!tnV2State?.providerAssigned) missing.push("Assign a provider first");
@@ -2743,7 +2752,14 @@ export default function ContactDetail() {
                               variant="outline"
                               className="w-full justify-start border-amber-400 text-amber-700 hover:bg-amber-50 hover:text-amber-800 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950/30"
                               size="sm"
-                              disabled={createWithScheduleMutation.isPending || tnRun.inFlight}
+                              disabled={
+                                createWithScheduleMutation.isPending ||
+                                tnRun.inFlight ||
+                                // Matches the server's 422 exactly. Disabling on
+                                // anything the server does not refuse would block
+                                // staff for no reason.
+                                tnV2State?.emailSent === false
+                              }
                               onClick={() => setShowScheduleTnModal(true)}
                               data-testid="button-add-to-schedule-tn-beta"
                             >
@@ -2771,7 +2787,16 @@ export default function ContactDetail() {
                           ) : (
                             <div className="space-y-1">
                               <p>Beta: opens a modal to confirm provider, date/time, and modality before scheduling.</p>
-                              <p className="font-medium">Heads-up (you can still proceed):</p>
+                              {tnV2State?.emailSent === false ? (
+                                <p className="font-medium text-amber-700 dark:text-amber-400">
+                                  Send the initial appointment confirmation email
+                                  first — the agent files a copy of it to the
+                                  patient's chart, so it cannot run before the
+                                  email exists.
+                                </p>
+                              ) : (
+                                <p className="font-medium">Heads-up (you can still proceed):</p>
+                              )}
                               <ul className="list-disc pl-4">
                                 {tnV2Preconditions.missing.map((m) => (
                                   <li key={m}>{m}</li>
