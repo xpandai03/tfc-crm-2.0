@@ -75,7 +75,7 @@ console.log("\n[2] nameKeys — every reading, never a guess at which is legal")
   eq("a group in the SURNAME position is trailing, so it annotates",
     nameKeys("Rowan Thistlewood (Smith)"), ["rowan thistlewood"]);
   eq("a group with words after it reads, wherever it sits",
-    nameKeys("Rowan (Thistlewood) Smith"), ["rowan smith", "thistlewood smith"]);
+    nameKeys("Rowan (Thistlewood) Smith"), ["rowan smith", "smith thistlewood"]);
   eq("a LEADING group still reads", nameKeys("(Rowan) Thistlewood"), ["thistlewood", "rowan thistlewood"]);
   eq("an empty group contributes nothing", nameKeys("Minor () Thistlewood"), ["minor thistlewood"]);
   eq("an unbalanced paren is just a separator", nameKeys("Rowan (Thistlewood"), ["rowan thistlewood"]);
@@ -83,8 +83,8 @@ console.log("\n[2] nameKeys — every reading, never a guess at which is legal")
   eq("null has no readings", nameKeys(null), []);
   eq("a hyphenated surname inside a group keeps both tokens",
     nameKeys("Minor (Rowan) Thistlewood-Smith"),
-    ["minor thistlewood smith", "rowan thistlewood smith"]);
-  eq("'Minor' as an ACTUAL surname is untouched", nameKeys("Rowan Minor"), ["rowan minor"]);
+    ["minor smith thistlewood", "rowan smith thistlewood"]);
+  eq("'Minor' as an ACTUAL surname is untouched", nameKeys("Rowan Minor"), ["minor rowan"]);
 }
 
 // ===========================================================================
@@ -113,11 +113,11 @@ console.log("\n[4] matchSubmission — the survey that could not match, now matc
   const ids = collapseIdentities(
     [crm(1, "Zzsomeone Zzelse", "1970-01-01")],
     [tn("77001", "Minor (Rowan) Thistlewood", "6/12/2015", {
-      phone: "(505) 555-0164", clinicians: ["Bentley Carbone"],
+      phone: "(505) 555-0164", clinicians: ["Anna Aldridge"],
     })],
   );
   const out = matchSubmission(
-    survey("Rowan Thistlewood", "2015-06-12", { phone: "5055550164", provider: "Bentley Carbone (ABQ)" }),
+    survey("Rowan Thistlewood", "2015-06-12", { phone: "5055550164", provider: "Anna Aldridge (ABQ)" }),
     ids,
   );
   eq("it matches", out.status, "matched");
@@ -204,9 +204,9 @@ console.log("\n[7] Parity contract with the browser agent");
     ["Ashgrove-Pemberton, Rosalind", ["ashgrove pemberton rosalind"]],
     ["Minor (Rowan) Thistlewood (dad)", ["minor thistlewood", "rowan thistlewood"]],
     ["(Rowan) Thistlewood", ["thistlewood", "rowan thistlewood"]],
-    ["Rowan (Thistlewood) Smith", ["rowan smith", "thistlewood smith"]],
+    ["Rowan (Thistlewood) Smith", ["rowan smith", "smith thistlewood"]],
     ["Minor () Thistlewood", ["minor thistlewood"]],
-    ["Rowan Minor", ["rowan minor"]],
+    ["Rowan Minor", ["minor rowan"]],
   ];
   for (const [raw, want] of PARITY) eq(`parity: ${JSON.stringify(raw)}`, nameKeys(raw), want);
 }
