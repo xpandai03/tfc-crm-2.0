@@ -22,9 +22,14 @@
  * VERBATIM AND NORMALISED, SIDE BY SIDE
  * -------------------------------------
  * The raw columns hold exactly what TherapyNotes rendered. The *_key columns
- * hold the same values through the CRM's OWN normalisers — nameKey, canonicalDob
+ * hold the same values through the CRM's OWN normalisers — nameKeys, canonicalDob
  * and phoneKey from server/survey/matching.ts — so both populations key in one
  * space and there is no second normaliser to drift.
+ *
+ * A NAME HAS MORE THAN ONE KEY. TherapyNotes renders a patient with a preferred
+ * name as "Preferred (Legal) Last", so one row is two readings and they live in
+ * tn_patient_name_keys, one per row. name_key on this table still holds the
+ * first of them, which is what nameKey() has always produced.
  *
  * SHARED CARE IS ONE ROW. A patient under two clinicians is one chart id with
  * two clinician values, stored as a JSON array. Zero patients are shared-care
@@ -38,7 +43,7 @@
  */
 
 import { getPool } from "../db/pool";
-import { canonicalDob, nameKey, phoneKey } from "../survey/matching";
+import { canonicalDob, nameKeys, phoneKey } from "../survey/matching";
 
 export interface TnPatientRow {
   chartId: string;
@@ -65,11 +70,47 @@ export async function initTnPatientsTable(): Promise<void> {
       created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
-  // The matcher's only query shape: name AND date of birth, both exact after
-  // normalisation. Indexed together because neither alone is a candidate set.
+  // EVERY READING OF EVERY NAME, ONE ROW EACH.
+  //
+  // A name has more than one reading. TherapyNotes renders a patient with a
+  // preferred name as "Preferred (Legal) Last" — the practice uses "Minor" on
+  // children's records — so that row is BOTH "minor <last>" and "<legal>
+  // <last>", and a survey carrying the legal name only ever meets the second.
+  // A single name_key column cannot hold both, so the readings live here, one
+  // row per reading, keyed on the chart.
+  //
+  // tn_patients.name_key is deliberately NOT dropped or retyped. It still holds
+  // nameKeys(name)[0], which is exactly nameKey(name), so every existing reader
+  // keeps its meaning and this change stays additive and reversible.
+  //
+  // dob_key is carried alongside so the matcher's query shape — name AND date
+  // of birth, both exact after normalisation — is answerable from one index on
+  // one table. It is a copy of tn_patients.dob_key, written in the same
+  // transaction, and the wholesale replace keeps the two from drifting.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tn_patient_name_keys (
+      chart_id  TEXT NOT NULL,
+      name_key  TEXT NOT NULL,
+      dob_key   TEXT,
+      PRIMARY KEY (chart_id, name_key)
+    )
+  `);
   await pool.query(
-    `CREATE INDEX IF NOT EXISTS tn_patients_name_dob ON tn_patients (name_key, dob_key)`,
+    `CREATE INDEX IF NOT EXISTS tn_patient_name_keys_name_dob
+       ON tn_patient_name_keys (name_key, dob_key)`,
   );
+  // The index MOVES to the side table. The old one covered a single key per
+  // chart, which is the assumption this change exists to remove.
+  //
+  // TO REVERSE THE WHOLE CHANGE:
+  //   DROP INDEX IF EXISTS tn_patient_name_keys_name_dob;
+  //   DROP TABLE IF EXISTS tn_patient_name_keys;
+  //   CREATE INDEX IF NOT EXISTS tn_patients_name_dob ON tn_patients (name_key, dob_key);
+  try {
+    await pool.query(`DROP INDEX IF EXISTS tn_patients_name_dob`);
+  } catch (e) {
+    console.error("[tn-patients] dropping the superseded name_dob index FAILED:", e);
+  }
 
   // The link between the two populations. Written ONLY when a match resolves a
   // contact to a chart; never guessed, never backfilled. Additive and nullable,
@@ -108,7 +149,14 @@ export async function replaceTnPatients(
   try {
     await client.query("BEGIN");
     await client.query("DELETE FROM tn_patients");
+    // The readings go with the rows they belong to, in the same transaction and
+    // the same wholesale replace. There is no backfill and never needs to be: a
+    // pull rewrites both tables, so tomorrow's 03:00 pass re-keys the entire
+    // population whatever the rule says by then.
+    await client.query("DELETE FROM tn_patient_name_keys");
     for (const r of rows) {
+      const readings = nameKeys(r.name);
+      const dobKey = canonicalDob(r.dob);
       await client.query(
         `INSERT INTO tn_patients
            (chart_id, name, dob, phone, name_key, dob_key, phone_key,
@@ -120,11 +168,22 @@ export async function replaceTnPatients(
            phone_key = EXCLUDED.phone_key, clinicians = EXCLUDED.clinicians,
            captured_at = EXCLUDED.captured_at, last_seen_on = EXCLUDED.last_seen_on`,
         [
+          // readings[0] IS nameKey(r.name) — see nameKeys. Taken from the array
+          // rather than computed a second way, so the column and the side table
+          // cannot disagree about the primary reading.
           r.chartId, r.name, r.dob, r.phone,
-          nameKey(r.name), canonicalDob(r.dob), phoneKey(r.phone),
+          readings[0] ?? "", dobKey, phoneKey(r.phone),
           JSON.stringify(r.clinicians), capturedAt, day,
         ],
       );
+      for (const k of readings) {
+        await client.query(
+          `INSERT INTO tn_patient_name_keys (chart_id, name_key, dob_key)
+           VALUES ($1,$2,$3)
+           ON CONFLICT (chart_id, name_key) DO UPDATE SET dob_key = EXCLUDED.dob_key`,
+          [r.chartId, k, dobKey],
+        );
+      }
     }
     await client.query("COMMIT");
     return rows.length;

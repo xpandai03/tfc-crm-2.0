@@ -197,6 +197,14 @@ export function nameKey(raw: string | null | undefined): string {
     // records alongside the legal one — and it is the most likely reason a
     // results-table name does not equal the chart name. Stripped for BOTH
     // populations, because one person has to key the same in each.
+    //
+    // THIS IS ONE READING OF A NAME, AND IT IS NOT THE MATCHING RULE. Stripping
+    // assumes the parenthetical adds nothing — true of a trailing "(dad)", and
+    // WRONG of the shape TherapyNotes actually renders, "Preferred (Legal)
+    // Last", where stripping deletes the legal first name and keeps the
+    // preferred one. nameKeys() below emits every reading and is what
+    // matchSubmission compares. nameKey is unchanged on purpose: many callers
+    // depend on "what does this name reduce to", and it still answers that.
     .replace(/\([^)]*\)/g, " ")
     // NFD splits "á" into "a" + a combining accent; the range below is the
     // combining-diacritical-marks block, written as escapes rather than literal
@@ -217,6 +225,111 @@ export function nameKey(raw: string | null | undefined): string {
     .filter(Boolean)
     .sort()
     .join(" ");
+}
+
+// ---------------------------------------------------------------------------
+// Every reading of a name
+// ---------------------------------------------------------------------------
+
+/** The fold nameKey applies, factored out so the two cannot drift. */
+function nameTokens(raw: string): string[] {
+  return raw
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/['‘’]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+/**
+ * EVERY reading of a name, in a stable order, without duplicates.
+ *
+ * WHY THIS EXISTS. TherapyNotes renders a patient who has a preferred name as
+ * "Preferred (Legal) Last", identically in the Patients results table and in
+ * the chart header. The practice sets "Minor" as the preferred name on
+ * children's records, so a child's row reads "Minor (<Legal>) <Last>" while the
+ * survey carries "<Legal> <Last>". nameKey strips the parenthetical and keys
+ * that row as "minor <last>", which the survey can never equal. On 21 September
+ * a survey that agreed with its chart character for character went to review
+ * with "no contact on record carries this name".
+ *
+ *   "X (Y) Z"          -> ["x z", "y z"]   preferred AND legal, both
+ *   "X Y (annotation)" -> ["x y"]          a trailing group annotates only
+ *   "X Y"              -> ["x y"]          exactly nameKey()
+ *
+ * NOTHING HERE DECIDES WHICH TOKEN IS LEGAL, and nothing may be added that
+ * does. The results table gives nothing to decide with: "Minor" parses as an
+ * ordinary given name and is also a real surname, and the convention that makes
+ * it a flag lives in the practice's heads, not in the markup. Emitting both
+ * readings costs one extra key and is always right; guessing is sometimes
+ * confidently wrong, which is the failure this function exists to end.
+ *
+ * The first element is always nameKey(raw), so a caller wanting one
+ * representative key can take [0] — which is what tn_patients.name_key stores.
+ *
+ * HOW A READING IS PRODUCED. The string is cut into WORD runs and GROUP runs in
+ * source order. The words alone are one reading. Then every non-empty group
+ * that has at least one word AFTER it yields a further reading — that group's
+ * tokens followed by the words after it — because a group in that position
+ * stands in for the run before it. A group with nothing after it is TRAILING,
+ * and a trailing group annotates rather than replaces.
+ *
+ * Ported character for character to shared/name_keys.py in the browser agent,
+ * which makes the same comparison against the same rows. scripts/test-name-keys.ts
+ * and tests/test_name_keys.py assert the same table of cases in both places.
+ */
+export function nameKeys(raw: string | null | undefined): string[] {
+  const s = String(raw ?? "");
+  if (!s.trim()) return [];
+
+  const segments: { kind: "w" | "g"; toks: string[] }[] = [];
+  const re = /\(([^)]*)\)/g;
+  let pos = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) !== null) {
+    if (m.index > pos) segments.push({ kind: "w", toks: nameTokens(s.slice(pos, m.index)) });
+    segments.push({ kind: "g", toks: nameTokens(m[1]) });
+    pos = m.index + m[0].length;
+  }
+  if (pos < s.length) segments.push({ kind: "w", toks: nameTokens(s.slice(pos)) });
+
+  const readings: string[][] = [];
+  const outside = segments.filter((x) => x.kind === "w").flatMap((x) => x.toks);
+  if (outside.length) readings.push(outside);
+
+  segments.forEach((seg, i) => {
+    if (seg.kind !== "g" || seg.toks.length === 0) return;
+    const after = segments.slice(i + 1).filter((x) => x.kind === "w").flatMap((x) => x.toks);
+    if (after.length === 0) return;      // trailing group: an annotation
+    readings.push([...seg.toks, ...after]);
+  });
+
+  const out: string[] = [];
+  for (const r of readings) {
+    const k = [...r].sort().join(" ");
+    if (k && !out.includes(k)) out.push(k);
+  }
+  return out;
+}
+
+/**
+ * Two names agree when their reading sets INTERSECT.
+ *
+ * Deliberately an equality on a reading rather than a subset: a middle name on
+ * one side only is a real difference, and "Thistlewood" must not satisfy
+ * "Thistlewood-Smith". The bar has not moved — it has stopped being applied to the
+ * wrong string.
+ */
+export function namesAgree(
+  a: string | null | undefined, b: string | null | undefined,
+): boolean {
+  const left = nameKeys(a);
+  if (left.length === 0) return false;
+  const right = new Set(nameKeys(b));
+  return left.some((k) => right.has(k));
 }
 
 /** Lowercased, trimmed email, or null. Matches the lower(email) key the
@@ -418,8 +531,10 @@ function providerMatches(c: ContactIdentity, wanted: string): boolean {
  *
  * THE BAR, all of which must hold:
  *   1. the typed date of birth is readable
- *   2. the normalised legal name equals a contact's, and that contact's date of
- *      birth equals the typed one exactly, after canonicalisation
+ *   2. the typed name and a contact's name share at least one READING (see
+ *      nameKeys — "Minor (Rowan) Thistlewood" reads as both "minor thistlewood" and
+ *      "rowan thistlewood"), and that contact's date of birth equals the typed one
+ *      exactly, after canonicalisation
  *   3. the typed phone, if it is on record at all, belongs to at least one of
  *      those contacts
  *   4. the typed email, if it is on record at all, belongs to at least one of
@@ -446,8 +561,11 @@ export function matchSubmission(
     return { status: "review", reason: "unparseable_dob", contactId: null, chartId: null, candidateIds: [] };
   }
 
-  const key = nameKey(submitted.name);
-  if (!key) {
+  // EVERY READING OF THE TYPED NAME, not one key. A survey carrying a legal
+  // name has one reading; a chart rendering "Preferred (Legal) Last" has two.
+  // They meet on the legal one.
+  const keys = new Set(nameKeys(submitted.name));
+  if (keys.size === 0) {
     return { status: "review", reason: "no_name", contactId: null, chartId: null, candidateIds: [] };
   }
 
@@ -458,9 +576,13 @@ export function matchSubmission(
 
   for (const c of contacts) {
     const cDob = canonicalDob(c.patientDob);
-    const cName = nameKey(c.name);
+    // BOTH POPULATIONS, ONE RULE. A CRM contact has no preferred-name
+    // convention, but a contact record can still carry a parenthetical, and a
+    // contact and the TherapyNotes patient who are the same person have to key
+    // the same way or they arrive as two candidates instead of one.
+    const cKeys = nameKeys(c.name);
     const dobOk = cDob !== null && cDob === dob;
-    const nameOk = cName !== "" && cName === key;
+    const nameOk = cKeys.some((k) => keys.has(k));
     if (dobOk && nameOk) candidates.push(c);
     else if (dobOk) dobOnly.push(c);
     else if (nameOk) nameOnly.push(c);

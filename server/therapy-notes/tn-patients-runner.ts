@@ -82,7 +82,62 @@ export interface TnPatientPullSummary {
   withPhone: number;
   stored: number;
   replaced: boolean;
+  /** Name shapes in this pull. Counts only — see classifyNameShapes. */
+  nameShapes: NameShapeCounts;
   message?: string;
+}
+
+/**
+ * How many rows carry each NAME SHAPE, and how many use "Minor".
+ *
+ * WHY THIS IS COUNTED EVERY PULL RATHER THAN QUERIED ONCE. The rule that keys
+ * these names was built for one shape and met another, and nobody knew how many
+ * rows the second shape covered — the question had to be answered by hand from
+ * a database nobody could reach quickly. It is the number that decides whether a
+ * preferred name is an edge case or the main path for children, so the pull now
+ * reports it as a standing fact instead of a thing somebody has to go and ask.
+ *
+ * COUNTS ONLY. No name is stored, logged or returned by this. "minor" is
+ * counted as a literal token because the practice uses it as a flag, and a flag
+ * word is not a person.
+ */
+export interface NameShapeCounts {
+  /** No parenthetical at all. */
+  plain: number;
+  /** "Preferred (Legal) Last" — a group with at least one word after it. */
+  preferredLegalLast: number;
+  /** "Name (annotation)" — a group with nothing after it. */
+  trailingAnnotation: number;
+  /** Carries a parenthetical but fits neither shape above. */
+  other: number;
+  /** Of preferredLegalLast, how many whose leading token is "minor". */
+  minorFlag: number;
+}
+
+/** Classify one pull's rows by shape. Pure, so it can be asserted directly. */
+export function classifyNameShapes(rows: { name: string }[]): NameShapeCounts {
+  const out: NameShapeCounts = {
+    plain: 0, preferredLegalLast: 0, trailingAnnotation: 0, other: 0, minorFlag: 0,
+  };
+  for (const r of rows) {
+    const name = String(r.name ?? "");
+    if (!name.includes("(")) { out.plain += 1; continue; }
+    // Decided the same way nameKeys decides a reading: a group with words AFTER
+    // it stands in for the run before it; a group with nothing after it
+    // annotates. A parenthesised name that is neither is "other", which is a
+    // number worth seeing rather than a case worth guessing at.
+    const preferred = /\S[^()]*\([^)]*\)[^()]*\S/.test(name);
+    const trailing = /\([^)]*\)\s*$/.test(name);
+    if (preferred) {
+      out.preferredLegalLast += 1;
+      if (/^\s*minor\b/i.test(name)) out.minorFlag += 1;
+    } else if (trailing) {
+      out.trailingAnnotation += 1;
+    } else {
+      out.other += 1;
+    }
+  }
+  return out;
 }
 
 function isDisabled(url: string): boolean {
@@ -135,6 +190,10 @@ export async function runTnPatientPull(
       ok: false, passStatus, capturedOn: before.capturedOn, optionsReturned: 0,
       failedOptions: 0, rowsReturned: 0, distinctPatients: 0, sharedCare: 0,
       withPhone: 0, stored: 0, replaced: false, message,
+      // A failed pull classified nothing. Zeroes, not the previous pull's
+      // counts: reporting yesterday's shape against today's failure would be a
+      // number that looks measured and is not.
+      nameShapes: { plain: 0, preferredLegalLast: 0, trailingAnnotation: 0, other: 0, minorFlag: 0 },
     };
     console.error(
       `[tn-patients] ${trigger} pull FAILED: ${message} — ` +
@@ -203,6 +262,7 @@ export async function runTnPatientPull(
     .reduce((n, p) => n + (p.rows?.length ?? 0), 0);
   const withPhone = patients.filter((p) => p.phone.trim() !== "").length;
   const sharedCare = patients.filter((p) => p.clinicians.length > 1).length;
+  const nameShapes = classifyNameShapes(patients);
 
   let stored = 0;
   try {
@@ -226,6 +286,7 @@ export async function runTnPatientPull(
     withPhone,
     stored,
     replaced: true,
+    nameShapes,
   };
 
   console.log(
@@ -233,6 +294,15 @@ export async function runTnPatientPull(
     `${rowsReturned} rows -> ${patients.length} patients stored, ` +
     `${sharedCare} shared-care, ${withPhone} with a phone ` +
     `(${((100 * withPhone) / patients.length).toFixed(1)}%), ${Date.now() - started}ms`,
+  );
+  // Counts only. This line is the answer to "is a preferred name an edge case
+  // or the main path for children", and it is printed every pull so nobody has
+  // to go and find out again.
+  console.log(
+    `[tn-patients] name shapes: ${nameShapes.plain} plain, ` +
+    `${nameShapes.preferredLegalLast} preferred-legal-last ` +
+    `(${nameShapes.minorFlag} flagged "Minor"), ` +
+    `${nameShapes.trailingAnnotation} trailing-annotation, ${nameShapes.other} other`,
   );
 
   await logActivity({

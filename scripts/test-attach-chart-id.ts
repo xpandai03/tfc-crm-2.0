@@ -219,12 +219,38 @@ for (const f of ["firstName", "lastName", "fields.dob", "fields.phone"]) {
 // ===========================================================================
 console.log("\n[9] The matcher, the schedule and the review queue are untouched");
 
+// NARROWED, DELIBERATELY. This began as "matching.ts must not appear in the
+// diff", which was the right guard for the chart-id build — that build had no
+// business touching the matcher. It is the wrong guard forever: the
+// preferred-name build of 21 September changes the matcher's NAME rule on
+// purpose, and a file-level assertion would have to be deleted rather than
+// understood.
+//
+// So the file guard keeps the files that genuinely must not move, and what it
+// used to protect about matching.ts is asserted where it actually lives: the
+// other rules, by name, in the source.
 const changed = execSync(
-  "git diff --name-only HEAD -- server/survey/matching.ts server/survey/match-runner.ts " +
+  "git diff --name-only HEAD -- server/survey/match-runner.ts " +
   "server/survey/match-db.ts server/reminders/cron.ts server/auth.ts",
   { encoding: "utf8" },
 ).trim();
-eq("none of them appear in the diff", changed, "");
+eq("the runner, the store, the cron and auth are untouched", changed, "");
+
+const matching = read("server/survey/matching.ts");
+check("the date of birth is still exact after canonicalisation",
+  /const dobOk = cDob !== null && cDob === dob/.test(matching));
+check("phone still corroborates or contradicts and never narrows",
+  /reason: "phone_contradiction"/.test(matching) && /never NARROWS/.test(matching));
+check("email is still treated identically",
+  /reason: "email_contradiction"/.test(matching));
+check("the provider is still the ONLY tiebreak",
+  /const withProvider = candidates\.filter\(\(c\) => providerMatches\(c, wanted\)\)/.test(matching));
+check("exactly one candidate is still the bar",
+  /if \(candidates\.length === 1\)/.test(matching));
+check("the DOB-only fallback is still offered and never matched",
+  /const partialCandidates = dedupeIds\(\[\.\.\.nameOnly, \.\.\.dobOnly\]\)/.test(matching));
+check("nameKey itself is still exported and still strips",
+  /export function nameKey\(/.test(matching));
 check("the attach schedule is still 03:30", /DEFAULT_ATTACH_SCHEDULE = "30 3 \* \* \*"/.test(read("server/reminders/cron.ts")));
 check("the batch is still scoped to matched submissions",
   /trigger === "scheduled"[\s\S]{0,80}checkEligibility\(submission\)/.test(runner));
