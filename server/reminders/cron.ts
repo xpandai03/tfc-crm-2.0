@@ -305,8 +305,13 @@ export function startSurveyAttachCron(): void {
   console.log(
     `[attach-cron] Next fire: ${nextFireDescription(schedule, ATTACH_TIMEZONE)}. ` +
     `Up to ${ATTACH_BATCH_CAP} submissions per run, one at a time, oldest first. ` +
-    `Only surveys matched to a contact and carrying a name, date of birth, phone ` +
-    `and therapist are eligible.`,
+    // A CONTACT IS NO LONGER ONE OF THE CONDITIONS — see checkEligibility. This
+    // line said "matched to a contact" until 22 September, which had stopped
+    // being true the moment the requirement was dropped, and a boot banner that
+    // misstates the rule is worse than no banner.
+    `Only surveys the matcher resolved — to a CRM contact, a TherapyNotes chart ` +
+    `or both — and carrying a name, date of birth, phone and therapist are ` +
+    `eligible. A row still in review is never sent.`,
   );
 }
 

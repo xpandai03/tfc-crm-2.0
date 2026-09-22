@@ -229,12 +229,18 @@ console.log("\n[9] The matcher, the schedule and the review queue are untouched"
 // So the file guard keeps the files that genuinely must not move, and what it
 // used to protect about matching.ts is asserted where it actually lives: the
 // other rules, by name, in the source.
+//
+// cron.ts left the file guard on 22 September for the same reason: the build
+// that dropped the batch's contact requirement also had to correct the boot
+// banner that described it, and that banner lives in cron.ts. What the guard
+// was really protecting there — the schedule and the batch cap — is asserted
+// below by value.
 const changed = execSync(
   "git diff --name-only HEAD -- server/survey/match-runner.ts " +
-  "server/survey/match-db.ts server/reminders/cron.ts server/auth.ts",
+  "server/survey/match-db.ts server/auth.ts",
   { encoding: "utf8" },
 ).trim();
-eq("the runner, the store, the cron and auth are untouched", changed, "");
+eq("the runner, the store and auth are untouched", changed, "");
 
 const matching = read("server/survey/matching.ts");
 check("the date of birth is still exact after canonicalisation",
@@ -252,6 +258,9 @@ check("the DOB-only fallback is still offered and never matched",
 check("nameKey itself is still exported and still strips",
   /export function nameKey\(/.test(matching));
 check("the attach schedule is still 03:30", /DEFAULT_ATTACH_SCHEDULE = "30 3 \* \* \*"/.test(read("server/reminders/cron.ts")));
+check("the batch cap is still 12", /ATTACH_BATCH_CAP = 12/.test(read("server/survey/attach-runner.ts")));
+check("the boot banner no longer claims a contact is required",
+  !/Only surveys matched to a contact/.test(read("server/reminders/cron.ts")));
 check("the batch is still scoped to matched submissions",
   /trigger === "scheduled"[\s\S]{0,80}checkEligibility\(submission\)/.test(runner));
 check("the button is still not",
