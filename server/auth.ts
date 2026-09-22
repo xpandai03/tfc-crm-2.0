@@ -150,9 +150,13 @@ export function configureAuth(app: Express): void {
         try {
           console.log("[AUTH] Verify callback invoked");
           console.log("[AUTH]   Issuer:", issuer);
-          console.log("[AUTH]   Profile:", JSON.stringify(profile, null, 2));
-          console.log("[AUTH]   Profile._json:", JSON.stringify(profile?._json, null, 2));
-          console.log("[AUTH]   ID Token (first 50 chars):", idToken?.substring(0, 50));
+          // PRESENCE, NEVER VALUE. These three lines used to print the whole
+          // Azure AD profile, the whole claims object and the first 50
+          // characters of the ID token. The profile carries the directory
+          // object id and tenant id, and a JWT prefix is still a piece of a
+          // token — a prefix is not a redaction, it is a smaller copy.
+          console.log("[AUTH]   Profile received:", !!profile, "claims:", !!profile?._json);
+          console.log("[AUTH]   ID Token exists:", !!idToken);
           console.log("[AUTH]   Access Token exists:", !!accessToken);
 
           const claims = profile?._json || {};
@@ -164,7 +168,9 @@ export function configureAuth(app: Express): void {
             tenant: claims.tid || tenantID,
           };
 
-          console.log("[AUTH]   Extracted user:", JSON.stringify(user, null, 2));
+          // The email answers "who signed in". The object also held the Azure
+          // object id and tenant id, which answer nothing a log needs to.
+          console.log("[AUTH]   Extracted user:", user.email || "(no email)");
 
           if (!user.email) {
             console.error("[AUTH] ERROR: No email found in profile");
@@ -183,7 +189,10 @@ export function configureAuth(app: Express): void {
           console.log("[AUTH] SUCCESS: User authenticated");
           return done(null, user);
         } catch (err) {
-          console.error("[AUTH] EXCEPTION in verify callback:", err);
+          console.error(
+            "[AUTH] EXCEPTION in verify callback:",
+            err instanceof Error ? err.message : "unknown",
+          );
           return done(err);
         }
       }
@@ -198,16 +207,21 @@ function setupAuthRoutes(app: Express): void {
   // Login route - initiates OIDC flow
   app.get("/auth/login", (req: Request, res: Response, next: NextFunction) => {
     console.log("[AUTH] Login route hit");
-    console.log("[AUTH]   Session ID:", req.sessionID);
+    // The session id IS the session to anyone holding it, and req.headers.cookie
+    // carried tfc.sid verbatim. Whether a session and a cookie were present is
+    // the whole diagnostic value; the values themselves were the leak.
     console.log("[AUTH]   Session exists:", !!req.session);
-    console.log("[AUTH]   Cookies:", req.headers.cookie);
+    console.log("[AUTH]   Session cookie present:", !!req.headers.cookie);
 
     // Force session save before passport
     req.session.save((err) => {
       if (err) {
-        console.error("[AUTH]   Session save error:", err);
+        console.error(
+          "[AUTH]   Session save error:",
+          err instanceof Error ? err.message : "unknown",
+        );
       }
-      console.log("[AUTH]   Session saved, ID:", req.sessionID);
+      console.log("[AUTH]   Session saved");
       passport.authenticate("azure-ad")(req, res, next);
     });
   });
@@ -217,12 +231,21 @@ function setupAuthRoutes(app: Express): void {
     "/auth/callback",
     (req: Request, res: Response, next: NextFunction) => {
       console.log("[AUTH] Callback received");
-      console.log("[AUTH]   Session ID:", req.sessionID);
       console.log("[AUTH]   Session exists:", !!req.session);
-      console.log("[AUTH]   Cookies:", req.headers.cookie);
-      console.log("[AUTH]   OIDC state in session:", JSON.stringify((req.session as any)["openidconnect:azure-ad"], null, 2));
-      console.log("[AUTH]   Full URL:", req.url);
-      console.log("[AUTH]   Query params:", JSON.stringify(req.query, null, 2));
+      console.log("[AUTH]   Session cookie present:", !!req.headers.cookie);
+      // The stored OIDC handshake holds the state and nonce. Presence is what a
+      // "state did not match" investigation actually needs.
+      console.log(
+        "[AUTH]   OIDC state in session:",
+        !!(req.session as any)["openidconnect:azure-ad"],
+      );
+      // req.url is the callback URL, and the callback URL CARRIES ?code=. That
+      // line is how a complete, live authorization code reached the log stream.
+      // req.path is the pathname alone — Express excludes the query string.
+      console.log("[AUTH]   Callback path:", req.path);
+      // KEY NAMES, NEVER VALUES. Which parameters Azure sent is the diagnostic;
+      // code, state and session_state are all credentials or correlators.
+      console.log("[AUTH]   Query params present:", Object.keys(req.query).join(",") || "(none)");
 
       // Check if Azure returned an error directly
       if (req.query.error) {
@@ -234,17 +257,23 @@ function setupAuthRoutes(app: Express): void {
 
       // Check for authorization code
       if (req.query.code) {
-        console.log("[AUTH]   Authorization code received (first 20 chars):", (req.query.code as string).substring(0, 20));
+        // Was a code returned — not which one. The previous line printed the
+        // first 20 characters, which is a fragment of a single-use credential
+        // and still should not be in a log.
+        console.log("[AUTH]   Authorization code received: yes");
       }
 
       passport.authenticate("azure-ad", (err: any, user: any, info: any) => {
         console.log("[AUTH] Passport authenticate result:");
         console.log("[AUTH]   Error:", err);
-        console.log("[AUTH]   User:", user);
-        console.log("[AUTH]   Info:", info);
+        console.log("[AUTH]   User:", user?.email ?? "(none)");
+        console.log("[AUTH]   Info:", info?.message ?? (info ? "present" : "none"));
 
         if (err) {
-          console.error("[AUTH] Authentication error:", err);
+          console.error(
+            "[AUTH] Authentication error:",
+            err instanceof Error ? err.message : "unknown",
+          );
           return res.redirect("/auth/login?error=auth_failed&reason=" + encodeURIComponent(err.message || "unknown"));
         }
 
@@ -255,7 +284,10 @@ function setupAuthRoutes(app: Express): void {
 
         req.logIn(user, (loginErr) => {
           if (loginErr) {
-            console.error("[AUTH] Login error:", loginErr);
+            console.error(
+              "[AUTH] Login error:",
+              loginErr instanceof Error ? loginErr.message : "unknown",
+            );
             return res.redirect("/auth/login?error=auth_failed&reason=" + encodeURIComponent(loginErr.message || "login_failed"));
           }
 
@@ -275,11 +307,14 @@ function setupAuthRoutes(app: Express): void {
 
     req.logout((err) => {
       if (err) {
-        console.error("Logout error:", err);
+        console.error("Logout error:", err instanceof Error ? err.message : "unknown");
       }
       req.session.destroy((err) => {
         if (err) {
-          console.error("Session destroy error:", err);
+          console.error(
+            "Session destroy error:",
+            err instanceof Error ? err.message : "unknown",
+          );
         }
         // Redirect to Azure AD logout to fully sign out
         const azureLogoutUrl = `https://login.microsoftonline.com/${tenantID}/oauth2/v2.0/logout?post_logout_redirect_uri=${encodeURIComponent(postLogoutRedirect)}`;
