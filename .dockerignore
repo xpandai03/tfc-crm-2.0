@@ -9,6 +9,20 @@ vite.config.ts.*
 # (pre-backfill-*.csv contains contact PII)
 *.sql
 *.csv
+# Spreadsheet exports and survey screenshots, for the same reason. Verified
+# 2026-09-22: `ls /app` on the running machine showed TFC-Q4-SURVEY (2.4MB of
+# screenshots), Lane-survey-export-template.xlsx, TFC-SURVEY-CERM-EXPORT.xlsx
+# and outputs/ had all shipped, because COPY . . took them and only *.sql and
+# *.csv were excluded. Screenshots of the CRM can carry patient data; none of
+# it is needed at runtime.
+*.xlsx
+/TFC-Q4-SURVEY
+/outputs
+# ...EXCEPT the provider skills workbook, which the app READS at runtime from
+# /app/data (routes.ts logs "[providers] Spreadsheet path: /app/data/..."). A
+# root-level `*.xlsx` should not match a nested path, but this says so out loud
+# rather than resting on pattern semantics.
+!/data/*.xlsx
 
 # Internal scratch / audit docs at repo root — not needed at runtime
 /*.md

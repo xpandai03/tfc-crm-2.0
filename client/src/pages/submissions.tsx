@@ -23,6 +23,7 @@ import { canAccessReferralUpload } from "@shared/access-control";
 import { SURVEY_FORM_TYPE, SURVEY_SOURCE } from "@shared/survey-questions";
 import { REASON_SHORT, isMatchReason } from "@shared/survey-match-reasons";
 import { attachFailureText, attachIneligibleText } from "@shared/survey-attach-reasons";
+import { OpenInTherapyNotesButton } from "@/components/ui/open-in-tn-button";
 
 interface FormSubmission {
   id: number;
@@ -107,6 +108,10 @@ interface MatchState {
   status: "matched" | "review" | "no_contact";
   reason: string;
   matchedContactId: number | null;
+  /** The TherapyNotes chart, when this resolved to one. Already served by
+   *  /api/survey/matching/states (match-db.ts mapRow) — this type simply had
+   *  never declared it, so the value was arriving and being dropped. */
+  matchedChartId: string | null;
   candidateIds: number[];
   resolvedBy: string | null;
   resolvedAt: string | null;
@@ -815,6 +820,19 @@ export default function Submissions() {
                           attachState={attachFor(sub.id)}
                           isPending={attachMutation.isPending && attachMutation.variables === sub.id}
                           onAttach={() => attachMutation.mutate(sub.id)}
+                        />
+                      )}
+                      {/* ABSENT, NOT DISABLED, when the row has no chart behind
+                          it. The chart id arrives on the match: from a
+                          TherapyNotes patient directly, or from a CRM contact
+                          that has one linked — collapseIdentities folds the
+                          chart onto the contact, so one field covers both. A
+                          match to a contact with no linked chart renders
+                          nothing, which is correct: there is no chart to open. */}
+                      {isSurveySubmission(sub) && (
+                        <OpenInTherapyNotesButton
+                          chartId={stateFor(sub.id)?.matchedChartId}
+                          testId={`button-open-tn-${sub.id}`}
                         />
                       )}
                       {/* ALWAYS PRESENT, and deliberately never disabled by an

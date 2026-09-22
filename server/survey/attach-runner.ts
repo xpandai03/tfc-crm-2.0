@@ -131,13 +131,35 @@ function splitName(full: string): { firstName: string; lastName: string } | null
  *
  * THE RULE, all of which must hold:
  *   1. it is a survey
- *   2. the matcher resolved it to exactly one contact — status "matched".
- *      A row awaiting review, or resolved to "no contact", is never sent.
+ *   2. the matcher reached "matched". A row awaiting review, or resolved to
+ *      "no contact", is never sent.
  *   3. it carries a usable legal name (at least two tokens)
  *   4. it carries a real date of birth
  *   5. it carries a phone — the agent requires one, and a survey taken before
  *      the form asked for it simply cannot be verified
  *   6. it names a therapist
+ *
+ * A CRM CONTACT IS NOT ONE OF THE CONDITIONS, AND USED TO BE.
+ *
+ * This required `state.matchedContactId` to be non-null, which quietly excluded
+ * the entire population the nightly pull was built to reach: a patient who
+ * exists in TherapyNotes and not in the CRM matches with a chart id and no
+ * contact id, and the batch skipped them as `no_match`. On 21 September the one
+ * submission the preferred-name build exists for matched with chart
+ * 1LOBs… and contact null, and the 03:30 run would have passed over it —
+ * it could only be filed by a person pressing the button.
+ *
+ * The button never required a contact. checkIdentityEligibility says why: the
+ * agent finds the patient in TherapyNotes and verifies name, date of birth,
+ * phone and therapist against the chart, and a CRM contact was never part of
+ * that. Two paths applying two rules to the same question is the defect; the
+ * contact requirement was the wrong half.
+ *
+ * WHAT IS DELIBERATELY KEPT. The batch still requires a MATCH. The button does
+ * not, and that asymmetry is not an oversight — the batch runs unattended, and
+ * a chart nobody looked at is not something to widen on a schedule. A staff
+ * member pressing the button has looked at the row. So this closes the gap the
+ * client hit without turning the overnight job loose on the review queue.
  *
  * Pure apart from the match lookup, so the button and the scheduled run agree
  * by construction rather than by both remembering the same list.
@@ -148,7 +170,7 @@ export async function checkEligibility(submission: FormSubmission): Promise<Elig
 
   const state = await getMatchState(submission.id);
   if (!state || state.status === "review") return { eligible: false, code: "awaiting_review" };
-  if (state.status !== "matched" || !state.matchedContactId) {
+  if (state.status !== "matched") {
     return { eligible: false, code: "no_match" };
   }
   // The chart id rides along when the match found one. It is NOT part of the
