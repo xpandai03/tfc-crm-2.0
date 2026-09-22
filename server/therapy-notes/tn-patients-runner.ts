@@ -32,6 +32,32 @@ const TN_AGENT_BASE_URL =
   (process.env.TN_AGENT_URL || "").replace(/\/api\/tn\/.*$/, "") ||
   "https://axiom-browser-agent-clone-production.up.railway.app";
 
+// THE FALLBACK IS LOAD-BEARING IN PRODUCTION, AND SAYS SO OUT LOUD.
+//
+// Neither TN_AGENT_BASE_URL nor TN_AGENT_URL is set on the Fly app, so the
+// hardcoded Railway host on the line above is what every pull actually calls.
+// It works, and removing it would take the nightly pull down until a secret
+// existed — so it stays. What it should not do is stay SILENT: a deployment
+// whose agent address lives in a source file, and nowhere in its own
+// configuration, is a thing you want to find out about from a boot log rather
+// than from a move that breaks it.
+//
+// Fires once, at import, which is boot: cron.ts imports this module statically
+// and is itself imported by server/index.ts.
+//
+// The same fallback exists in three other places — active-counts-runner.ts,
+// survey/attach-runner.ts and routes.ts — so setting the variable closes all
+// four at once. Only this one warns, to keep a boot from printing the same
+// sentence four times.
+if (!process.env.TN_AGENT_BASE_URL && !process.env.TN_AGENT_URL) {
+  console.warn(
+    "[tn-patients] TN_AGENT_URL is not set — falling back to the agent host " +
+    "hardcoded in server/therapy-notes/tn-patients-runner.ts. The pull will " +
+    "work. To make the address configuration rather than source, set it: " +
+    "fly secrets set TN_AGENT_URL=https://axiom-browser-agent-clone-production.up.railway.app -a tfc-crm-2-0",
+  );
+}
+
 const PATIENTS_URL = `${TN_AGENT_BASE_URL}/api/tn/active-patients`;
 
 /** Measured at 133s. Ten minutes is the ceiling, not the expectation. */

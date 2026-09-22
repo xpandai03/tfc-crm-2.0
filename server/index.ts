@@ -126,7 +126,84 @@ app.use((req, res, next) => {
   next();
 });
 
+// ============================================================================
+// BUILD PROVENANCE — which commit is live?
+//
+// Answers one question from runtime logs alone, and it is a question that came
+// up twice on 21 September: a deploy completed, and nothing the app emitted
+// could say which commit was serving. The agent has stamped this since
+// services/api/build_info.py; this is the same line for the CRM.
+//
+// FLY EXPOSES NO COMMIT. Railway injects RAILWAY_GIT_COMMIT_SHA; Fly injects
+// nothing equivalent — the machine's environment carries FLY_IMAGE_REF,
+// FLY_MACHINE_VERSION and friends, and no git metadata at all. So the commit
+// has to come from the repository, and the image has no `git` binary, so it is
+// read out of .git by hand rather than shelled out for.
+//
+// Resolution order:
+//   1. an env var, if a host or a --build-arg ever provides one
+//   2. .git in the image, resolved through HEAD -> loose ref -> packed-refs
+//   3. FLY_IMAGE_REF — not a commit, but it names the deployment, which is
+//      better than nothing and says plainly that it is not a commit
+//   4. "unknown", reported at WARN, because unknown provenance IS the defect
+//      this exists to prevent. It never degrades silently.
+//
+// NOTE the coupling: [2] works because .dockerignore does not exclude .git, so
+// the repository ships in the image (16MB). If that is ever tightened — and
+// there is a fair argument for it — this falls back to [3] and keeps working.
+// ============================================================================
+function resolveBuildInfo(): { commit: string; source: string } {
+  for (const key of ["FLY_GIT_COMMIT_SHA", "GIT_COMMIT_SHA", "SOURCE_VERSION", "GIT_SHA"]) {
+    const v = (process.env[key] || "").trim();
+    if (v) return { commit: v, source: `env:${key}` };
+  }
+
+  // WORKDIR is /app and .git sits beside dist/, so cwd is the right root both
+  // in the container and in development.
+  try {
+    const gitDir = path.join(process.cwd(), ".git");
+    const head = fs.readFileSync(path.join(gitDir, "HEAD"), "utf8").trim();
+
+    // Detached HEAD: the file IS the sha.
+    if (/^[0-9a-f]{40}$/i.test(head)) return { commit: head, source: "git:HEAD" };
+
+    const ref = head.startsWith("ref:") ? head.slice(4).trim() : "";
+    if (ref) {
+      const loose = path.join(gitDir, ref);
+      if (fs.existsSync(loose)) {
+        const sha = fs.readFileSync(loose, "utf8").trim();
+        if (sha) return { commit: sha, source: `git:${ref}` };
+      }
+      // Packed refs: "<sha> <refname>" per line, comments and peeled tags aside.
+      const packedPath = path.join(gitDir, "packed-refs");
+      if (fs.existsSync(packedPath)) {
+        for (const line of fs.readFileSync(packedPath, "utf8").split("\n")) {
+          if (!line || line.startsWith("#") || line.startsWith("^")) continue;
+          const [sha, name] = line.trim().split(/\s+/);
+          if (name === ref && sha) return { commit: sha, source: `git:packed-refs ${ref}` };
+        }
+      }
+    }
+  } catch {
+    // Fall through — an unreadable .git is not worth a stack trace at boot.
+  }
+
+  const imageRef = (process.env.FLY_IMAGE_REF || "").trim();
+  if (imageRef) return { commit: imageRef, source: "env:FLY_IMAGE_REF (image ref, NOT a commit)" };
+
+  return { commit: "unknown", source: "none" };
+}
+
 (async () => {
+  // FIRST LINE OF STARTUP, deliberately — so it is above whatever else a boot
+  // prints, and a reader never has to scroll to find out what is running.
+  const build = resolveBuildInfo();
+  if (build.commit === "unknown") {
+    console.warn(`[BUILD] commit=unknown source=none — provenance unavailable`);
+  } else {
+    log(`[BUILD] commit=${build.commit} source=${build.source}`, "express");
+  }
+
   // Staging-mode detection logging
   const stagingIndicators: string[] = [];
   if (!process.env.AZURE_AD_CLIENT_ID || process.env.AZURE_AD_CLIENT_ID === "disabled") {

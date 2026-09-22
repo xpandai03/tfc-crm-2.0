@@ -70,10 +70,23 @@ const FALL_BACK = "Download the PDF and attach it in TherapyNotes by hand.";
  */
 export const ATTACH_FAILURE_TEXT: Record<AttachFailureReason, string> = {
   // --- Things about the patient, which is what staff can actually act on ----
+  // REWRITTEN 22 September, because the old sentence had stopped being true.
+  //
+  // It read "either they are not in TherapyNotes at all, or the chart holds a
+  // middle name the client did not type" — written when a parenthesised
+  // preferred name was also a cause. It is not one any more: the name rule now
+  // reads "Minor (Legal) Last" both ways and matches either, so a bracketed
+  // name never lands here. What was left was narrower than the sentence
+  // sounded, and it sent people hunting for a middle name first when a surname
+  // is the commoner miss.
+  //
+  // Ordered by what a person will actually find, likeliest first.
   patient_not_found:
-    `No patient with this name and date of birth was found in TherapyNotes. ` +
-    `Either they are not in TherapyNotes at all, or the chart holds a middle ` +
-    `name the client did not type. Nothing is wrong with the survey. ${FALL_BACK}`,
+    `No patient matching this survey was found in TherapyNotes. Check how the ` +
+    `chart spells the name first — a middle name the client did not type, or a ` +
+    `married or hyphenated surname, will both miss. Then check the date of ` +
+    `birth. If those look right, they may not be in TherapyNotes at all. ` +
+    `Nothing is wrong with the survey. ${FALL_BACK}`,
   multiple_candidates:
     `More than one patient in TherapyNotes matches this name and date of birth, ` +
     `so the survey was not filed to any of them. ${FALL_BACK}`,

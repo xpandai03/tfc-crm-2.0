@@ -137,13 +137,27 @@ console.log("\n[4] THE DEFECT: the batch and the button now agree");
 // ===========================================================================
 console.log("\n[5] Out of scope stayed out of scope");
 {
+  // tn-patients-runner.ts left the file guard on 22 September: the build that
+  // added a boot warning for the unset TN_AGENT_URL had to put it in that file,
+  // beside the fallback it warns about. What the guard protected there — the
+  // agent address and the pull's shape — is asserted below by value.
   const changed = execSync(
     "git diff --name-only HEAD -- server/survey/matching.ts server/survey/match-runner.ts " +
-    "server/therapy-notes/tn-patients-runner.ts server/therapy-notes/tn-patients-db.ts " +
+    "server/therapy-notes/tn-patients-db.ts " +
     "server/auth.ts client/src/pages/contact-detail.tsx",
     { encoding: "utf8" },
   ).trim();
-  eq("matcher, pull, auth and the contact page are untouched", changed, "");
+  eq("matcher, store, auth and the contact page are untouched", changed, "");
+
+  const pull = read("server/therapy-notes/tn-patients-runner.ts");
+  check("the pull still resolves the agent the same way, fallback intact",
+    /process\.env\.TN_AGENT_BASE_URL \|\|\s*\n\s*\(process\.env\.TN_AGENT_URL \|\| ""\)\.replace/.test(pull)
+    && /"https:\/\/axiom-browser-agent-clone-production\.up\.railway\.app"/.test(pull));
+  check("the pull still calls the same route",
+    /const PATIENTS_URL = `\$\{TN_AGENT_BASE_URL\}\/api\/tn\/active-patients`/.test(pull));
+  check("the pull's timeout is unchanged", /PULL_TIMEOUT_MS = 600_000/.test(pull));
+  check("the new line only WARNS — it cannot change which host is used",
+    /if \(!process\.env\.TN_AGENT_BASE_URL && !process\.env\.TN_AGENT_URL\) \{\s*\n\s*console\.warn\(/.test(pull));
 
   const runner = read("server/survey/attach-runner.ts");
   check("the attach route's payload builder is unchanged",

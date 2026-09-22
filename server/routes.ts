@@ -3406,7 +3406,23 @@ export async function registerRoutes(
         });
       }
 
-      console.log("[providers] Parsed", providers.length, "providers from spreadsheet");
+      // REWORDED, NOT DROPPED. This read "Parsed 0 providers from spreadsheet"
+      // on every boot, which is what an incident reader sees first and reads as
+      // a failure — and may then act on. It is not one: the spreadsheet was
+      // demoted to an import artefact by the provider unification
+      // (docs/provider-unification-plan.md), crm_providers is the source of
+      // truth, and the merge logged on the next line is where the roster
+      // actually comes from.
+      //
+      // Kept rather than deleted because zero is still worth SEEING. If the
+      // workbook is ever meant to carry rows again, or an import runs and
+      // parses nothing, this is the only line that would show it. The demotion
+      // note explains the zero; it does not report it.
+      console.log(
+        `[providers] Spreadsheet contributed ${providers.length} provider(s) — ` +
+        `0 is expected: crm_providers is the source of truth and the roster is ` +
+        `merged from it below (docs/provider-unification-plan.md)`,
+      );
       if (warnings.length > 0) {
         const lines = warnings
           .map((w) => `  - ${w.providerName} / ${w.group} / ${w.skill}: ${JSON.stringify(w.raw)} — ${w.reason}`)

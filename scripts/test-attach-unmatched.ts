@@ -207,10 +207,20 @@ console.log("\n[8] The payload, and what changed about it");
 // ===========================================================================
 console.log("\n[9] A refusal reads as information, not breakage");
 {
-  check("patient_not_found now names the newly-possible cause",
-    attachFailureText("patient_not_found").indexOf("not in TherapyNotes at all") !== -1);
-  check("...and still names the middle-name case",
-    attachFailureText("patient_not_found").indexOf("middle") !== -1);
+  // MATCHED ON INTENT, NOT ON PHRASING. This pinned the exact substring "not
+  // in TherapyNotes at all", which the 22 September rewrite phrased as "may not
+  // be in TherapyNotes at all" — the cause was still named and the assertion
+  // still failed. A message test should hold the message to what it must TELL
+  // someone, and leave the sentence free to be written better.
+  const pnf = attachFailureText("patient_not_found");
+  check("patient_not_found names the not-in-TherapyNotes cause",
+    pnf.indexOf("in TherapyNotes at all") !== -1);
+  check("...and still names the middle-name case", pnf.indexOf("middle") !== -1);
+  check("...and names a differently-spelled surname, the commoner miss",
+    /surname/i.test(pnf));
+  check("...and names the date of birth", /date of birth/i.test(pnf));
+  check("...and does NOT send anyone hunting for a bracketed preferred name, " +
+        "which now matches", !/bracket|parenthe|preferred name/i.test(pnf));
   check("clinician_mismatch says which field disagreed",
     attachFailureText("clinician_mismatch").indexOf("therapist named on the survey") !== -1);
   // Every refusal must end by pointing somewhere a staff member can go.
