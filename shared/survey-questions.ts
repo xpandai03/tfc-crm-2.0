@@ -577,7 +577,7 @@ export const CLIENT_PHONE_MAX = 32;
  * themselves to fill in a form.
  */
 export const LEGAL_NAME_HINT =
-  "The name on your insurance or ID — not a preferred or shortened name. We need it to find your record.";
+  "Please use your legal name — not a preferred or shortened name, so we can find your record.";
 
 /** Oldest plausible date of birth. Anything before this is a typo, not a person. */
 export const DOB_MIN_ISO = "1900-01-01";

@@ -57,6 +57,7 @@ import {
   insertIntakeContact,
   insertFormSubmission,
   getRecentSubmissions,
+  getRecentSurveySubmissions,
   getReferralsCount,
   getSubmissionsForContact,
   insertSubmission,
@@ -6479,9 +6480,15 @@ export async function registerRoutes(
   // Submissions API (immutable audit log)
   // ============================================================================
 
-  app.get("/api/submissions", async (_req, res) => {
+  // ?type=survey is the "All surveys" filter. Filtered in SQL, not in the
+  // browser: the unfiltered list is the newest 50 of EVERY type, so hiding
+  // non-survey rows client-side would silently drop every older survey. Same
+  // query, and so the same survey set, as the matcher and the export.
+  app.get("/api/submissions", async (req, res) => {
     try {
-      const submissions = await getRecentSubmissions(50);
+      const submissions = req.query.type === "survey"
+        ? await getRecentSurveySubmissions(1000)
+        : await getRecentSubmissions(50);
       return res.json({ submissions });
     } catch (error) {
       console.error("[submissions] Error fetching submissions:", error);

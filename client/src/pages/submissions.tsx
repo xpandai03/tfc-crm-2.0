@@ -126,8 +126,11 @@ interface MatchCounts {
   unprocessed: number;
 }
 
-/** The filter the staff member is looking through. */
-type MatchFilter = "all" | "review" | "matched" | "no_contact";
+/**
+ * The filter the staff member is looking through. "surveys" is every survey
+ * submission in any match state; the other three narrow surveys by match state.
+ */
+type MatchFilter = "all" | "surveys" | "review" | "matched" | "no_contact";
 
 /**
  * A survey row's payload holds free text a client typed. Since the 2026-09-03
@@ -480,7 +483,7 @@ export default function Submissions() {
   const { toast } = useToast();
   const qc = useQueryClient();
 
-  const { data, isLoading } = useQuery<{ submissions: FormSubmission[] }>({
+  const { data, isLoading: allLoading } = useQuery<{ submissions: FormSubmission[] }>({
     queryKey: ["/api/submissions"],
     queryFn: async () => {
       const res = await fetch("/api/submissions");
@@ -488,6 +491,23 @@ export default function Submissions() {
       return res.json();
     },
   });
+
+  // "All surveys" is filtered by the SERVER, not by hiding rows of the query
+  // above: that list is only the newest 50 of every type, so a client-side
+  // filter would drop every survey older than that window. Fetched only while
+  // the filter is on; the key shares the prefix above, so every existing
+  // invalidateQueries(["/api/submissions"]) refreshes it too.
+  const surveysOnly = matchFilter === "surveys";
+  const { data: surveyData, isLoading: surveysLoading } = useQuery<{ submissions: FormSubmission[] }>({
+    queryKey: ["/api/submissions", "survey"],
+    queryFn: async () => {
+      const res = await fetch("/api/submissions?type=survey");
+      if (!res.ok) throw new Error("Failed to fetch survey submissions");
+      return res.json();
+    },
+    enabled: surveysOnly,
+  });
+  const isLoading = surveysOnly ? surveysLoading : allLoading;
 
   // Match state for every survey submission. Separate from the submissions
   // query so a resolution can refresh identity state without refetching rows.
@@ -564,6 +584,7 @@ export default function Submissions() {
   });
 
   const allSubmissions = data?.submissions ?? [];
+  const sourceRows = surveysOnly ? surveyData?.submissions ?? [] : allSubmissions;
   const states = matchData?.states ?? {};
   const counts = matchData?.counts;
   const stateFor = (id: number): MatchState | undefined => states[String(id)];
@@ -573,15 +594,19 @@ export default function Submissions() {
   // The review queue is a FILTER over this list, not a separate page — the
   // client has repeatedly asked for fewer tabs, and an identity decision is
   // made about a submission, so it belongs beside the submission.
-  const submissions = allSubmissions.filter((sub) => {
+  const submissions = sourceRows.filter((sub) => {
     if (matchFilter === "all") return true;
     if (!isSurveySubmission(sub)) return false;
+    if (matchFilter === "surveys") return true;
     const st = stateFor(sub.id);
     if (matchFilter === "review") return !st || st.status === "review";
     return st?.status === matchFilter;
   });
 
   const reviewCount = (counts?.review ?? 0) + (counts?.unprocessed ?? 0);
+  const surveyCount = counts
+    ? counts.matched + counts.review + counts.no_contact + counts.unprocessed
+    : 0;
 
   return (
     <PageLayout>
@@ -643,6 +668,7 @@ export default function Submissions() {
             <div className="flex items-center gap-1.5 flex-wrap">
               {([
                 ["all", "All", allSubmissions.length],
+                ["surveys", "All surveys", surveyCount],
                 ["review", "Needs review", reviewCount],
                 ["matched", "Matched", counts.matched],
                 ["no_contact", "No contact", counts.no_contact],
@@ -652,7 +678,10 @@ export default function Submissions() {
                   variant={matchFilter === key ? "default" : "outline"}
                   size="sm"
                   className="h-7 text-xs"
-                  onClick={() => setMatchFilter(key as MatchFilter)}
+                  // Pressing the active "All surveys" again clears it.
+                  onClick={() =>
+                    setMatchFilter(key === "surveys" && matchFilter === "surveys" ? "all" : (key as MatchFilter))
+                  }
                   data-testid={`filter-${key}`}
                 >
                   {label}
