@@ -51,6 +51,19 @@ import {
 } from "./fields";
 import { fetchRoster, submitSurvey, type PublicProvider } from "./api";
 
+/**
+ * Does this question's comment box appear on the form?
+ *
+ * Every commentable question EXCEPT the therapist pick on step 2, whose open
+ * "Anything you would like to add?" box the client asked to remove
+ * (2026-09-23). Decided here, not in isCommentable(): the server, the PDF and
+ * the stored `comments.therapist` of earlier submissions are untouched, so old
+ * rows still render their comment and an open tab running the previous bundle
+ * can still submit. The form simply stops writing that key.
+ */
+const showsCommentBox = (q: SurveyQuestion): boolean =>
+  isCommentable(q) && q.kind !== "therapist";
+
 /** Which slots share a screen. Client asked for two to three questions each. */
 const SCREEN_SLOTS: number[][] = [
   [2, 3], // screen 3 — modality specific
@@ -226,13 +239,13 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
    * The comment is rendered HERE, once, around whatever the question itself
    * renders — not inside each branch. That is what makes "one mechanism per
    * question" structural rather than a thing to remember: there is a single
-   * place a comment box can come from, and isCommentable() is the only thing
+   * place a comment box can come from, and showsCommentBox() is the only thing
    * that decides whether it appears.
    */
   const renderQuestion = (q: SurveyQuestion) => (
     <div key={q.key} className="question">
       {renderQuestionBody(q)}
-      {isCommentable(q) && (
+      {showsCommentBox(q) && (
         <CommentField
           prompt={COMMENT_PROMPT}
           maxLength={COMMENT_MAX}
@@ -326,10 +339,11 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
           </p>
           {/* LEGAL name, said plainly on the label. The practice sees clients
               whose preferred name is the one they would type by reflex, while
-              the record carries the legal name from their insurance — and a
-              preferred name matches nothing, silently. The hint says which name
-              and why in one sentence, without naming any reason someone might
-              go by another. */}
+              the record carries their legal name — and a preferred name
+              matches nothing, silently. The hint says which name and why in one
+              sentence, without naming any reason someone might go by another.
+              It no longer mentions an insurance card (client request,
+              2026-09-23). */}
           <TextField
             label="Your legal name"
             hint={LEGAL_NAME_HINT}
@@ -433,8 +447,14 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
     // not ask, and the server's .strict() would reject the whole submission for
     // it. Sending only what this variant can carry means a client's answers
     // survive a form change mid-run.
+    //
+    // The therapist key is skipped too: its box is gone (showsCommentBox), and
+    // a draft saved before that could still hold text the client can no longer
+    // see or edit. Nothing is sent that is not on screen.
     const comments: Record<string, string> = {};
     for (const key of commentKeysFor(variant)) {
+      const q = questions.find((x) => x.key === key);
+      if (!q || !showsCommentBox(q)) continue;
       const text = (draft.comments[key] ?? "").trim();
       if (text) comments[key] = text;
     }

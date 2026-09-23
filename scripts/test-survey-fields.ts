@@ -130,7 +130,12 @@ ok("no \"full name\" label remains", !formSrc.includes('label="Your full name"')
 ok("the legal-name hint is rendered", formSrc.includes("hint={LEGAL_NAME_HINT}"));
 ok('the hint says "not a preferred"', /not a preferred/i.test(LEGAL_NAME_HINT));
 ok("the hint says why", /find your record/i.test(LEGAL_NAME_HINT));
-ok('the hint points at insurance or ID', /insurance or ID/i.test(LEGAL_NAME_HINT));
+ok('the hint says "legal name"', /legal name/i.test(LEGAL_NAME_HINT));
+// Client request, 2026-09-23: one legal-name instruction, no insurance card.
+ok("the hint no longer mentions insurance or an ID card", !/insurance|\bID\b/i.test(LEGAL_NAME_HINT));
+ok("the identity screen mentions insurance nowhere a client can read it",
+  !/insurance/i.test(formSrc.slice(formSrc.indexOf('id: "identity"'), formSrc.indexOf('id: "therapist"'))
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")));
 
 // ---------------------------------------------------------------------------
 console.log("\n[3] A comment box on every question, never blocking");
@@ -158,7 +163,18 @@ for (const variant of SURVEY_VARIANTS) {
 ok("the comment prompt is an invitation, not an instruction", COMMENT_PROMPT.endsWith("?"));
 const fieldsSrc = readFileSync(join(process.cwd(), "client-survey", "src", "fields.tsx"), "utf8");
 ok("the comment box is always rendered, never behind a Reveal",
-  !/Reveal[\s\S]{0,400}CommentField/.test(formSrc) && formSrc.includes("isCommentable(q) && ("));
+  !/Reveal[\s\S]{0,400}CommentField/.test(formSrc) && formSrc.includes("showsCommentBox(q) && ("));
+// Client request, 2026-09-23: step 2 (the therapist pick) has no open comment
+// box. The server still ACCEPTS comments.therapist, so earlier rows and an open
+// tab on the previous bundle are unaffected; only the form stops writing it.
+ok("step 2 hides the therapist comment box",
+  /showsCommentBox = \(q: SurveyQuestion\): boolean =>\s*isCommentable\(q\) && q\.kind !== "therapist"/.test(formSrc));
+ok("the submit loop skips keys whose box is not shown",
+  /for \(const key of commentKeysFor\(variant\)\) \{[\s\S]{0,200}showsCommentBox\(q\)\) continue;/.test(formSrc));
+for (const variant of SURVEY_VARIANTS) {
+  ok(`${variant}: the server still accepts a stored therapist comment`,
+    surveySubmissionSchema(variant).safeParse({ ...validBody(variant), comments: { therapist: "ZZTEST comment" } }).success);
+}
 ok("advancing is gated on answers only, never on comments",
   !/isValid[\s\S]{0,200}comment/i.test(formSrc));
 
