@@ -23,7 +23,6 @@ import { canAccessReferralUpload } from "@shared/access-control";
 import { SURVEY_FORM_TYPE, SURVEY_SOURCE } from "@shared/survey-questions";
 import { REASON_SHORT, isMatchReason } from "@shared/survey-match-reasons";
 import { attachFailureText, attachIneligibleText } from "@shared/survey-attach-reasons";
-import { OpenInTherapyNotesButton } from "@/components/ui/open-in-tn-button";
 
 interface FormSubmission {
   id: number;
@@ -492,12 +491,13 @@ export default function Submissions() {
     },
   });
 
-  // "All surveys" is filtered by the SERVER, not by hiding rows of the query
-  // above: that list is only the newest 50 of every type, so a client-side
-  // filter would drop every survey older than that window. Fetched only while
-  // the filter is on; the key shares the prefix above, so every existing
-  // invalidateQueries(["/api/submissions"]) refreshes it too.
-  const surveysOnly = matchFilter === "surveys";
+  // Every SURVEY filter — "All surveys", "Needs review", "Matched" and "No
+  // contact" — reads the survey-only query, filtered by the SERVER. The query
+  // above is only the newest 50 rows of every type, so narrowing it here
+  // dropped every survey older than that window from all four. Fetched only
+  // while a survey filter is on; the key shares the prefix above, so every
+  // existing invalidateQueries(["/api/submissions"]) refreshes it too.
+  const surveysOnly = matchFilter !== "all";
   const { data: surveyData, isLoading: surveysLoading } = useQuery<{ submissions: FormSubmission[] }>({
     queryKey: ["/api/submissions", "survey"],
     queryFn: async () => {
@@ -851,19 +851,11 @@ export default function Submissions() {
                           onAttach={() => attachMutation.mutate(sub.id)}
                         />
                       )}
-                      {/* ABSENT, NOT DISABLED, when the row has no chart behind
-                          it. The chart id arrives on the match: from a
-                          TherapyNotes patient directly, or from a CRM contact
-                          that has one linked — collapseIdentities folds the
-                          chart onto the contact, so one field covers both. A
-                          match to a contact with no linked chart renders
-                          nothing, which is correct: there is no chart to open. */}
-                      {isSurveySubmission(sub) && (
-                        <OpenInTherapyNotesButton
-                          chartId={stateFor(sub.id)?.matchedChartId}
-                          testId={`button-open-tn-${sub.id}`}
-                        />
-                      )}
+                      {/* No "Open in TherapyNotes" control (removed 2026-09-23).
+                          TherapyNotes does not open a chart from a URL in any
+                          session — it redirects to the patients list, which is
+                          what staff saw — so there is no link to build. See
+                          lib/tn-chart-url.ts. */}
                       {/* ALWAYS PRESENT, and deliberately never disabled by an
                           attach outcome. This is the path that works for every
                           patient, it is what the client already accepted as the
