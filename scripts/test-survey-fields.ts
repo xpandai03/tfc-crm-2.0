@@ -131,6 +131,8 @@ ok("the legal-name hint is rendered", formSrc.includes("hint={LEGAL_NAME_HINT}")
 ok('the hint says "not a preferred"', /not a preferred/i.test(LEGAL_NAME_HINT));
 ok("the hint says why", /find your record/i.test(LEGAL_NAME_HINT));
 ok('the hint says "legal name"', /legal name/i.test(LEGAL_NAME_HINT));
+eq("the hint is the client's exact wording (2026-09-23, no em dash)", LEGAL_NAME_HINT,
+  "Please use your legal name, not a preferred or shortened name, so we can find your record.");
 // Client request, 2026-09-23: one legal-name instruction, no insurance card.
 ok("the hint no longer mentions insurance or an ID card", !/insurance|\bID\b/i.test(LEGAL_NAME_HINT));
 ok("the identity screen mentions insurance nowhere a client can read it",

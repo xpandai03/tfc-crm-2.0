@@ -2,35 +2,31 @@
  * The TherapyNotes chart URL, built from a chart id — in ONE place.
  * ============================================================================
  *
- * WHY THIS EXISTS. Until now the CRM never built a chart URL: the contact page
- * opens a URL the AGENT returned and the CRM stored verbatim
- * (`tnRecord.tnPatientUrl`, pages/contact-detail.tsx). That works for a patient
- * the CRM created and for nobody else — about half the active caseload predates
- * the CRM and has no such record.
+ * ⚠️ UNUSED, AND IT CANNOT OPEN A CHART. Kept so the shape is recorded in one
+ * place; nothing in the CRM imports it (the Submissions page's "Open in
+ * TherapyNotes" control was removed on 2026-09-23).
  *
- * A matched survey carries something better: the chart id the nightly pull read
- * off the Patients-page result anchor. This turns that id into the same URL the
- * agent produces, so both routes land on the same page.
+ * THE RECON FINDING, stated correctly this time. TherapyNotes does not open a
+ * chart from its URL in ANY session. `goto("/app/patients/edit/<PATIENT_ID>/")`
+ * in a session that has just authenticated — signed in, not signed out — is
+ * redirected to `/app/patients/` with no chart rendered
+ * (axiom-browser-agent-clone docs/selectors/tn_v2_phases.md, "a chart cannot be
+ * deep-linked in a fresh session"). The agent reaches a chart only by clicking
+ * the result anchor on the Patients page, and its code says so. Staff pressing
+ * the Submissions control landed on the patients list, which is that redirect.
  *
- * The shape is the one recon verified and the one the create flow produces
- * (docs/selectors/tn_v2_phases.md, "Chart header selectors"):
+ * An earlier version of this comment read "fresh session" as "signed out" and
+ * concluded that a signed-in tab would land on the chart. It does not.
+ *
+ * The URL SHAPE below is still correct — it is what the page shows once a chart
+ * is open, and the chart id is the one the nightly pull reads off the result
+ * anchor — it simply is not an entry point.
  *
  *     https://www.therapynotes.com/app/patients/edit/<PATIENT_ID>/
  *
- * THE TRAILING SLASH IS PART OF IT. Every observed chart URL carries one.
- *
- * ⚠️ IT ONLY OPENS FOR AN ALREADY-SIGNED-IN SESSION. Recon verified that
- * `goto("/app/patients/edit/<id>/")` in a FRESH session is redirected to
- * `/app/patients/` with no chart rendered. That is exactly the behaviour the
- * contact page's control has always had and staff use daily — a signed-in tab
- * lands on the chart, a signed-out one lands on the patients list. This is not
- * a new caveat and there is nothing to do about it from here.
- *
- * ONE BUILDER, ON PURPOSE. If a second call site ever needs a chart URL it
- * imports this. The id is opaque (e.g. "1L4JcJ5qscGPg3KTuHS86A", 16 or 22
- * characters, never numeric), so nothing here parses or validates its shape
- * beyond "is there anything at all" — a length or charset rule written here
- * would reject a real id the day TherapyNotes widens the space.
+ * The contact page's inline "Open in TherapyNotes" control opens a stored URL
+ * the agent returned (`tnRecord.tnPatientUrl`) and is subject to the same
+ * redirect. It was left alone on purpose (out of scope on 2026-09-23).
  */
 
 const TN_BASE = "https://www.therapynotes.com/app/patients/edit";

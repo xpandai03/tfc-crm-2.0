@@ -70,8 +70,17 @@ console.log("\n[2] One implementation — no second chart-URL builder");
 
   check("the button imports the builder rather than carrying its own",
     /from "@\/lib\/tn-chart-url"/.test(btn) && !/therapynotes\.com/.test(btn));
-  check("the survey row imports the button rather than inlining one",
-    /from "@\/components\/ui\/open-in-tn-button"/.test(subs));
+  // 2026-09-23: hidden on survey rows. TherapyNotes redirects every direct
+  // chart URL to the patients list, in any session, so the control only ever
+  // landed staff on that list.
+  check("the survey row no longer imports the button",
+    !/open-in-tn-button/.test(subs));
+  check("...and renders no Open in TherapyNotes control",
+    !/OpenInTherapyNotesButton/.test(subs));
+  check("the builder says it is unused and cannot open a chart",
+    /UNUSED, AND IT CANNOT OPEN A CHART/.test(lib) && /in ANY session/.test(lib));
+  check("the builder no longer claims a signed-in tab lands on the chart",
+    !/a signed-in tab\s+\*?\s*lands on the chart/.test(lib));
   check("the survey row does not build a TherapyNotes URL itself",
     !/therapynotes\.com/i.test(subs));
 
@@ -93,8 +102,6 @@ console.log("\n[3] The control renders only with a chart id");
   // matching that would be the assertion testing its own documentation.
   const btnCode = btn.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
   check("is NOT rendered disabled instead", !/disabled/.test(btnCode));
-  check("the row passes the match's chart id",
-    /chartId=\{stateFor\(sub\.id\)\?\.matchedChartId\}/.test(subs));
   check("the client type now declares the field the server already sent",
     /matchedChartId: string \| null;/.test(subs));
   check("wording matches the contact page's control",
