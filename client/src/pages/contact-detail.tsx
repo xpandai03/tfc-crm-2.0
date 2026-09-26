@@ -86,7 +86,8 @@ import {
   joinModalityPriorities,
 } from "@shared/modality-utils";
 import { SERVICE_TYPES } from "@shared/service-types";
-import { AGE_BASIS_NOTE, bandedServiceType, isChildServiceType } from "@shared/age-bands";
+import { AGE_BASIS_NOTE, bandedServiceType, childDeclaration, isChildServiceType } from "@shared/age-bands";
+import { guardianName, guardiansFromPayload } from "@shared/intake-guardians";
 import { CANONICAL_INSURANCES, isLegacyInsurance } from "@shared/insurance";
 import { PAPERWORK_STATUSES } from "@shared/paperwork-status";
 import { buildTimelineEvents, formatFullDate, matchSnapshotForEmailEvent, type EmailSnapshotMeta, type TimelineEvent } from "@/lib/timeline";
@@ -188,7 +189,12 @@ function IntakeHistoryEntry({ sub, label, isLatest, defaultExpanded }: {
             {detailFields.map((f) => {
               const val = p[f.key];
               if (!val) return null;
-              const display = Array.isArray(val)
+              // "minor_child" / "adolescent" are the requester's declaration,
+              // shown as such — the band itself comes from the date of birth.
+              const declared = f.key === "requestingFor" ? childDeclaration(val) : null;
+              const display = declared
+                ? `${declared} (declared by requester)`
+                : Array.isArray(val)
                 ? (val as string[]).filter(Boolean).join(", ")
                 : String(val);
               if (!display.trim()) return null;
@@ -242,6 +248,38 @@ function IntakeHistoryEntry({ sub, label, isLatest, defaultExpanded }: {
                     </div>
                   );
                 })}
+              </div>
+            );
+          })()}
+          {/* Guardians — the adults responsible for a child client, from the
+              form's `guardians` array. Kept apart from Participants (the
+              people in therapy). Read through guardiansFromPayload, so a
+              blank or malformed entry is simply not shown. */}
+          {(() => {
+            const guardians = guardiansFromPayload(p);
+            if (guardians.length === 0) return null;
+            return (
+              <div className="border-t border-border/40 pt-2 space-y-2" data-testid={`guardians-${sub.id}`}>
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                  Guardians ({guardians.length})
+                </span>
+                {guardians.map((g, idx) => (
+                  <div key={idx} className="rounded border border-border/40 bg-muted/20 p-2 space-y-0.5">
+                    {([
+                      ["Name", guardianName(g)],
+                      ["Relationship", g.relationship],
+                      ["Phone", g.phone],
+                      ["Email", g.email],
+                    ] as const).map(([label, value]) =>
+                      value ? (
+                        <div key={label} className="flex gap-2 text-xs">
+                          <span className="text-muted-foreground shrink-0 w-28">{label}:</span>
+                          <span className="font-medium text-foreground">{value}</span>
+                        </div>
+                      ) : null,
+                    )}
+                  </div>
+                ))}
               </div>
             );
           })()}
@@ -1309,6 +1347,11 @@ export default function ContactDetail() {
   const bandedRequestingFor = contact?.requestingFor
     ? bandedServiceType(contact.requestingFor, contact.patientDob)
     : contact?.requestingFor;
+  // What the requester SAID, from the newest intake's raw payload — shown next
+  // to the band, never instead of it. The band (date of birth) is what every
+  // count uses; a parent's "minor_child" for a fifteen-year-old is recorded,
+  // not obeyed.
+  const declaredChildBand = childDeclaration(intakeSubmissions[0]?.payload?.requestingFor);
   const serviceSubtitle = [
     bandedRequestingFor,
     contact?.reasonForTherapy,
@@ -1940,6 +1983,14 @@ export default function ContactDetail() {
                                   {AGE_BASIS_NOTE.today}
                                 </p>
                               )}
+                              {declaredChildBand && isChildServiceType(contact.requestingFor) && (
+                                <p className="text-[11px] text-muted-foreground mt-0.5" data-testid="text-requestingFor-declared">
+                                  Requester chose {declaredChildBand} on the form
+                                  {declaredChildBand !== bandedRequestingFor && bandedRequestingFor !== contact.requestingFor
+                                    ? `; the date of birth makes this ${bandedRequestingFor}, which is what reports count.`
+                                    : "."}
+                                </p>
+                              )}
                             </div>
                           )}
                           {contact?.reasonForSeeking && (
@@ -2243,7 +2294,9 @@ export default function ContactDetail() {
                   <CardContent className="space-y-2">
                     {intakeSubmissions.map((sub, idx) => {
                       const p = sub.payload as Record<string, unknown>;
-                      const requestingFor = p.requestingFor ? String(p.requestingFor) : null;
+                      const requestingFor = p.requestingFor
+                        ? (childDeclaration(p.requestingFor) ?? String(p.requestingFor))
+                        : null;
                       const label = requestingFor
                         ? `Person — ${requestingFor}`
                         : `Intake #${sub.id}`;

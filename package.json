@@ -47,6 +47,7 @@
     "test:count-overrides": "tsx scripts/test-active-count-overrides.ts",
     "test:snapshot": "tsx scripts/test-survey-snapshot.ts",
     "test:attach-review": "tsx scripts/test-attach-review-and-pull-health.ts",
+    "test:intake": "tsx scripts/test-intake-rfs.ts",
     "fixture:survey-export": "tsx scripts/fixture-survey-export.ts"
   },
   "dependencies": {
