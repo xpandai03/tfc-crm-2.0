@@ -1,0 +1,69 @@
+[
+  {
+    "label": "adult, Myself, new modality shape",
+    "body": {
+      "name": "Zztest Adultperson", "email": "zztest.adult@example.test", "phone": "(505) 555-0101",
+      "requestingFor": "Myself", "reasonForTherapy": ["Anxiety", "Depression"],
+      "modalityP1": "Telehealth", "modalityP2": "In Person ABQ",
+      "insurancePayer": "ZZTEST Health", "patientDob": "1985-04-12", "zipCode": "87101"
+    }
+  },
+  {
+    "label": "legacy My Child, comma string reasons, legacy modality string",
+    "body": {
+      "name": "Zztest Childperson", "email": "zztest.parent@example.test", "phone": "505-555-0102",
+      "requestingFor": "My Child", "reasonForTherapy": "ADHD, Anxiety",
+      "modality": "In Person, Telehealth", "patientDob": "2014-09-01",
+      "custody": "Joint", "formCompletedBy": "Zztest Parentperson"
+    }
+  },
+  {
+    "label": "legacy lower-case My child, no guardians field at all",
+    "body": {
+      "name": "Zztest Lowercasechild", "phone": "5055550103",
+      "requestingFor": "My child", "reasonForTherapy": ["Family Conflict"],
+      "patientDob": "2012-01-15"
+    }
+  },
+  {
+    "label": "My Family with participants",
+    "body": {
+      "name": "Zztest Familylead", "email": "zztest.family@example.test",
+      "requestingFor": "My Family", "reasonForTherapy": ["Family Conflict", "Parenting Issues"],
+      "modalityP1": "In Person RR",
+      "participants": [
+        { "name": "Zztest Familyone", "dob": "1980-02-02", "email": "zztest.one@example.test", "phoneNumber": "5055550104" },
+        { "name": "Zztest Familytwo", "dob": "2010-03-03" }
+      ]
+    }
+  },
+  {
+    "label": "partner, legacy participantNames",
+    "body": {
+      "name": "Zztest Partnerlead", "requestingFor": "My Partner & Myself",
+      "reasonForTherapy": "Relationship Issues, Communication Problems",
+      "participantNames": [{ "name": "Zztest Partnertwo" }], "notes": "ZZTEST note"
+    }
+  },
+  {
+    "label": "staff upload with an unknown reason and an unknown modality (warn and drop)",
+    "body": {
+      "name": "Zztest Uploaded", "source": "uploaded_referral",
+      "requestingFor": "Myself", "reasonForTherapy": ["Anxiety", "Zztest Not A Reason", "Other: zztest text"],
+      "modalityP1": "Zztest Nowhere", "modalityP2": "Telehealth",
+      "referralSource": "ZZTEST Clinic", "referralNumber": "ZZ-0001"
+    }
+  },
+  {
+    "label": "website unknown reason (rejected)",
+    "body": { "name": "Zztest Rejectreason", "requestingFor": "Myself", "reasonForTherapy": ["Zztest Not A Reason"] }
+  },
+  {
+    "label": "website unknown modality (rejected)",
+    "body": { "name": "Zztest Rejectmodality", "requestingFor": "Myself", "modalityP1": "Zztest Nowhere" }
+  },
+  {
+    "label": "no name (rejected)",
+    "body": { "name": "   ", "requestingFor": "Myself" }
+  }
+]

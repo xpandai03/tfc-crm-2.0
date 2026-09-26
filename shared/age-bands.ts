@@ -189,6 +189,51 @@ export function bandedServiceType(
   return band === AGE_BAND_UNKNOWN ? raw : band;
 }
 
+// ---------------------------------------------------------------------------
+// What the requester DECLARED, from the Request for Services form
+// ---------------------------------------------------------------------------
+
+/**
+ * The form now asks who the child is: `requestingFor` = "minor_child" or
+ * "adolescent" (2026-09-25), where it used to say "My Child".
+ *
+ * THE DECLARATION IS NOT THE BAND. The client's rule is that the band comes
+ * from the date of birth, and every count in the CRM already follows it. A
+ * parent choosing "minor_child" for a fifteen-year-old is recorded as having
+ * said so, and the child is still counted as Adolescent. So both values are
+ * STORED as "My Child" — the service type every report bands — and the
+ * declaration lives in the raw submission, shown beside the band on the contact.
+ *
+ * Matching is tolerant of case and separators ("Minor child", "minor-child").
+ */
+export const CHILD_SERVICE_TYPE = "My Child";
+
+export type ChildDeclaration = typeof AGE_BAND_MINOR | typeof AGE_BAND_ADOLESCENT;
+
+const CHILD_DECLARATIONS: Readonly<Record<string, ChildDeclaration>> = {
+  minor_child: AGE_BAND_MINOR,
+  adolescent: AGE_BAND_ADOLESCENT,
+};
+
+/** The band the requester declared, or null when the value is not a declaration. */
+export function childDeclaration(raw: unknown): ChildDeclaration | null {
+  if (typeof raw !== "string") return null;
+  const key = raw.trim().toLowerCase().replace(/[-\s]+/g, "_");
+  return Object.prototype.hasOwnProperty.call(CHILD_DECLARATIONS, key) ? CHILD_DECLARATIONS[key] : null;
+}
+
+/**
+ * The service type to STORE for a submitted `requestingFor`.
+ *
+ * A declaration becomes "My Child". Anything else is returned exactly as the
+ * route always stored it — trimmed, verbatim — so "My Child", "My child",
+ * "Myself" and every legacy spelling are untouched.
+ */
+export function storedRequestingFor(raw: unknown): string | null {
+  if (childDeclaration(raw)) return CHILD_SERVICE_TYPE;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
 /** Is this stored service type the one that gets banded? */
 export function isChildServiceType(serviceType: string | null | undefined): boolean {
   return (serviceType ?? "").trim().toLowerCase().replace(/[-_\s]+/g, " ") === "my child";

@@ -48,6 +48,9 @@ export const REASON_CANONICALS = [
   "Parenting Issues",
   "PTSD",
   "Relationship Issues",
+  // Added 2026-09-25 for the Request for Services form. Title Case like every
+  // other entry; alphabetical, so the dropdowns stay sorted.
+  "School Challenges",
   "Self-esteem",
   "Sexual Problems",
   "Sleep Problems",

@@ -1,0 +1,322 @@
+[
+  {
+    "label": "adult, Myself, new modality shape",
+    "result": {
+      "ok": true,
+      "isUploadedReferral": false,
+      "submissionSource": "rfs_v2",
+      "fields": {
+        "name": "Zztest Adultperson",
+        "email": "zztest.adult@example.test",
+        "phone": "(505) 555-0101",
+        "lastNote": "Intake 2026-01-01T00:00:00.000Z\nRequesting For: Myself\nTherapy Type: Anxiety, Depression\nModality: Telehealth, In Person ABQ\nInsurance: ZZTEST Health",
+        "intakeSource": "website_form",
+        "referralAuth": null,
+        "serviceRequested": "Anxiety, Depression",
+        "requestingFor": "Myself",
+        "reasonForSeeking": null,
+        "reasonForTherapy": "Anxiety, Depression",
+        "detailedReason": null,
+        "formCompletedBy": null,
+        "modality": "Telehealth, In Person ABQ",
+        "modalityP1": "Telehealth",
+        "modalityP2": "In Person ABQ",
+        "modalityP3": null,
+        "modalityP4": null,
+        "referralSource": null,
+        "priorServices": null,
+        "priorProvider": null,
+        "preferredContact": null,
+        "custody": null,
+        "flags": null,
+        "priority": null,
+        "insurancePayer": "ZZTEST Health",
+        "insurancePlan": null,
+        "insuranceId": null,
+        "patientDob": "1985-04-12",
+        "gender": null,
+        "streetAddress": null,
+        "city": null,
+        "state": null,
+        "zipCode": "87101",
+        "county": null,
+        "language": null
+      }
+    }
+  },
+  {
+    "label": "legacy My Child, comma string reasons, legacy modality string",
+    "result": {
+      "ok": true,
+      "isUploadedReferral": false,
+      "submissionSource": "rfs_v2",
+      "fields": {
+        "name": "Zztest Childperson",
+        "email": "zztest.parent@example.test",
+        "phone": "505-555-0102",
+        "lastNote": "Intake 2026-01-01T00:00:00.000Z\nRequesting For: My Child\nTherapy Type: ADHD, Anxiety\nModality: In Person, Telehealth",
+        "intakeSource": "website_form",
+        "referralAuth": null,
+        "serviceRequested": "ADHD, Anxiety",
+        "requestingFor": "My Child",
+        "reasonForSeeking": null,
+        "reasonForTherapy": "ADHD, Anxiety",
+        "detailedReason": null,
+        "formCompletedBy": "Zztest Parentperson",
+        "modality": "In Person, Telehealth",
+        "modalityP1": "In Person",
+        "modalityP2": "Telehealth",
+        "modalityP3": null,
+        "modalityP4": null,
+        "referralSource": null,
+        "priorServices": null,
+        "priorProvider": null,
+        "preferredContact": null,
+        "custody": "Joint",
+        "flags": null,
+        "priority": null,
+        "insurancePayer": null,
+        "insurancePlan": null,
+        "insuranceId": null,
+        "patientDob": "2014-09-01",
+        "gender": null,
+        "streetAddress": null,
+        "city": null,
+        "state": null,
+        "zipCode": null,
+        "county": null,
+        "language": null
+      }
+    }
+  },
+  {
+    "label": "legacy lower-case My child, no guardians field at all",
+    "result": {
+      "ok": true,
+      "isUploadedReferral": false,
+      "submissionSource": "rfs_v2",
+      "fields": {
+        "name": "Zztest Lowercasechild",
+        "email": null,
+        "phone": "5055550103",
+        "lastNote": "Intake 2026-01-01T00:00:00.000Z\nRequesting For: My child\nTherapy Type: Family Conflict",
+        "intakeSource": "website_form",
+        "referralAuth": null,
+        "serviceRequested": "Family Conflict",
+        "requestingFor": "My child",
+        "reasonForSeeking": null,
+        "reasonForTherapy": "Family Conflict",
+        "detailedReason": null,
+        "formCompletedBy": null,
+        "modality": null,
+        "modalityP1": null,
+        "modalityP2": null,
+        "modalityP3": null,
+        "modalityP4": null,
+        "referralSource": null,
+        "priorServices": null,
+        "priorProvider": null,
+        "preferredContact": null,
+        "custody": null,
+        "flags": null,
+        "priority": null,
+        "insurancePayer": null,
+        "insurancePlan": null,
+        "insuranceId": null,
+        "patientDob": "2012-01-15",
+        "gender": null,
+        "streetAddress": null,
+        "city": null,
+        "state": null,
+        "zipCode": null,
+        "county": null,
+        "language": null
+      }
+    }
+  },
+  {
+    "label": "My Family with participants",
+    "result": {
+      "ok": true,
+      "isUploadedReferral": false,
+      "submissionSource": "rfs_v2",
+      "fields": {
+        "name": "Zztest Familylead",
+        "email": "zztest.family@example.test",
+        "phone": null,
+        "lastNote": "Intake 2026-01-01T00:00:00.000Z\nRequesting For: My Family\nTherapy Type: Family Conflict, Parenting Issues\nModality: In Person RR",
+        "intakeSource": "website_form",
+        "referralAuth": null,
+        "serviceRequested": "Family Conflict, Parenting Issues",
+        "requestingFor": "My Family",
+        "reasonForSeeking": null,
+        "reasonForTherapy": "Family Conflict, Parenting Issues",
+        "detailedReason": null,
+        "formCompletedBy": null,
+        "modality": "In Person RR",
+        "modalityP1": "In Person RR",
+        "modalityP2": null,
+        "modalityP3": null,
+        "modalityP4": null,
+        "referralSource": null,
+        "priorServices": null,
+        "priorProvider": null,
+        "preferredContact": null,
+        "custody": null,
+        "flags": null,
+        "priority": null,
+        "insurancePayer": null,
+        "insurancePlan": null,
+        "insuranceId": null,
+        "patientDob": null,
+        "gender": null,
+        "streetAddress": null,
+        "city": null,
+        "state": null,
+        "zipCode": null,
+        "county": null,
+        "language": null
+      }
+    }
+  },
+  {
+    "label": "partner, legacy participantNames",
+    "result": {
+      "ok": true,
+      "isUploadedReferral": false,
+      "submissionSource": "rfs_v2",
+      "fields": {
+        "name": "Zztest Partnerlead",
+        "email": null,
+        "phone": null,
+        "lastNote": "Intake 2026-01-01T00:00:00.000Z\nRequesting For: My Partner & Myself\nTherapy Type: Communication Problems, Relationship Issues\nNotes: ZZTEST note",
+        "intakeSource": "website_form",
+        "referralAuth": null,
+        "serviceRequested": "Communication Problems, Relationship Issues",
+        "requestingFor": "My Partner & Myself",
+        "reasonForSeeking": null,
+        "reasonForTherapy": "Communication Problems, Relationship Issues",
+        "detailedReason": null,
+        "formCompletedBy": null,
+        "modality": null,
+        "modalityP1": null,
+        "modalityP2": null,
+        "modalityP3": null,
+        "modalityP4": null,
+        "referralSource": null,
+        "priorServices": null,
+        "priorProvider": null,
+        "preferredContact": null,
+        "custody": null,
+        "flags": null,
+        "priority": null,
+        "insurancePayer": null,
+        "insurancePlan": null,
+        "insuranceId": null,
+        "patientDob": null,
+        "gender": null,
+        "streetAddress": null,
+        "city": null,
+        "state": null,
+        "zipCode": null,
+        "county": null,
+        "language": null
+      }
+    }
+  },
+  {
+    "label": "staff upload with an unknown reason and an unknown modality (warn and drop)",
+    "result": {
+      "ok": true,
+      "isUploadedReferral": true,
+      "submissionSource": "uploaded_referral",
+      "fields": {
+        "name": "Zztest Uploaded",
+        "email": null,
+        "phone": null,
+        "lastNote": "Intake 2026-01-01T00:00:00.000Z\nRequesting For: Myself\nTherapy Type: Anxiety, Other: zztest text\nModality: Telehealth\nReferral: ZZTEST Clinic\nReferral #: ZZ-0001",
+        "intakeSource": "uploaded_referral",
+        "referralAuth": "ZZ-0001",
+        "serviceRequested": "Anxiety, Other: zztest text",
+        "requestingFor": "Myself",
+        "reasonForSeeking": null,
+        "reasonForTherapy": "Anxiety, Other: zztest text",
+        "detailedReason": null,
+        "formCompletedBy": null,
+        "modality": "Telehealth",
+        "modalityP1": "Telehealth",
+        "modalityP2": null,
+        "modalityP3": null,
+        "modalityP4": null,
+        "referralSource": "ZZTEST Clinic",
+        "priorServices": null,
+        "priorProvider": null,
+        "preferredContact": null,
+        "custody": null,
+        "flags": null,
+        "priority": null,
+        "insurancePayer": null,
+        "insurancePlan": null,
+        "insuranceId": null,
+        "patientDob": null,
+        "gender": null,
+        "streetAddress": null,
+        "city": null,
+        "state": null,
+        "zipCode": null,
+        "county": null,
+        "language": null
+      }
+    }
+  },
+  {
+    "label": "website unknown reason (rejected)",
+    "result": {
+      "ok": false,
+      "status": 400,
+      "body": {
+        "error": "validation_error",
+        "field": "reasonForTherapy",
+        "message": "non-canonical reasonForTherapy values from website submission",
+        "unknownValues": [
+          "Zztest Not A Reason"
+        ]
+      }
+    }
+  },
+  {
+    "label": "website unknown modality (rejected)",
+    "result": {
+      "ok": false,
+      "status": 400,
+      "body": {
+        "error": "validation_error",
+        "field": "modalityP1..P4",
+        "message": "non-canonical modality values from website submission",
+        "unknownValues": [
+          "Zztest Nowhere"
+        ],
+        "allowedValues": [
+          "Telehealth",
+          "In Person ABQ",
+          "In Person RR",
+          "In Person LL",
+          "In Person",
+          "Hybrid",
+          "Flex",
+          "Unknown"
+        ]
+      }
+    }
+  },
+  {
+    "label": "no name (rejected)",
+    "result": {
+      "ok": false,
+      "status": 400,
+      "body": {
+        "error": "name is required"
+      }
+    }
+  }
+]
