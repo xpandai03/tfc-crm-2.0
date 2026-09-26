@@ -24,6 +24,7 @@
 
 import { getPool } from "../db/pool";
 import type { ContactIdentity, MatchReason } from "./matching";
+import type { ReviewReason } from "@shared/survey-match-reasons";
 
 export type MatchStatus = "matched" | "review" | "no_contact";
 
@@ -164,6 +165,12 @@ export async function getHumanResolvedIds(): Promise<Set<number>> {
  *
  * Guarded by `resolved_by IS NULL` in the UPDATE branch, so a re-run can never
  * silently undo a person's decision.
+ *
+ * AND BY THE attach_ PREFIX. A row that filing sent back to review
+ * (markAttachRefusalForReview) is left alone too. Without this, the 03:00
+ * re-match would recompute it as "matched" from the same unchanged data and the
+ * 03:30 batch would refuse it again — the nightly loop #983 was stuck in. Only
+ * a person clears it, through recordHumanResolution, which has no such guard.
  */
 export async function markAutoMatchResult(params: {
   submissionId: number;
@@ -189,7 +196,8 @@ export async function markAutoMatchResult(params: {
        matched_chart_id   = EXCLUDED.matched_chart_id,
        candidate_ids      = EXCLUDED.candidate_ids,
        updated_at         = NOW()
-     WHERE survey_match_reviews.resolved_by IS NULL`,
+     WHERE survey_match_reviews.resolved_by IS NULL
+       AND left(survey_match_reviews.reason, 7) <> 'attach_'`,
     [
       params.submissionId,
       params.status,
@@ -198,6 +206,46 @@ export async function markAutoMatchResult(params: {
       JSON.stringify(params.candidateIds),
       params.chartId ?? null,
     ],
+  );
+}
+
+/**
+ * Filing refused this submission on a fact the chart holds: send it to review.
+ *
+ * THE ONLY WRITER OF AN attach_ REASON. Called by attachOne after a refusal
+ * that ATTACH_REFUSAL_REVIEW_REASON classes as a data mismatch — never for a
+ * transient failure, which leaves the row matched for the next batch.
+ *
+ * What it changes, and what it deliberately leaves:
+ *   status/reason   -> review + the field that failed. Review is what takes the
+ *                      row out of the batch (checkEligibility sends only
+ *                      "matched"), so no batch query had to change.
+ *   updated_at      -> now: the attempt time the Submissions row shows.
+ *   resolved_by/at  -> cleared. A person who confirmed this match did so before
+ *                      the chart said otherwise; the row is theirs to decide
+ *                      again, and until they do it is outstanding.
+ *   contact, chart,
+ *   candidates      -> kept. They are what the reviewer needs to see what was
+ *                      tried, and the matcher's evidence is not what failed.
+ *
+ * Upsert, because a MANUAL attach can be pressed on a row the matcher never
+ * wrote. No attempt row is touched: survey_attach_attempts keeps the failed
+ * attempt and its reason, and the manual button can re-run from review.
+ */
+export async function markAttachRefusalForReview(params: {
+  submissionId: number;
+  reason: ReviewReason;
+}): Promise<void> {
+  await getPool().query(
+    `INSERT INTO survey_match_reviews (submission_id, status, reason, candidate_ids, updated_at)
+     VALUES ($1, 'review', $2, '[]', NOW())
+     ON CONFLICT (submission_id) DO UPDATE SET
+       status      = 'review',
+       reason      = EXCLUDED.reason,
+       resolved_by = NULL,
+       resolved_at = NULL,
+       updated_at  = NOW()`,
+    [params.submissionId, params.reason],
   );
 }
 

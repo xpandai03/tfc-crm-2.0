@@ -68,6 +68,50 @@ interface Snapshot {
   countsAsOf: string | null;
   submissionsInPeriod: number;
   overrideCount: number;
+  patientPull: PatientPull | null;
+}
+
+interface PatientPull {
+  rows: number;
+  capturedAt: string | null;
+  lastAttemptAt: string | null;
+  lastAttemptOk: boolean | null;
+  lastFailure: string | null;
+}
+
+/**
+ * Older than this, the patient list is stale whatever the last attempt said.
+ * The pull runs nightly at 03:00 Mountain, so 36 hours is one missed night plus
+ * a working day's grace.
+ */
+const PULL_STALE_MS = 36 * 60 * 60 * 1000;
+
+/**
+ * The nightly patient pull, in one line: amber when the last attempt failed or
+ * the list is stale, quiet otherwise. Survey matching and filing both read this
+ * list, and a failed night used to be visible only in an activity row.
+ *
+ * Counts and times only. The failure sentence is the runner's, built from
+ * counts and HTTP statuses.
+ */
+function PatientPullLine({ pull }: { pull: PatientPull | null }) {
+  if (!pull) return null;
+  const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "never");
+  const stale = !pull.capturedAt || Date.now() - new Date(pull.capturedAt).getTime() > PULL_STALE_MS;
+  const failed = pull.lastAttemptOk === false;
+  return (
+    <p
+      className={`text-[11px] ${failed || stale ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}
+      data-testid="patient-pull-health"
+    >
+      TherapyNotes patient list: {pull.rows.toLocaleString()} patients, read {when(pull.capturedAt)}.
+      {failed
+        ? ` The last attempt (${when(pull.lastAttemptAt)}) failed and the previous list was kept: ${pull.lastFailure}`
+        : stale
+          ? " This is more than a day old — the nightly read has not refreshed it."
+          : ""}
+    </p>
+  );
 }
 
 const OFFICE_LABEL: Record<string, string> = {
@@ -301,6 +345,7 @@ export function SurveySnapshot() {
                   ? ` ${data.overrideCount} figure${data.overrideCount === 1 ? "" : "s"} set by hand.`
                   : ""}
               </p>
+              <PatientPullLine pull={data.patientPull} />
             </>
           )}
         </div>

@@ -63,6 +63,55 @@ const PATIENTS_URL = `${TN_AGENT_BASE_URL}/api/tn/active-patients`;
 /** Measured at 133s. Ten minutes is the ceiling, not the expectation. */
 const PULL_TIMEOUT_MS = 600_000;
 
+/**
+ * RETRY A TRANSPORT FAILURE, NOT A VERDICT.
+ *
+ * On 23 September the agent completed its pass — 33 clinicians, 1,043 rows —
+ * but the CRM received a 502 from Railway's edge at 98s instead of the body
+ * (the edge logged the request as client-closed and replayed the GET upstream).
+ * The runner treated that like any failure, kept yesterday's snapshot, and
+ * nobody knew until a day later. Nothing about the pull was wrong; the hop
+ * between the two services was.
+ *
+ * So a gateway status (502/503/504) or a connection that dropped before any
+ * response is retried, twice. Nothing else is: a 4xx, unreadable JSON, a
+ * partial pass or a truncated list is an answer, and asking again would only
+ * get the same answer. A TIMEOUT is not retried either — at ten minutes the
+ * agent may still be holding its single licence, and a second pass would queue
+ * behind the first.
+ *
+ * The wait is longer than one pass (~133s), because the agent keeps running the
+ * orphaned pass after the edge drops the connection, and a retry that arrives
+ * sooner simply waits on the licence while holding a long request open — the
+ * exposure being retried away from. Two retries at 150s end by about 03:12
+ * Mountain, well before the 03:30 attach batch.
+ */
+const RETRYABLE_STATUS = new Set([502, 503, 504]);
+const PULL_RETRIES = 2;
+const PULL_RETRY_DELAY_MS = 150_000;
+
+/**
+ * THE FLOOR. A complete pull that returns fewer than this share of the current
+ * snapshot does not replace it. The practice's active caseload moves by a
+ * handful a night (1,042 -> 1,043 -> 1,041 over 21-25 September); losing a
+ * fifth overnight is a reading problem, not a discharge wave, and replacing the
+ * table on it would silently send every survey for the missing patients to
+ * review. A genuine large drop is let through by a person running the pull by
+ * hand after checking, not by lowering this.
+ */
+export const MIN_KEEP_FRACTION = 0.8;
+
+/** Would this pull shrink the snapshot below the floor? Pure, for the test. */
+export function belowFloor(newRows: number, previousRows: number): boolean {
+  if (previousRows <= 0) return false; // first pull ever: nothing to compare with
+  return newRows < Math.ceil(previousRows * MIN_KEEP_FRACTION);
+}
+
+/** Is this a failure of the hop between the services, worth asking again? */
+export function isTransientTransport(status: number | null): boolean {
+  return status === null || RETRYABLE_STATUS.has(status);
+}
+
 /** The agent's contract — verified against the live route on 2026-09-15. */
 interface AgentPatientRow {
   chart_id: string;
@@ -79,6 +128,10 @@ interface AgentClinicianPage {
   status: "success" | "failure";
   failure_reason?: string | null;
   row_count?: number;
+  /** How many pages of this clinician's list were read. */
+  pages_read?: number;
+  /** The agent hit its page ceiling: there were rows it did not read. */
+  truncated?: boolean;
   rows?: AgentPatientRow[];
 }
 interface AgentPatientsResponse {
@@ -103,6 +156,12 @@ export interface TnPatientPullSummary {
   optionsReturned: number;
   failedOptions: number;
   rowsReturned: number;
+  /** Pages of the patient list read across every clinician. */
+  pagesRead: number;
+  /** Patients in the snapshot before this pull — what the floor compares with. */
+  previousRows: number;
+  /** Requests made, including retries. 1 on a clean night. */
+  attempts: number;
   distinctPatients: number;
   sharedCare: number;
   withPhone: number;
@@ -208,13 +267,22 @@ export function collapseByChart(pages: AgentClinicianPage[]): TnPatientRow[] {
 
 export async function runTnPatientPull(
   trigger: "scheduled" | "manual",
+  // Injectable for the self-check only: a test cannot wait 150s, and must not
+  // call the real agent. Production passes nothing.
+  opts: { retryDelayMs?: number; fetchImpl?: typeof fetch } = {},
 ): Promise<TnPatientPullSummary> {
   const started = Date.now();
+  const retryDelayMs = opts.retryDelayMs ?? PULL_RETRY_DELAY_MS;
+  const doFetch = opts.fetchImpl ?? fetch;
+  let attempts = 0;
+  let pagesRead = 0;
+  let rowsSeen = 0;
   const fail = async (message: string, passStatus = "error"): Promise<TnPatientPullSummary> => {
     const before = await tnPatientStats().catch(() => ({ rows: 0, capturedOn: null }));
     const summary: TnPatientPullSummary = {
       ok: false, passStatus, capturedOn: before.capturedOn, optionsReturned: 0,
-      failedOptions: 0, rowsReturned: 0, distinctPatients: 0, sharedCare: 0,
+      failedOptions: 0, rowsReturned: rowsSeen, pagesRead, previousRows: before.rows, attempts,
+      distinctPatients: 0, sharedCare: 0,
       withPhone: 0, stored: 0, replaced: false, message,
       // A failed pull classified nothing. Zeroes, not the previous pull's
       // counts: reporting yesterday's shape against today's failure would be a
@@ -230,7 +298,8 @@ export async function runTnPatientPull(
       entityName: "tn_patient_pull",
       metadata: {
         trigger, outcome: "failed", passStatus, message,
-        keptRows: before.rows, durationMs: Date.now() - started,
+        keptRows: before.rows, rows: rowsSeen, pages: pagesRead, attempts,
+        durationMs: Date.now() - started,
       },
     }).catch(() => { /* logging must not mask the failure */ });
     return summary;
@@ -240,33 +309,59 @@ export async function runTnPatientPull(
     return fail("TN_AGENT_BASE_URL or TN_API_KEY not configured", "skipped");
   }
 
-  let body: AgentPatientsResponse;
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), PULL_TIMEOUT_MS);
-    let res: Response;
+  let body: AgentPatientsResponse | null = null;
+  while (body === null) {
+    attempts += 1;
+    // null = no HTTP response at all (the connection dropped).
+    let status: number | null = null;
+    let problem: string;
     try {
-      res = await fetch(PATIENTS_URL, {
-        method: "GET",
-        headers: { "X-API-Key": process.env.TN_API_KEY! },
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), PULL_TIMEOUT_MS);
+      let res: Response;
+      try {
+        res = await doFetch(PATIENTS_URL, {
+          method: "GET",
+          headers: { "X-API-Key": process.env.TN_API_KEY! },
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+      const raw = await res.text();
+      status = res.status;
+      if (res.ok) {
+        try {
+          body = JSON.parse(raw) as AgentPatientsResponse;
+          break;
+        } catch {
+          return fail(`agent returned invalid JSON (HTTP ${res.status})`);
+        }
+      }
+      problem = `agent returned HTTP ${res.status}`;
+    } catch (e) {
+      // A timeout is final — see PULL_RETRIES. Anything else thrown here is a
+      // connection that never produced a response.
+      if (e instanceof Error && e.name === "AbortError") {
+        return fail(`agent did not answer within ${PULL_TIMEOUT_MS / 1000}s`);
+      }
+      problem = e instanceof Error ? e.message : "agent call failed";
     }
-    const raw = await res.text();
-    if (!res.ok) return fail(`agent returned HTTP ${res.status}`);
-    try {
-      body = JSON.parse(raw) as AgentPatientsResponse;
-    } catch {
-      return fail(`agent returned invalid JSON (HTTP ${res.status})`);
+    if (!isTransientTransport(status) || attempts > PULL_RETRIES) {
+      return fail(attempts > 1 ? `${problem} (after ${attempts} attempts)` : problem);
     }
-  } catch (e) {
-    return fail(e instanceof Error ? e.message : "agent call failed");
+    console.warn(
+      `[tn-patients] ${trigger} pull attempt ${attempts} failed in transit (${problem}) — ` +
+      `retrying in ${Math.round(retryDelayMs / 1000)}s`,
+    );
+    await new Promise((r) => setTimeout(r, retryDelayMs));
   }
 
   const pages = body.results ?? [];
   const failedOptions = pages.filter((p) => p.status !== "success").length;
+  const listPages = pages.filter((p) => !p.is_aggregate);
+  pagesRead = listPages.reduce((n, p) => n + (p.pages_read ?? 0), 0);
+  rowsSeen = listPages.reduce((n, p) => n + (p.rows?.length ?? 0), 0);
 
   // THE GUARD. Anything short of a complete pull leaves the table alone.
   if (body.status !== "success" || failedOptions > 0 || pages.length === 0) {
@@ -277,15 +372,38 @@ export async function runTnPatientPull(
     );
   }
 
+  // A TRUNCATED LIST IS AN INCOMPLETE PULL. The agent marks a clinician whose
+  // pager ran past its ceiling; replacing from that would drop everyone on the
+  // pages it never read, exactly as a failed clinician would.
+  const truncated = listPages.filter((p) => p.truncated).length;
+  if (truncated > 0) {
+    return fail(
+      `${truncated} clinician list(s) were truncated — incomplete pull, not replacing the snapshot`,
+      body.status,
+    );
+  }
+
   const patients = collapseByChart(pages);
   if (patients.length === 0) {
-    return fail("pull returned no patient rows — not replacing the snapshot", body.status);
+    return fail(
+      `pull returned no patient rows (${rowsSeen} rows over ${pagesRead} pages) — ` +
+      `not replacing the snapshot`,
+      body.status,
+    );
+  }
+
+  // THE FLOOR — see MIN_KEEP_FRACTION.
+  const previous = await tnPatientStats().catch(() => ({ rows: 0, capturedOn: null }));
+  if (belowFloor(patients.length, previous.rows)) {
+    return fail(
+      `pull returned ${patients.length} patients against ${previous.rows} in the current ` +
+      `snapshot, below the ${Math.round(MIN_KEEP_FRACTION * 100)}% floor — not replacing the snapshot`,
+      body.status,
+    );
   }
 
   const capturedAt = body.captured_at || new Date().toISOString();
-  const rowsReturned = pages
-    .filter((p) => !p.is_aggregate)
-    .reduce((n, p) => n + (p.rows?.length ?? 0), 0);
+  const rowsReturned = rowsSeen;
   const withPhone = patients.filter((p) => p.phone.trim() !== "").length;
   const sharedCare = patients.filter((p) => p.clinicians.length > 1).length;
   const nameShapes = classifyNameShapes(patients);
@@ -307,6 +425,9 @@ export async function runTnPatientPull(
     optionsReturned: pages.length,
     failedOptions: 0,
     rowsReturned,
+    pagesRead,
+    previousRows: previous.rows,
+    attempts,
     distinctPatients: patients.length,
     sharedCare,
     withPhone,
@@ -317,7 +438,8 @@ export async function runTnPatientPull(
 
   console.log(
     `[tn-patients] ${trigger} pull ${body.status}: ${pages.length} options, ` +
-    `${rowsReturned} rows -> ${patients.length} patients stored, ` +
+    `${pagesRead} pages, ${rowsReturned} rows -> ${patients.length} patients stored ` +
+    `(was ${previous.rows}), ${attempts} attempt(s), ` +
     `${sharedCare} shared-care, ${withPhone} with a phone ` +
     `(${((100 * withPhone) / patients.length).toFixed(1)}%), ${Date.now() - started}ms`,
   );
@@ -337,7 +459,8 @@ export async function runTnPatientPull(
     metadata: {
       trigger, outcome: "ok", passStatus: body.status,
       capturedOn: summary.capturedOn, options: pages.length,
-      rows: rowsReturned, patients: patients.length, sharedCare, withPhone,
+      rows: rowsReturned, pages: pagesRead, patients: patients.length,
+      previousRows: previous.rows, attempts, sharedCare, withPhone,
       durationMs: Date.now() - started,
     },
   }).catch(() => { /* best effort */ });
