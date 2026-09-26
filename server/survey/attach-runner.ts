@@ -23,7 +23,8 @@
 import { getSubmissionById, getRecentSurveySubmissions, type FormSubmission } from "../sync/db";
 import { SURVEY_FORM_TYPE } from "@shared/survey-questions";
 import { logActivity } from "../activity/db";
-import { getMatchState } from "./match-db";
+import { getMatchState, markAttachRefusalForReview } from "./match-db";
+import { reviewReasonForAttachRefusal } from "@shared/survey-match-reasons";
 import {
   claimAttach,
   getAttachRow,
@@ -249,6 +250,8 @@ export interface AttachResult {
   /** Reason code on failure; ineligibility code on skip. */
   reason: string | null;
   durationMs: number;
+  /** A data-mismatch refusal sent the row to review; the batch will not retry it. */
+  sentToReview?: boolean;
 }
 
 /** The document name TherapyNotes will show. Date and id only — never a name. */
@@ -443,6 +446,30 @@ export async function attachOne(params: {
   const durationMs = Date.now() - t0;
   await recordAttachOutcome({ submissionId, status, reason, durationMs, tnPatientUrl, selectionMode });
 
+  // DATA MISMATCH -> REVIEW, AFTER ONE REFUSAL. A refusal on a fact the chart
+  // holds (see ATTACH_REFUSAL_REVIEW_REASON for the table) will be refused
+  // again tomorrow from the same data, so the row leaves the batch now and goes
+  // in front of a person. A transient refusal returns null here and the row
+  // stays matched for the next run. Same code path for the button and the
+  // batch: a staff member's press that the chart refuses lands in the same
+  // place as the batch's.
+  let sentToReview = false;
+  const reviewReason = status === "failed" ? reviewReasonForAttachRefusal(reason) : null;
+  if (reviewReason) {
+    try {
+      await markAttachRefusalForReview({ submissionId, reason: reviewReason });
+      sentToReview = true;
+      console.log(`[survey-attach] TO REVIEW id=${submissionId} reason=${reviewReason}`);
+    } catch (e) {
+      // Not fatal: the attempt is recorded, and the worst case is one more
+      // nightly refusal — the behaviour before this existed.
+      console.error(
+        `[survey-attach] could not send id=${submissionId} to review:`,
+        e instanceof Error ? e.message : "unknown",
+      );
+    }
+  }
+
   // Audit trail. entityName is a FIXED string: logActivity persists it and the
   // Activity page renders it, so a client's name here would put them in a feed.
   await logActivity({
@@ -461,7 +488,7 @@ export async function attachOne(params: {
     `[survey-attach] ${status.toUpperCase()} id=${submissionId} ` +
     `${reason ? `reason=${reason} ` : ""}ms=${durationMs}`,
   );
-  return { submissionId, status, reason, durationMs };
+  return { submissionId, status, reason, durationMs, sentToReview };
 }
 
 // ---------------------------------------------------------------------------
@@ -476,6 +503,8 @@ export interface AttachRunSummary {
   failed: number;
   /** Eligible but over the cap — taken on a later night. */
   deferred: number;
+  /** Refused on a data mismatch and moved to review — not retried. */
+  toReview: number;
   byReason: Record<string, number>;
 }
 
@@ -512,7 +541,8 @@ export async function findAttachable(limit: number): Promise<{ ready: FormSubmis
  */
 export async function runScheduledAttach(cap: number = ATTACH_BATCH_CAP): Promise<AttachRunSummary> {
   const summary: AttachRunSummary = {
-    considered: 0, eligible: 0, attempted: 0, attached: 0, failed: 0, deferred: 0, byReason: {},
+    considered: 0, eligible: 0, attempted: 0, attached: 0, failed: 0, deferred: 0, toReview: 0,
+    byReason: {},
   };
 
   const { ready, totalEligible } = await findAttachable(cap);
@@ -528,6 +558,7 @@ export async function runScheduledAttach(cap: number = ATTACH_BATCH_CAP): Promis
       if (r.status === "attached") summary.attached += 1;
       else {
         summary.failed += 1;
+        if (r.sentToReview) summary.toReview += 1;
         const k = r.reason ?? "unknown_error";
         summary.byReason[k] = (summary.byReason[k] ?? 0) + 1;
       }

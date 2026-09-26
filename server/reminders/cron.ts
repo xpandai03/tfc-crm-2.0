@@ -266,7 +266,7 @@ async function runSurveyAttachBatch(): Promise<void> {
     console.log(
       `[attach-cron] Run complete in ${Math.round((Date.now() - startedAt) / 1000)}s — ` +
       `eligible=${s.eligible} attempted=${s.attempted} attached=${s.attached} ` +
-      `failed=${s.failed} deferred=${s.deferred}${reasons ? ` [${reasons}]` : ""}`,
+      `failed=${s.failed} to_review=${s.toReview} deferred=${s.deferred}${reasons ? ` [${reasons}]` : ""}`,
     );
     if (s.deferred > 0) {
       console.log(

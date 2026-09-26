@@ -221,6 +221,52 @@ function safeArray(raw: unknown): string[] {
   }
 }
 
+/**
+ * Is the nightly patient pull healthy? For the Submissions snapshot.
+ *
+ * Two facts, read from where they already live — no new table:
+ *   - the snapshot itself: how many patients, captured when
+ *   - the last ATTEMPT, from the activity row every pull writes, ok or failed
+ *
+ * They differ exactly when it matters. After 23 September's failure the table
+ * still held a healthy 1,043 rows from the night before, and the only trace of
+ * the failed attempt was an activity row nobody opens. Showing both is what
+ * turns "the table looks fine" into "the table is a day old, and here is why".
+ *
+ * COUNTS, TIMES AND THE RUNNER'S OWN FAILURE SENTENCE. That sentence is built by
+ * tn-patients-runner.ts from counts and HTTP statuses; it never carries a
+ * patient value.
+ */
+export interface TnPullHealth {
+  rows: number;
+  capturedAt: string | null;
+  lastAttemptAt: string | null;
+  lastAttemptOk: boolean | null;
+  lastFailure: string | null;
+}
+
+export async function tnPullHealth(): Promise<TnPullHealth> {
+  const pool = getPool();
+  const [snap, last] = await Promise.all([
+    pool.query(`SELECT COUNT(*)::int AS n, MAX(captured_at) AS at FROM tn_patients`),
+    pool.query(
+      `SELECT created_at AS at, metadata FROM activity_log
+        WHERE type = 'tn_patient_pull' ORDER BY created_at DESC LIMIT 1`,
+    ),
+  ]);
+  const iso = (v: unknown) => (v ? new Date(v as string).toISOString() : null);
+  let meta: { outcome?: string; message?: string } = {};
+  try { meta = JSON.parse(String(last.rows[0]?.metadata ?? "{}")); } catch { /* unreadable: treat as unknown */ }
+  const ok = last.rows[0] ? meta.outcome === "ok" : null;
+  return {
+    rows: snap.rows[0]?.n ?? 0,
+    capturedAt: iso(snap.rows[0]?.at),
+    lastAttemptAt: iso(last.rows[0]?.at),
+    lastAttemptOk: ok,
+    lastFailure: ok === false ? String(meta.message ?? "unknown failure") : null,
+  };
+}
+
 /** Counts for the run report. Never content. */
 export async function tnPatientStats(): Promise<{ rows: number; capturedOn: string | null }> {
   const { rows } = await getPool().query(

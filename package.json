@@ -46,6 +46,7 @@
     "test:attach-chart-id": "tsx scripts/test-attach-chart-id.ts",
     "test:count-overrides": "tsx scripts/test-active-count-overrides.ts",
     "test:snapshot": "tsx scripts/test-survey-snapshot.ts",
+    "test:attach-review": "tsx scripts/test-attach-review-and-pull-health.ts",
     "fixture:survey-export": "tsx scripts/fixture-survey-export.ts"
   },
   "dependencies": {

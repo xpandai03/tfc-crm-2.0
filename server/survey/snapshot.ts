@@ -45,6 +45,7 @@
 
 import { UNKNOWN_OFFICE } from "./aggregate";
 import { loadSurveyPeriodData, type SurveyExportRange } from "./export";
+import { tnPullHealth, type TnPullHealth } from "../therapy-notes/tn-patients-db";
 
 /** One provider's line in the snapshot. */
 export interface SnapshotProviderRow {
@@ -83,6 +84,12 @@ export interface SurveySnapshot {
   countsAsOf: string | null;
   submissionsInPeriod: number;
   overrideCount: number;
+  /**
+   * The nightly TherapyNotes patient pull — the population survey matching and
+   * filing depend on. Null only if it could not be read at all; the snapshot's
+   * own numbers do not depend on it.
+   */
+  patientPull: TnPullHealth | null;
 }
 
 /**
@@ -99,6 +106,8 @@ export function percent(surveys: number, active: number | null): number | null {
 
 export async function buildSurveySnapshot(range: SurveyExportRange): Promise<SurveySnapshot> {
   const { aggregate, activeCounts, overrideCount } = await loadSurveyPeriodData(range);
+  // Its own read, and never fatal: the snapshot's figures do not depend on it.
+  const patientPull = await tnPullHealth().catch(() => null);
 
   const providers: SnapshotProviderRow[] = aggregate.providers.map((p) => {
     const cell = p.providerId === null ? undefined : activeCounts.byProviderId[p.providerId];
@@ -146,6 +155,7 @@ export async function buildSurveySnapshot(range: SurveyExportRange): Promise<Sur
     countsAsOf: activeCounts.newestCapturedOn,
     submissionsInPeriod: aggregate.submissionsInPeriod,
     overrideCount,
+    patientPull,
   };
 }
 
