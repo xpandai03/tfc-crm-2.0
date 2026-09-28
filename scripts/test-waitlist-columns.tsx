@@ -57,7 +57,7 @@ const baseContact = (over: any = {}) => ({
 });
 
 // ---------------------------------------------------------------- config shape
-eq("33 columns (11 default + 22 optional)", WAITLIST_COLUMNS.length, 33);
+eq("35 columns (11 default + 24 optional)", WAITLIST_COLUMNS.length, 35);
 // The 11 stock columns must remain first and in their exact original order —
 // that is the pixel-identical guarantee for a non-customizing user.
 eq("stock 11 lead the default order", ALL_COLUMN_IDS_IN_DEFAULT_ORDER.slice(0, 11),
@@ -65,7 +65,7 @@ eq("stock 11 lead the default order", ALL_COLUMN_IDS_IN_DEFAULT_ORDER.slice(0, 1
 // A user with no saved prefs must see exactly the pre-feature table.
 eq("11 visible by default (identical to pre-feature)", DEFAULT_VISIBLE_COLUMN_IDS, 
   ["name","umbrella","status","daysWaiting","service","insurance","modality","assignedTo","assignedProvider","paperwork","household"]);
-eq("22 optional columns, all default-hidden", WAITLIST_COLUMNS.filter((c) => !c.defaultVisible).length, 22);
+eq("24 optional columns, all default-hidden", WAITLIST_COLUMNS.filter((c) => !c.defaultVisible).length, 24);
 // Phase 2 picker set.
 for (const id of ["lastContact","insurancePlan","insuranceStatus","referralSource","referralStatus",
                   "preferredContact","age","gender","city","county","state","zipCode",

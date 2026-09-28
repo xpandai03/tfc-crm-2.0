@@ -27,6 +27,10 @@ function getEventIcon(type: string) {
       return <Trash2 className="h-4 w-4 text-red-500" />;
     case "contact_updated":
       return <Pencil className="h-4 w-4 text-purple-500" />;
+    case "contact_hold_set":
+      return <AlertTriangle className="h-4 w-4 text-red-600" />;
+    case "contact_hold_cleared":
+      return <AlertTriangle className="h-4 w-4 text-muted-foreground" />;
     case "contact_deleted":
       return <Trash2 className="h-4 w-4 text-red-600" />;
     case "contact_assigned":

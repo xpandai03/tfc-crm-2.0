@@ -138,6 +138,13 @@ export interface SyncContact {
   modalityP4: string | null;
   /** Paperwork Status — CRM-owned, NULL = not tracked. See shared/paperwork-status.ts. */
   paperworkStatus: string | null;
+  /** Custody document status — CRM-owned, NULL = not tracked. See shared/custody-doc-status.ts. */
+  custodyDocStatus?: string | null;
+  /** Manual account hold — CRM-owned. See shared/account-hold.ts. */
+  holdActive?: boolean;
+  holdReason?: string | null;
+  /** Only when the reason is "Other (see notes)". Read on the contact, not on the board. */
+  holdNote?: string | null;
   referralSource: string | null;
   priorServices: string | null;
   priorProvider: string | null;
@@ -286,6 +293,16 @@ export async function initSyncTables(): Promise<void> {
       -- DO UPDATE SET below and from enrichSyncContact's fieldMap).
       paperwork_status TEXT,
 
+      -- Custody document status and the manual account hold. CRM-owned; never
+      -- written by the n8n sync upserts (excluded from every DO UPDATE SET below
+      -- and from enrichSyncContact's fieldMap). See shared/custody-doc-status.ts
+      -- and shared/account-hold.ts. Independent of each other: neither sets the
+      -- other.
+      custody_doc_status TEXT,
+      hold_active        BOOLEAN NOT NULL DEFAULT FALSE,
+      hold_reason        TEXT,
+      hold_note          TEXT,
+
       synced_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       sync_hash          TEXT
     )
@@ -395,6 +412,19 @@ export async function initSyncTables(): Promise<void> {
     try {
       await pool.query(`ALTER TABLE sync_contacts ADD COLUMN IF NOT EXISTS paperwork_status TEXT`);
     } catch (_) { /* column already exists */ }
+    // Custody document status + manual account hold. Prod adds these manually
+    // via migrations/add-custody-docs-and-hold.sql (schema-before-code, C16);
+    // this keeps fresh/non-prod DBs in sync. CRM-owned — excluded from every
+    // sync upsert's DO UPDATE SET.
+    try {
+      await pool.query(
+        `ALTER TABLE sync_contacts
+           ADD COLUMN IF NOT EXISTS custody_doc_status TEXT,
+           ADD COLUMN IF NOT EXISTS hold_active BOOLEAN NOT NULL DEFAULT FALSE,
+           ADD COLUMN IF NOT EXISTS hold_reason TEXT,
+           ADD COLUMN IF NOT EXISTS hold_note TEXT`
+      );
+    } catch (_) { /* columns already exist */ }
   }
 
   console.log("[sync-db] Sync tables initialized");
@@ -677,6 +707,9 @@ export async function getAllSyncContacts(): Promise<SyncContact[]> {
       modality_p3 AS "modalityP3",
       modality_p4 AS "modalityP4",
       paperwork_status AS "paperworkStatus",
+      custody_doc_status AS "custodyDocStatus",
+      hold_active AS "holdActive",
+      hold_reason AS "holdReason",
       referral_source AS "referralSource",
       prior_services AS "priorServices",
       prior_provider AS "priorProvider",
@@ -1395,6 +1428,10 @@ export async function getSyncContactById(contactId: number): Promise<SyncContact
       modality_p3 AS "modalityP3",
       modality_p4 AS "modalityP4",
       paperwork_status AS "paperworkStatus",
+      custody_doc_status AS "custodyDocStatus",
+      hold_active AS "holdActive",
+      hold_reason AS "holdReason",
+      hold_note AS "holdNote",
       referral_source AS "referralSource",
       prior_services AS "priorServices",
       prior_provider AS "priorProvider",
@@ -2828,6 +2865,11 @@ const SAFE_INTAKE_FIELDS: Record<string, string> = {
   // validates the value against shared/paperwork-status.ts before it gets here.
   // Excluded from the n8n sync upserts so a sync can never clobber it.
   paperworkStatus: "paperwork_status",
+  // Custody document status. Same rules as paperworkStatus: validated against
+  // shared/custody-doc-status.ts in the PATCH route, excluded from every sync.
+  // The hold columns are deliberately NOT here — they change only through the
+  // logged /hold endpoints (setContactHold / clearContactHold below).
+  custodyDocStatus: "custody_doc_status",
   insurancePayer: "insurance_payer",
   insurancePlan: "insurance_plan",
   insuranceId: "insurance_id",
@@ -2889,6 +2931,64 @@ export async function updateContactIntakeFields(
   );
 
   return { updated: updatedFields, notFound: false };
+}
+
+// ============================================================================
+// Manual account hold (CRM-owned; see shared/account-hold.ts)
+// ============================================================================
+
+export interface ContactHoldRow {
+  holdActive: boolean;
+  holdReason: string | null;
+  holdNote: string | null;
+}
+
+/**
+ * Put a contact on hold, or change the reason of a hold already in place.
+ * `note` is stored only for the "Other" reason and nulled otherwise, so a stale
+ * note cannot outlive the reason it explained. Returns the state BEFORE the
+ * change so the route can log what it replaced. Does NOT touch synced_at.
+ * Validation of `reason` is the caller's (the route checks isValidHoldReason).
+ */
+export async function setContactHold(
+  contactId: number,
+  reason: string,
+  note: string | null,
+): Promise<{ notFound: boolean; previous: ContactHoldRow | null }> {
+  const pool = getPool();
+  const before = await pool.query(
+    `SELECT hold_active AS "holdActive", hold_reason AS "holdReason", hold_note AS "holdNote"
+       FROM sync_contacts WHERE contact_id = $1`,
+    [contactId],
+  );
+  if (before.rows.length === 0) return { notFound: true, previous: null };
+  await pool.query(
+    `UPDATE sync_contacts
+        SET hold_active = TRUE, hold_reason = $1, hold_note = $2
+      WHERE contact_id = $3`,
+    [reason, note, contactId],
+  );
+  return { notFound: false, previous: before.rows[0] as ContactHoldRow };
+}
+
+/** Take a contact off hold. Clears the reason and note with it. */
+export async function clearContactHold(
+  contactId: number,
+): Promise<{ notFound: boolean; previous: ContactHoldRow | null }> {
+  const pool = getPool();
+  const before = await pool.query(
+    `SELECT hold_active AS "holdActive", hold_reason AS "holdReason", hold_note AS "holdNote"
+       FROM sync_contacts WHERE contact_id = $1`,
+    [contactId],
+  );
+  if (before.rows.length === 0) return { notFound: true, previous: null };
+  await pool.query(
+    `UPDATE sync_contacts
+        SET hold_active = FALSE, hold_reason = NULL, hold_note = NULL
+      WHERE contact_id = $1`,
+    [contactId],
+  );
+  return { notFound: false, previous: before.rows[0] as ContactHoldRow };
 }
 
 // ============================================================================

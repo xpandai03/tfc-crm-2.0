@@ -19,6 +19,10 @@ export type ActivityType =
   | "note_added"
   | "note_deleted"
   | "contact_updated"
+  // Manual account hold set (or its reason changed) / cleared. Metadata carries
+  // the reason only — never the free-text note. See shared/account-hold.ts.
+  | "contact_hold_set"
+  | "contact_hold_cleared"
   | "contact_deleted"
   | "contact_assigned"
   | "assignment_deleted"
@@ -474,6 +478,18 @@ function formatActivitySummary(
       const fields = String(metadata.fields || "");
       if (fields) return `Updated intake for ${name}: ${fields}`;
       return `Updated intake for ${name}`;
+    }
+
+    case "contact_hold_set": {
+      const reason = String(metadata.reason || "");
+      const previous = String(metadata.previousReason || "");
+      if (previous && previous !== reason) return `Changed hold reason for ${name}: ${previous} → ${reason}`;
+      return reason ? `Put ${name} on hold: ${reason}` : `Put ${name} on hold`;
+    }
+
+    case "contact_hold_cleared": {
+      const reason = String(metadata.reason || "");
+      return reason ? `Cleared hold on ${name} (was: ${reason})` : `Cleared hold on ${name}`;
     }
 
     case "contact_deleted": {

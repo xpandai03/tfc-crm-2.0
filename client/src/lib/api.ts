@@ -229,6 +229,25 @@ export async function createIntakeComment(params: {
   return response.json();
 }
 
+/**
+ * Manual account hold. Set (or change the reason of) a hold, or clear it. The
+ * server logs both to the activity timeline with the reason and the user.
+ * `note` is kept only for the "Other (see notes)" reason.
+ */
+export async function setContactHold(
+  contactId: number,
+  reason: string,
+  note: string | null,
+): Promise<{ success: boolean; holdActive: boolean; holdReason: string; holdNote: string | null }> {
+  const response = await apiRequest("POST", `/api/contact/${contactId}/hold`, { reason, note });
+  return response.json();
+}
+
+export async function clearContactHold(contactId: number): Promise<{ success: boolean; holdActive: boolean }> {
+  const response = await apiRequest("POST", `/api/contact/${contactId}/hold/clear`, {});
+  return response.json();
+}
+
 export async function getAttentionFlags(): Promise<{ flags: AttentionFlag[] }> {
   const response = await fetch("/api/attention-flags", {
     cache: "no-store",

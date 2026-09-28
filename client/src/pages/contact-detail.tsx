@@ -67,8 +67,10 @@ import {
   Trash2,
   Hourglass,
   FlaskConical,
+  Scale,
+  PauseCircle,
 } from "lucide-react";
-import { getContactSnapshot, updateContactStatus, addNoteToContact, deleteNote, deleteAssignment as deleteAssignmentApi, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, syncContactFromExcel, updateContactIntake, updateContactIdentity, deleteContact, getTnV2State, createTherapyNotesWithSchedule, type TnScheduleInputs, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
+import { getContactSnapshot, updateContactStatus, addNoteToContact, deleteNote, deleteAssignment as deleteAssignmentApi, createReminder, assignContact, getIntakeComments, createIntakeComment, getAttentionFlags, clearAttentionFlag, setContactHold, clearContactHold, getTherapyNotesStatus, createTherapyNotesPatient, resetTherapyNotesLink, getAssignments, syncContactFromExcel, updateContactIntake, updateContactIdentity, deleteContact, getTnV2State, createTherapyNotesWithSchedule, type TnScheduleInputs, type WithSource, type IntakeComment, type ProviderAssignment } from "@/lib/api";
 import { ScheduleAppointmentWidget } from "@/components/ui/schedule-appointment-widget";
 import { ScheduleTnBetaModal } from "@/components/ui/schedule-tn-beta-modal";
 import { ReminderModal } from "@/components/ui/reminder-modal";
@@ -90,6 +92,14 @@ import { AGE_BASIS_NOTE, bandedServiceType, childDeclaration, isChildServiceType
 import { guardianName, guardiansFromPayload } from "@shared/intake-guardians";
 import { CANONICAL_INSURANCES, isLegacyInsurance } from "@shared/insurance";
 import { PAPERWORK_STATUSES } from "@shared/paperwork-status";
+import { CUSTODY_DOC_STATUSES } from "@shared/custody-doc-status";
+import {
+  HOLD_NOTE_MAX,
+  HOLD_REASONS,
+  HOLD_REASON_OTHER,
+  holdBannerText,
+  isOnHold,
+} from "@shared/account-hold";
 import { buildTimelineEvents, formatFullDate, matchSnapshotForEmailEvent, type EmailSnapshotMeta, type TimelineEvent } from "@/lib/timeline";
 import { ProviderMatchingModal } from "@/components/ui/provider-matching-modal";
 import { CreateTnModal } from "@/components/ui/create-tn-modal";
@@ -571,6 +581,29 @@ export default function ContactDetail() {
     onError: (err: Error) => {
       toast({
         title: "Could not update paperwork status",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Custody document status: the same save-on-change dropdown as Paperwork
+  // Status, through the same PATCH, so it is validated and logged to the
+  // timeline the same way. It never sets or clears the account hold.
+  const updateCustodyDocMutation = useMutation({
+    mutationFn: (value: string | null) =>
+      updateContactIntake(contactId!, { custodyDocStatus: value }, authorInitials),
+    onSuccess: (_data, value) => {
+      toast({
+        title: "Custody documents updated",
+        description: value ? `Set to ${value}` : "Cleared",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/contact", contactId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"] });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Could not update custody documents",
         description: err.message,
         variant: "destructive",
       });
@@ -1079,6 +1112,63 @@ export default function ContactDetail() {
     clearFlagMutation.mutate({ contactId, clearedByEmail: user.email });
   };
 
+  // ============================================================================
+  // Account hold — manual only (shared/account-hold.ts)
+  // ============================================================================
+  const onHold = isOnHold(contact);
+  const [holdReasonDraft, setHoldReasonDraft] = useState<string>("");
+  const [holdNoteDraft, setHoldNoteDraft] = useState("");
+
+  // Start the controls from the stored hold whenever it changes, so "change
+  // reason" begins from what is there rather than from blank.
+  useEffect(() => {
+    setHoldReasonDraft(contact?.holdActive ? contact?.holdReason ?? "" : "");
+    setHoldNoteDraft(contact?.holdActive ? contact?.holdNote ?? "" : "");
+  }, [contact?.holdActive, contact?.holdReason, contact?.holdNote]);
+
+  const invalidateHold = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/contact", contactId] });
+    queryClient.invalidateQueries({ queryKey: ["/api/waitlist-contacts"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/activity/contact", contactId] });
+  };
+
+  const setHoldMutation = useMutation({
+    mutationFn: (params: { reason: string; note: string | null }) =>
+      setContactHold(contactId!, params.reason, params.note),
+    onSuccess: (_data, params) => {
+      toast({ title: "Account on hold", description: params.reason });
+      invalidateHold();
+    },
+    onError: (error) => {
+      toast({ title: "Could not put the account on hold", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" });
+    },
+  });
+
+  const clearHoldMutation = useMutation({
+    mutationFn: () => clearContactHold(contactId!),
+    onSuccess: () => {
+      toast({ title: "Hold cleared" });
+      invalidateHold();
+    },
+    onError: (error) => {
+      toast({ title: "Could not clear the hold", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" });
+    },
+  });
+
+  const holdNoteForSubmit =
+    holdReasonDraft === HOLD_REASON_OTHER && holdNoteDraft.trim() ? holdNoteDraft.trim() : null;
+  // Enabled for a new hold, or for a real change to an existing one.
+  const holdDraftChanged = onHold
+    ? holdReasonDraft !== (contact?.holdReason ?? "") ||
+      (holdNoteForSubmit ?? "") !== (contact?.holdNote ?? "")
+    : !!holdReasonDraft;
+  const holdBusy = setHoldMutation.isPending || clearHoldMutation.isPending;
+
+  const handleSetHold = () => {
+    if (!contactId || !holdReasonDraft) return;
+    setHoldMutation.mutate({ reason: holdReasonDraft, note: holdNoteForSubmit });
+  };
+
   // Manual sync from Excel
   const syncFromExcelMutation = useMutation({
     mutationFn: (id: number) => syncContactFromExcel(id),
@@ -1176,7 +1266,7 @@ export default function ContactDetail() {
       // Merge activity_log events (emails, TN, etc.) into timeline.
       // Preserve `email_sent` type so the violet Mail icon + Download Snapshot button render.
       const activityEvents: TimelineEvent[] = contactActivities
-        .filter(a => ["email_sent", "therapy_notes_started", "therapy_notes_created", "therapy_notes_failed", "contact_updated"].includes(a.type))
+        .filter(a => ["email_sent", "therapy_notes_started", "therapy_notes_created", "therapy_notes_failed", "contact_updated", "contact_hold_set", "contact_hold_cleared"].includes(a.type))
         .map((a): TimelineEvent => {
           const isEmail = a.type === "email_sent";
           const templateId = isEmail ? (a.metadata?.template as string | undefined) ?? null : null;
@@ -1366,6 +1456,40 @@ export default function ContactDetail() {
 
   return (
     <PageLayout>
+      {/* Account hold — the top-most notice on the page, above even the
+          data-fallback banner, because it is the one thing a scheduler must not
+          miss. Same strip-with-action shape as the Attention Required banner,
+          in red. Manual only: it shows because a person set it. */}
+      {onHold && (
+        <div
+          className="flex items-center justify-between gap-3 px-4 py-2.5 mb-4 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-300 dark:border-red-800/60"
+          role="alert"
+          data-testid="banner-account-hold"
+        >
+          <div className="flex items-start gap-2 min-w-0">
+            <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-red-600 dark:text-red-400" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-red-800 dark:text-red-300" data-testid="text-account-hold">
+                {holdBannerText(contact?.holdReason)}
+              </p>
+              {contact?.holdReason === HOLD_REASON_OTHER && contact?.holdNote && (
+                <p className="text-xs text-red-700 dark:text-red-400 mt-0.5 break-words">{contact.holdNote}</p>
+              )}
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs shrink-0 border-red-300 dark:border-red-700 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/40"
+            onClick={() => clearHoldMutation.mutate()}
+            disabled={holdBusy}
+            data-testid="button-clear-hold-banner"
+          >
+            <CheckCircle2 className="h-3 w-3 mr-1" />
+            Clear hold
+          </Button>
+        </div>
+      )}
       <FallbackBanner show={isFallback} />
       <div className="space-y-6">
         {/* Breadcrumb */}
@@ -1714,6 +1838,41 @@ export default function ContactDetail() {
                         {/* Blank clears to null — the "not tracked yet" state. */}
                         <SelectItem value="none">—</SelectItem>
                         {PAPERWORK_STATUSES.map((s) => (
+                          <SelectItem key={s} value={s}>{s}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </CardContent>
+              </Card>
+              {/* Custody Documents — beside Paperwork Status, same card and
+                  same save-on-change dropdown. Fourth card in this row, so the
+                  row is full rather than wrapping. Staff-owned; NOT the synced
+                  `custody` arrangement shown in the intake summary, and it
+                  does not touch the account hold. */}
+              <Card className="overflow-visible bg-white dark:bg-gray-800/90">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <Scale className="h-4 w-4" />
+                    <span className="text-xs">Custody Documents</span>
+                  </div>
+                  {isLoading ? (
+                    <Skeleton className="h-9 w-full" />
+                  ) : (
+                    <Select
+                      value={contact?.custodyDocStatus || "none"}
+                      disabled={updateCustodyDocMutation.isPending}
+                      onValueChange={(v) =>
+                        updateCustodyDocMutation.mutate(v === "none" ? null : v)
+                      }
+                    >
+                      <SelectTrigger className="h-9 text-sm" data-testid="select-custodyDocStatus">
+                        <SelectValue placeholder="Not set" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {/* Blank clears to null — the "not tracked yet" state. */}
+                        <SelectItem value="none">—</SelectItem>
+                        {CUSTODY_DOC_STATUSES.map((s) => (
                           <SelectItem key={s} value={s}>{s}</SelectItem>
                         ))}
                       </SelectContent>
@@ -2349,6 +2508,73 @@ export default function ContactDetail() {
                   </CardContent>
                 </Card>
               )}
+
+              {/* Account Hold — same card shape as Intake Comments below (a
+                  control plus one coloured action button), in red. Choosing a
+                  reason and pressing the button is the ONLY way a hold is set;
+                  nothing infers one from an empty field. */}
+              <Card className={cn("overflow-visible", onHold && "ring-2 ring-red-400/50 dark:ring-red-500/40")} data-testid="card-account-hold">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <PauseCircle className="h-4 w-4" />
+                    Account Hold
+                  </CardTitle>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    {onHold ? "On hold — scheduling should wait" : "Put on hold while something is missing"}
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <Select
+                    value={holdReasonDraft || undefined}
+                    onValueChange={setHoldReasonDraft}
+                    disabled={holdBusy}
+                  >
+                    <SelectTrigger className="h-8 text-sm" data-testid="select-holdReason">
+                      <SelectValue placeholder="Choose a reason" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {HOLD_REASONS.map((r) => (
+                        <SelectItem key={r} value={r}>{r}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {holdReasonDraft === HOLD_REASON_OTHER && (
+                    <Textarea
+                      placeholder="What is missing? (optional)"
+                      value={holdNoteDraft}
+                      maxLength={HOLD_NOTE_MAX}
+                      onChange={(e) => setHoldNoteDraft(e.target.value)}
+                      className="min-h-[52px] resize-none text-sm"
+                      data-testid="input-holdNote"
+                    />
+                  )}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="default"
+                      className="bg-red-600 hover:bg-red-700 text-white"
+                      disabled={!holdDraftChanged || holdBusy}
+                      onClick={handleSetHold}
+                      data-testid="button-set-hold"
+                    >
+                      <PauseCircle className="h-3 w-3 mr-1.5" />
+                      {onHold ? "Update reason" : "Put on hold"}
+                    </Button>
+                    {onHold && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={holdBusy}
+                        onClick={() => clearHoldMutation.mutate()}
+                        data-testid="button-clear-hold"
+                      >
+                        <CheckCircle2 className="h-3 w-3 mr-1.5" />
+                        Clear hold
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
 
               {/* Intake Comments — CRM-only coordination notes */}
               <Card className="overflow-visible">

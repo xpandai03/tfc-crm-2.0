@@ -92,6 +92,8 @@ import { previousPeriod } from "./reports/monthly";
 import { ACCEPTED_INSURANCES } from "@shared/insurance-utils";
 import { SERVICE_TYPES } from "@shared/service-types";
 import { PAPERWORK_STATUSES, isValidPaperworkStatus } from "@shared/paperwork-status";
+import { CUSTODY_DOC_STATUSES, isValidCustodyDocStatus } from "@shared/custody-doc-status";
+import { putContactOnHold, takeContactOffHold } from "./contacts/account-hold";
 import {
   getViewPreferences,
   saveViewPreferences,
@@ -1081,6 +1083,13 @@ export async function registerRoutes(
                 // CRM/form-owned; n8n has no language, so source the stored value
                 // verbatim (NULL stays NULL — never inferred from another field).
                 language: syncContact.language ?? null,
+                // CRM-owned; n8n knows nothing of these, so they come from the
+                // stored row. Without them the hold banner would be missing on
+                // exactly the load that enriches a contact for the first time.
+                custodyDocStatus: syncContact.custodyDocStatus ?? null,
+                holdActive: syncContact.holdActive === true,
+                holdReason: syncContact.holdReason ?? null,
+                holdNote: syncContact.holdNote ?? null,
                 statusCode,
                 umbrella,
                 status: syncContact.status || "intake",
@@ -2650,6 +2659,15 @@ export async function registerRoutes(
           allowedValues: PAPERWORK_STATUSES,
         });
       }
+      // Custody document status: same rule, same reason.
+      if ("custodyDocStatus" in fields && !isValidCustodyDocStatus(fields.custodyDocStatus)) {
+        return res.status(400).json({
+          error: "validation_error",
+          field: "custodyDocStatus",
+          message: "custodyDocStatus must be one of the allowed values, or empty to clear it",
+          allowedValues: CUSTODY_DOC_STATUSES,
+        });
+      }
 
       console.log(`[intake-update] Updating contact ${contactId}`, {
         author,
@@ -2702,6 +2720,53 @@ export async function registerRoutes(
     } catch (error) {
       console.error("[intake-update] Error:", error);
       return res.status(500).json({ error: "Failed to update intake fields" });
+    }
+  });
+
+  // ==========================================================================
+  // Manual account hold (shared/account-hold.ts)
+  //
+  // The only way a hold is set or cleared. The decisions, the writes and the
+  // activity-timeline entries live in server/contacts/account-hold.ts; these
+  // routes parse the id and send the result.
+  // ==========================================================================
+  app.post("/api/contact/:id/hold", async (req, res) => {
+    try {
+      const contactId = parseInt(req.params.id, 10);
+      if (isNaN(contactId) || contactId <= 0) {
+        return res.status(400).json({ error: "Invalid contact ID" });
+      }
+      const result = await putContactOnHold(
+        contactId,
+        req.body ?? {},
+        (req as any).user?.email || "system",
+      );
+      if (result.status === 200) {
+        boardCache = null;
+        console.log(`[hold] set on contact ${contactId}`);
+      }
+      return res.status(result.status).json(result.body);
+    } catch (error) {
+      console.error("[hold] set failed:", error instanceof Error ? error.message : "unknown");
+      return res.status(500).json({ error: "Failed to put the account on hold" });
+    }
+  });
+
+  app.post("/api/contact/:id/hold/clear", async (req, res) => {
+    try {
+      const contactId = parseInt(req.params.id, 10);
+      if (isNaN(contactId) || contactId <= 0) {
+        return res.status(400).json({ error: "Invalid contact ID" });
+      }
+      const result = await takeContactOffHold(contactId, (req as any).user?.email || "system");
+      if (result.status === 200) {
+        boardCache = null;
+        console.log(`[hold] cleared on contact ${contactId}`);
+      }
+      return res.status(result.status).json(result.body);
+    } catch (error) {
+      console.error("[hold] clear failed:", error instanceof Error ? error.message : "unknown");
+      return res.status(500).json({ error: "Failed to clear the hold" });
     }
   });
 

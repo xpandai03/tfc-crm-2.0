@@ -27,7 +27,7 @@ import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { OwnerBadge } from "@/components/ui/owner-badge";
-import { ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle } from "lucide-react";
+import { ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle, AlertCircle } from "lucide-react";
 import { cn, formatDob } from "@/lib/utils";
 import { computeDaysWaiting } from "@/lib/days-waiting";
 import { STATUS_UMBRELLAS, type UmbrellaId } from "@/lib/status-config";
@@ -35,6 +35,7 @@ import { abbreviateInsurance } from "@shared/insurance";
 import { getModalityPriorities, MODALITY_SHORT_LABELS } from "@shared/modality-utils";
 import type { WaitlistContact } from "@shared/schema";
 import { bandedServiceType } from "@shared/age-bands";
+import { holdHoverText, isOnHold } from "@shared/account-hold";
 
 /**
  * MM/DD/YYYY for the list. Handles the ISO strings the CRM stores and the Excel
@@ -219,6 +220,28 @@ export const WAITLIST_COLUMNS: WaitlistColumnDef[] = [
     ),
     render: (contact, ctx) => (
       <>
+        {/* Manual account hold: a red "!" immediately left of the name. It is
+            INSIDE the Name cell, so it rides in the frozen column in scroll mode
+            and needs no layout change in fit mode. Inline and 14px against the
+            cell's 20px line, so it cannot change the row height. The reason is
+            on hover via title — "Other" says "see notes" rather than repeating
+            free text into a list. Shown only when a person set a hold. */}
+        {isOnHold(contact) && (
+          <span
+            role="img"
+            className="inline-flex align-[-2px] mr-1 text-red-600 dark:text-red-400"
+            title={holdHoverText(contact.holdReason)}
+            aria-label={`On hold: ${holdHoverText(contact.holdReason)}`}
+            data-testid={`hold-badge-${contact.contactId}`}
+          >
+            <AlertCircle className="h-3.5 w-3.5" strokeWidth={2.5} />
+          </span>
+        )}
+        {/* U+2060 WORD JOINER: forbids a line break between the icon and the
+            name. Without it a narrow Name column wraps the name onto its own
+            line under the icon and the held row grows taller than its
+            neighbours. Zero-width; nothing is rendered. */}
+        {isOnHold(contact) && "\u2060"}
         <Link href={`/contact/${contact.contactId}`}>
           <span className={cn("hover:underline", ctx.isInactive ? "text-muted-foreground italic" : "text-primary")}>
             {contact.name}
@@ -677,6 +700,34 @@ export const WAITLIST_COLUMNS: WaitlistColumnDef[] = [
         </div>
       ) : (
         <span className="text-muted-foreground">—</span>
+      ),
+  },
+  // Custody documents and the account hold, as optional columns. Both values
+  // are already on the board payload for the Name-cell badge, so each is one
+  // registration here and nothing else.
+  {
+    id: "custodyDocs",
+    label: "Custody docs",
+    order: 33,
+    defaultVisible: false,
+    widthClass: "w-[104px] px-2",
+    cellClass: "px-2",
+    render: (contact) => compactText(contact.custodyDocStatus),
+  },
+  {
+    id: "hold",
+    label: "Hold",
+    order: 34,
+    defaultVisible: false,
+    widthClass: "w-[140px] px-2",
+    cellClass: "px-2",
+    render: (contact) =>
+      isOnHold(contact) ? (
+        <span className="block truncate text-red-700 dark:text-red-400" title={holdHoverText(contact.holdReason)}>
+          {holdHoverText(contact.holdReason)}
+        </span>
+      ) : (
+        "—"
       ),
   },
 ];
