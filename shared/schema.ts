@@ -45,6 +45,13 @@ export const contactSnapshotSchema = z.object({
   // Paperwork Status — CRM-owned, NULL = not tracked. Allowed values in
   // shared/paperwork-status.ts. NOT a status code.
   paperworkStatus: z.string().nullable().optional(),
+  // Custody document status — CRM-owned, NULL = not tracked. Allowed values in
+  // shared/custody-doc-status.ts. Independent of the hold below.
+  custodyDocStatus: z.string().nullable().optional(),
+  // Manual account hold — shared/account-hold.ts. Set and cleared only by staff.
+  holdActive: z.boolean().optional(),
+  holdReason: z.string().nullable().optional(),
+  holdNote: z.string().nullable().optional(),
   referralSource: z.string().nullable().optional(),  // How client found TFC
   priorServices: z.string().nullable().optional(),   // Previous service history
   priorProvider: z.string().nullable().optional(),   // Previous provider name
@@ -158,6 +165,11 @@ export const waitlistContactSchema = z.object({
   modalityP4: z.string().nullable().optional(),
   // Paperwork Status — CRM-owned, NULL = not tracked; shown as a list column.
   paperworkStatus: z.string().nullable().optional(),
+  // Custody document status and the manual hold (reason only — the free-text
+  // hold note is not on the board payload). Drive the red "!" beside the name.
+  custodyDocStatus: z.string().nullable().optional(),
+  holdActive: z.boolean().optional(),
+  holdReason: z.string().nullable().optional(),
   reasonForTherapy: z.array(z.string()).optional(), // Reason(s) for seeking services (for insights aggregation)
   language: z.string().nullable().optional(), // Preferred service language ("English"/"Spanish"); for wait-list filter
   patientDob: z.string().nullable().optional(), // Patient date of birth (YYYY-MM-DD or MM/DD/YYYY)

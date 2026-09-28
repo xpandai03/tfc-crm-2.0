@@ -1,0 +1,71 @@
+{
+  "_comment": "ZZTEST only. Synthetic intake for the Guardians section of the intake PDF (server/pdf/intake-template.ts). Every name, phone and email is invented; emails use example.invalid.",
+  "contact": {
+    "contactId": 990101,
+    "name": "ZZTEST Minor Client",
+    "email": "zztest.family@example.invalid",
+    "phone": "(505) 555-0101",
+    "status": "Waitlist",
+    "statusCode": 100,
+    "serviceRequested": "Child (6-12)",
+    "daysOnWaitlist": 4,
+    "dateAdded": "2026-09-24",
+    "assignedTo": null,
+    "requestingFor": "My Child",
+    "reasonForSeeking": "Anxiety",
+    "reasonForTherapy": "School Challenges",
+    "detailedReason": null,
+    "formCompletedBy": "Parent",
+    "modality": "In Person ABQ",
+    "modalityP1": "In Person ABQ",
+    "modalityP2": null,
+    "modalityP3": null,
+    "modalityP4": null,
+    "paperworkStatus": null,
+    "referralSource": "School",
+    "priorServices": "No",
+    "priorProvider": null,
+    "preferredContact": "Phone",
+    "custody": "Joint custody",
+    "flags": null,
+    "priority": null,
+    "insurancePayer": "ZZTEST Health Plan",
+    "insurancePlan": "ZZTEST Plan A",
+    "insuranceId": "ZZTEST-000",
+    "insuranceStatus": null,
+    "referralAuth": null,
+    "referralStatus": null,
+    "patientDob": "2016-03-14",
+    "gender": "Female",
+    "age": 10,
+    "streetAddress": "100 ZZTEST Way",
+    "city": "Albuquerque",
+    "state": "NM",
+    "zipCode": "87101",
+    "county": "Bernalillo",
+    "rfsLink": null,
+    "documentLink": null,
+    "lastContact": null,
+    "lastNote": null,
+    "intakeSource": null,
+    "language": "English",
+    "syncedAt": "2026-09-28 00:00:00",
+    "syncHash": null
+  },
+  "payloadWithGuardians": {
+    "requestingFor": "minor_child",
+    "participants": [
+      { "name": "ZZTEST Minor Client", "dob": "2016-03-14" }
+    ],
+    "guardians": [
+      { "firstName": "ZZTEST", "lastName": "Parent One", "phone": "(505) 555-0102", "email": "zztest.parent1@example.invalid", "relationship": "Mother" },
+      { "firstName": "ZZTEST", "lastName": "Parent Two", "phone": "(505) 555-0103", "email": "zztest.parent2@example.invalid", "relationship": "Father" }
+    ]
+  },
+  "payloadWithoutGuardians": {
+    "requestingFor": "minor_child",
+    "participants": [
+      { "name": "ZZTEST Minor Client", "dob": "2016-03-14" }
+    ]
+  }
+}

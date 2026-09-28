@@ -6,6 +6,7 @@
  */
 
 import type { SyncContact, FormSubmission } from "../sync/db";
+import { guardianName, guardiansFromPayload } from "@shared/intake-guardians";
 
 type Content = Record<string, unknown>;
 
@@ -76,6 +77,31 @@ function row(label: string, raw: string | number | null | undefined): FieldRow |
   const val = typeof raw === "number" ? String(raw) : cleanValue(raw);
   if (!val) return null;
   return { label, value: val };
+}
+
+/**
+ * GUARDIANS, directly after PARTICIPANTS: name, relationship, phone, email for
+ * each guardian on the submission, in the same label/value rows as the
+ * participants above it. Read through guardiansFromPayload, the one reader
+ * every surface uses. No guardians -> no section at all, so a submission
+ * without them produces exactly the document it produced before.
+ *
+ * Intake PDFs only. The survey PDF is a separate builder
+ * (server/pdf/survey-template.ts) and does not call this.
+ */
+function buildGuardianSection(payload: unknown): Content[] {
+  const guardians = guardiansFromPayload(payload);
+  if (guardians.length === 0) return [];
+  const fields: FieldRow[] = [];
+  guardians.forEach((g, idx) => {
+    const prefix = guardians.length > 1 ? `Guardian ${idx + 1}` : "Guardian";
+    const name = guardianName(g);
+    if (name) fields.push({ label: `${prefix} — Name`, value: name });
+    if (g.relationship) fields.push({ label: `${prefix} — Relationship`, value: g.relationship });
+    if (g.phone) fields.push({ label: `${prefix} — Phone`, value: g.phone });
+    if (g.email) fields.push({ label: `${prefix} — Email`, value: g.email });
+  });
+  return buildSection("GUARDIANS", fields);
 }
 
 function buildAddressValue(contact: SyncContact): string | null {
@@ -207,6 +233,7 @@ export function buildIntakeDocument(contact: SyncContact, rawPayload?: Record<st
     ...header,
     ...buildSection("INTAKE DETAILS", intakeFields),
     ...participantContent,
+    ...buildGuardianSection(rawPayload),
     ...buildSection("INSURANCE", insuranceFields),
     ...buildSection("REFERRAL & HISTORY", referralFields),
     ...buildSection("DEMOGRAPHICS", demoFields),
@@ -406,6 +433,7 @@ export function buildSubmissionDocument(submission: FormSubmission): Record<stri
     ...header,
     ...buildSection("INTAKE DETAILS", intakeFields),
     ...participantContent,
+    ...buildGuardianSection(raw),
     ...buildSection("INSURANCE", insuranceFields),
     ...buildSection("REFERRAL & HISTORY", referralFields),
     ...buildSection("DEMOGRAPHICS", demoFields),

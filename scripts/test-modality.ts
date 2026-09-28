@@ -168,6 +168,8 @@ ok("enrich fieldMap does NOT write modality", !/\["modality",/.test(fieldMapBloc
 const CRM_OWNED_COLUMNS = [
   "modality_p1", "modality_p2", "modality_p3", "modality_p4",
   "paperwork_status",
+  // Custody document status + manual account hold (2026-09-28).
+  "custody_doc_status", "hold_active", "hold_reason", "hold_note",
 ];
 for (const col of CRM_OWNED_COLUMNS) {
   ok(`${col} is not written by an ON CONFLICT DO UPDATE`,

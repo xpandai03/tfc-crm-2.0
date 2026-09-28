@@ -867,7 +867,18 @@ export function WaitlistListView({
                     col.widthClass,
                     // z-30 so the frozen header cell wins over both the sticky
                     // header row (z-10) and the frozen body cells (z-20).
-                    isOverflowing && i === 0 && "sticky left-0 z-30 bg-inherit relative",
+                    //
+                    // NO `relative` here. cn() runs tailwind-merge, which treats
+                    // `sticky` and `relative` as the same property and keeps the
+                    // last one — so "sticky … relative" rendered as relative and
+                    // the Name column never froze (found 2026-09-28). A sticky
+                    // cell is already positioned, so the after: divider below
+                    // still anchors to it.
+                    // Explicit background, not bg-inherit: the header row is
+                    // transparent (hover:bg-transparent), so inheriting let the
+                    // scrolled header labels show through behind "Name". This
+                    // is the header's own scroll-mode colour.
+                    isOverflowing && i === 0 && "sticky left-0 z-30 bg-white dark:bg-gray-900",
                     isOverflowing && i === 0 && "after:absolute after:inset-y-0 after:-right-px after:w-px after:bg-border"
                   )}
                 >
@@ -928,7 +939,7 @@ export function WaitlistListView({
                           // bg-inherit tracks the row's resolved background, so
                           // hover and the inactive dimming carry across the
                           // frozen column without duplicating those rules.
-                          isOverflowing && i === 0 && "sticky left-0 z-20 bg-inherit relative",
+                          isOverflowing && i === 0 && "sticky left-0 z-20 bg-inherit",
                           isOverflowing && i === 0 && "after:absolute after:inset-y-0 after:-right-px after:w-px after:bg-border"
                         )}
                       >

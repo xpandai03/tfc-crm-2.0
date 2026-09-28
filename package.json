@@ -28,6 +28,8 @@
     "test:tn-dob": "tsx scripts/test-tn-dob-normalisation.ts",
     "test:tn-clinician": "tsx scripts/test-tn-clinician-name.ts",
     "test:survey-fields": "tsx scripts/test-survey-fields.ts",
+    "test:custody-hold": "tsx --tsconfig tsconfig.test.json scripts/test-custody-hold.ts",
+    "test:custody-hold-db": "tsx scripts/test-custody-hold-db.ts",
     "test:survey-matching": "tsx scripts/test-survey-matching.ts",
     "test:survey-matching-run": "tsx scripts/test-survey-matching-run.ts",
     "test:tn-partial": "tsx scripts/test-tn-partial-success.ts",
