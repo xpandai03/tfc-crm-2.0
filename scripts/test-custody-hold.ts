@@ -123,7 +123,7 @@ ok("custody docs uses the same Select as Paperwork Status",
 ok("the hold reason dropdown lists HOLD_REASONS", /select-holdReason[\s\S]{0,300}HOLD_REASONS\.map/.test(page));
 ok("the note box appears only for Other", /holdReasonDraft === HOLD_REASON_OTHER && \(\s*<Textarea/.test(page));
 ok("hold entries appear on the contact's timeline",
-  /"contact_hold_set", "contact_hold_cleared"\]\.includes\(a\.type\)/.test(page));
+  /\[[^\]]*"contact_hold_set", "contact_hold_cleared"[^\]]*\]\.includes\(a\.type\)/.test(page));
 
 // ---------------------------------------------------------------------------
 console.log("\n[4] Waitlist: the red ! by hold state, inside the frozen Name column");

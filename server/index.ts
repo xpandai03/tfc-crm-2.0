@@ -9,6 +9,7 @@ import { configureAuth, authMiddleware } from "./auth";
 import { initRemindersTable, startReminderCron, startMonthlyReportCron, startSurveyAttachCron, startActiveCountsCron, startTnPatientsCron } from "./reminders";
 import { initTherapyNotesTable } from "./therapy-notes";
 import { initEmailSnapshotsTable } from "./email-snapshots";
+import { initContactDocumentsTable } from "./documents/db";
 import { initAssignmentsTable } from "./assignments/db";
 import { initSyncTables } from "./sync/db";
 import { initActivityTable } from "./activity/db";
@@ -390,6 +391,7 @@ function resolveBuildInfo(): { commit: string; source: string } {
     await initActiveCountsTable();
     await initActiveCountOverridesTable();
     await initTnPatientsTable();
+    await initContactDocumentsTable();
     startReminderCron();
     // Monthly management report. Schedule + timezone are logged on the line
     // below at boot, so the deployed cadence is readable from the startup log

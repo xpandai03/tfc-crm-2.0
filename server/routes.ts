@@ -94,6 +94,7 @@ import { SERVICE_TYPES } from "@shared/service-types";
 import { PAPERWORK_STATUSES, isValidPaperworkStatus } from "@shared/paperwork-status";
 import { CUSTODY_DOC_STATUSES, isValidCustodyDocStatus } from "@shared/custody-doc-status";
 import { putContactOnHold, takeContactOffHold } from "./contacts/account-hold";
+import { registerContactDocumentRoutes } from "./documents/routes";
 import {
   getViewPreferences,
   saveViewPreferences,
@@ -2722,6 +2723,10 @@ export async function registerRoutes(
       return res.status(500).json({ error: "Failed to update intake fields" });
     }
   });
+
+  // Contact documents (server/documents/routes.ts). Registered here, after
+  // app.use(authMiddleware), so no document path is public.
+  registerContactDocumentRoutes(app);
 
   // ==========================================================================
   // Manual account hold (shared/account-hold.ts)
