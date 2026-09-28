@@ -23,19 +23,16 @@ import {
   CLIENT_NAME_MAX,
   CLIENT_PHONE_MAX,
   COMMENT_MAX,
-  COMMENT_PROMPT,
-  LEGAL_NAME_HINT,
-  MODALITY_FOR_VARIANT,
   SURVEY_VERSION,
-  commentKeysFor,
   dateOfBirthProblem,
   emailProblem,
-  isCommentable,
+  languageFromParam,
   legalNameProblem,
   phoneProblem,
   questionsFor,
   type ChoiceQuestion,
   type ScaleQuestion,
+  type SurveyLanguage,
   type SurveyQuestion,
   type SurveyVariant,
   type TextQuestion,
@@ -50,19 +47,17 @@ import {
   TherapistField,
 } from "./fields";
 import { fetchRoster, submitSurvey, type PublicProvider } from "./api";
-
-/**
- * Does this question's comment box appear on the form?
- *
- * Every commentable question EXCEPT the therapist pick on step 2, whose open
- * "Anything you would like to add?" box the client asked to remove
- * (2026-09-23). Decided here, not in isCommentable(): the server, the PDF and
- * the stored `comments.therapist` of earlier submissions are untouched, so old
- * rows still render their comment and an open tab running the previous bundle
- * can still submit. The form simply stops writing that key.
- */
-const showsCommentBox = (q: SurveyQuestion): boolean =>
-  isCommentable(q) && q.kind !== "therapist";
+import {
+  DEFAULT_SURVEY_LANGUAGE,
+  anchorsFor,
+  confirmation,
+  languageFromSearch,
+  message,
+  modalityLabel,
+  promptFor,
+  ui,
+} from "./i18n";
+import { buildSubmitBody, showsCommentBox, type AnswerValue, type Draft } from "./submit-body";
 
 /** Which slots share a screen. Client asked for two to three questions each. */
 const SCREEN_SLOTS: number[][] = [
@@ -72,15 +67,6 @@ const SCREEN_SLOTS: number[][] = [
   [9, 10], // screen 6
   [11, 12], // screen 7
 ];
-
-type AnswerValue = string | number;
-
-interface Draft {
-  client: { name: string; dateOfBirth: string; email: string; phone: string };
-  answers: Record<string, AnswerValue>;
-  /** Per-question free text, keyed by question key. Mirrors the stored shape. */
-  comments: Record<string, string>;
-}
 
 const emptyDraft = (): Draft => ({
   client: { name: "", dateOfBirth: "", email: "", phone: "" },
@@ -124,6 +110,7 @@ function loadDraft(variant: SurveyVariant): Draft {
         parsed.comments && typeof parsed.comments === "object"
           ? (parsed.comments as Record<string, string>)
           : {},
+      language: languageFromParam(parsed.language) ?? undefined,
     };
   } catch {
     // Private browsing, disabled storage, or corrupt JSON. Start clean rather
@@ -157,6 +144,24 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
   }, [questions]);
 
   const [draft, setDraft] = useState<Draft>(() => loadDraft(variant));
+
+  // Language: the client's own choice if this tab has one, else ?lang=es on
+  // the link (a Spanish QR code), else English. It sits on the draft, so a
+  // reload keeps it and submitting clears it with everything else. Switching
+  // only changes labels: answers are stored by value, and every value is the
+  // same in both languages.
+  const [linkLanguage] = useState<SurveyLanguage | null>(() =>
+    languageFromSearch(window.location.search),
+  );
+  const lang: SurveyLanguage = draft.language ?? linkLanguage ?? DEFAULT_SURVEY_LANGUAGE;
+  const setLanguage = useCallback((language: SurveyLanguage) => {
+    setDraft((d) => ({ ...d, language }));
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.lang = lang;
+    document.title = ui("pageTitle", lang);
+  }, [lang]);
   const [providers, setProviders] = useState<PublicProvider[]>([]);
   const [rosterLoading, setRosterLoading] = useState(true);
   const [rosterDegraded, setRosterDegraded] = useState(false);
@@ -229,7 +234,7 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
   const emailIssue = emailProblem(draft.client.email);
   const phoneIssue = phoneProblem(draft.client.phone);
   const shown = (value: string, problem: string | null) =>
-    value.trim() ? problem : null;
+    value.trim() ? message(problem, lang) : null;
 
   // --- renderers ------------------------------------------------------------
 
@@ -247,27 +252,30 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
       {renderQuestionBody(q)}
       {showsCommentBox(q) && (
         <CommentField
-          prompt={COMMENT_PROMPT}
+          prompt={ui("commentPrompt", lang)}
           maxLength={COMMENT_MAX}
           value={commentOf(q.key)}
           onChange={(v) => setComment(q.key, v)}
+          lang={lang}
         />
       )}
     </div>
   );
 
   const renderQuestionBody = (q: SurveyQuestion) => {
+    const label = promptFor(variant, q, lang);
     switch (q.kind) {
       case "therapist":
         return (
           <TherapistField
             key={q.key}
-            label={q.prompt}
+            label={label}
             providers={providers}
             value={answerOf(q.key)}
             onChange={(v) => setAnswer(q.key, v)}
             loading={rosterLoading}
             degraded={rosterDegraded}
+            lang={lang}
           />
         );
 
@@ -276,25 +284,28 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
         return (
           <ChoiceField
             name={cq.key}
-            label={cq.prompt}
+            label={label}
             options={cq.options}
             value={answerOf(cq.key)}
             onChange={(v) => setAnswer(cq.key, v)}
             required={cq.required}
+            lang={lang}
           />
         );
       }
 
       case "scale": {
         const sq = q as ScaleQuestion;
+        const anchors = anchorsFor(sq, lang);
         return (
           <ScaleField
             key={sq.key}
-            label={sq.prompt}
-            lowAnchor={sq.lowAnchor}
-            highAnchor={sq.highAnchor}
+            label={label}
+            lowAnchor={anchors.low}
+            highAnchor={anchors.high}
             value={scaleOf(sq.key)}
             onChange={(v) => setAnswer(sq.key, v)}
+            lang={lang}
           />
         );
       }
@@ -304,11 +315,12 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
         return (
           <TextAreaField
             key={tq.key}
-            label={tq.prompt}
-            hint="Optional"
+            label={label}
+            hint={ui("optional", lang)}
             maxLength={tq.maxLength}
             value={answerOf(tq.key)}
             onChange={(v) => setAnswer(tq.key, v)}
+            lang={lang}
           />
         );
       }
@@ -328,15 +340,11 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
   const screens: FormScreen[] = [
     {
       id: "identity",
-      title: "First, who are you?",
-      description:
-        "So we can connect your feedback to your record. We only use it for that.",
+      title: ui("identityTitle", lang),
+      description: ui("identityDescription", lang),
       render: () => (
         <>
-          <p className="privacy-note">
-            Your answers go to The Family Connection&rsquo;s care team. They are
-            not shared outside the practice.
-          </p>
+          <p className="privacy-note">{ui("privacyNote", lang)}</p>
           {/* LEGAL name, said plainly on the label. The practice sees clients
               whose preferred name is the one they would type by reflex, while
               the record carries their legal name — and a preferred name
@@ -345,8 +353,8 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
               It no longer mentions an insurance card (client request,
               2026-09-23). */}
           <TextField
-            label="Your legal name"
-            hint={LEGAL_NAME_HINT}
+            label={ui("legalNameLabel", lang)}
+            hint={ui("legalNameHint", lang)}
             required
             value={draft.client.name}
             maxLength={CLIENT_NAME_MAX}
@@ -355,7 +363,7 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
             error={shown(draft.client.name, nameProblem)}
           />
           <TextField
-            label="Date of birth"
+            label={ui("dateOfBirthLabel", lang)}
             required
             type="date"
             value={draft.client.dateOfBirth}
@@ -366,7 +374,7 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
               reach the client, so the old "optional, only if you want us to
               contact you" hint would now be inaccurate as well as wrong. */}
           <TextField
-            label="Email address"
+            label={ui("emailLabel", lang)}
             required
             type="email"
             inputMode="email"
@@ -384,7 +392,7 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
               code, and phoneProblem() counts digits rather than caring how they
               are punctuated. */}
           <TextField
-            label="Phone number"
+            label={ui("phoneLabel", lang)}
             required
             type="tel"
             inputMode="tel"
@@ -415,7 +423,7 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
     },
     {
       id: "therapist",
-      title: "Who did you see?",
+      title: ui("therapistTitle", lang),
       render: () => <>{renderQuestion(bySlot.get(1)!)}</>,
       isValid: () => slotIsAnswered(1),
     },
@@ -423,8 +431,8 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
       const qs = slots.map((s) => bySlot.get(s)).filter(Boolean) as SurveyQuestion[];
       return {
         id: `slots-${slots.join("-")}`,
-        title: SCREEN_TITLES[i],
-        description: SCREEN_DESCRIPTIONS[i],
+        title: ui(SCREEN_TITLES[i], lang),
+        description: SCREEN_DESCRIPTIONS[i] && ui(SCREEN_DESCRIPTIONS[i]!, lang),
         render: () => <>{qs.map(renderQuestion)}</>,
         isValid: () => slots.every(slotIsAnswered),
       };
@@ -432,46 +440,12 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
   ];
 
   const onSubmit = async () => {
-    const answers: Record<string, AnswerValue> = {};
-    for (const q of questions) {
-      const v = draft.answers[q.key];
-      if (v !== undefined && v !== "") answers[q.key] = v;
-    }
-
-    // Only comments that were actually written. An empty box sends nothing, so
-    // a client who wrote none sends no `comments` key at all — which is the
-    // common case and keeps the row the size it was before.
-    //
-    // Keyed by commentKeysFor(), not by Object.keys(draft.comments): a stale
-    // sessionStorage draft could hold a key for a question this variant does
-    // not ask, and the server's .strict() would reject the whole submission for
-    // it. Sending only what this variant can carry means a client's answers
-    // survive a form change mid-run.
-    //
-    // The therapist key is skipped too: its box is gone (showsCommentBox), and
-    // a draft saved before that could still hold text the client can no longer
-    // see or edit. Nothing is sent that is not on screen.
-    const comments: Record<string, string> = {};
-    for (const key of commentKeysFor(variant)) {
-      const q = questions.find((x) => x.key === key);
-      if (!q || !showsCommentBox(q)) continue;
-      const text = (draft.comments[key] ?? "").trim();
-      if (text) comments[key] = text;
-    }
-
-    const result = await submitSurvey(variant, {
-      surveyVersion: SURVEY_VERSION,
-      client: {
-        name: draft.client.name.trim(),
-        dateOfBirth: draft.client.dateOfBirth.trim(),
-        email: draft.client.email.trim(),
-        phone: draft.client.phone.trim(),
-      },
-      answers,
-      ...(Object.keys(comments).length > 0 ? { comments } : {}),
-      formLoadedAt: formLoadedAt.current,
-      ...(company ? { company } : {}),
-    });
+    // The language goes in the body as its own field and nowhere else: the
+    // answers are the stored English values whichever language was showing.
+    const result = await submitSurvey(
+      variant,
+      buildSubmitBody(variant, draft, lang, formLoadedAt.current, company),
+    );
 
     if (result.ok) {
       clearDraft(variant);
@@ -484,36 +458,40 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
   return (
     <MultiStepForm
       screens={screens}
-      modalityLabel={MODALITY_FOR_VARIANT[variant]}
+      modalityLabel={modalityLabel(variant, lang)}
+      lang={lang}
+      onLanguageChange={setLanguage}
       onSubmit={onSubmit}
       isComplete={complete}
-      successNode={<Confirmation />}
+      successNode={<Confirmation lang={lang} />}
     />
   );
 }
 
+/** Titles for screens 3 to 7. The words are in shared/survey-copy.es.ts. */
 const SCREEN_TITLES = [
-  "Getting started",
-  "Your time and privacy",
-  "You and your therapist",
-  "Approach and overall",
-  "Anything else",
-];
+  "screen3Title",
+  "screen4Title",
+  "screen5Title",
+  "screen6Title",
+  "screen7Title",
+] as const;
 
-const SCREEN_DESCRIPTIONS: (string | undefined)[] = [
+const SCREEN_DESCRIPTIONS = [
   undefined,
   undefined,
-  "Zero to ten, whatever feels right.",
-  "Two more, then you are done.",
+  "screen5Description",
+  "screen6Description",
   undefined,
-];
+] as const;
 
 /**
  * Confirmation.
  *
- * THE WORDS BELOW ARE THE PRACTICE'S, VERBATIM. They were written internally,
+ * THE ENGLISH IS THE PRACTICE'S, VERBATIM. It was written internally,
  * discussed, and handed over as final copy on 2026-09-12. Do not tighten,
- * reflow or re-punctuate them.
+ * reflow or re-punctuate it. It now lives in shared/survey-copy.es.ts
+ * (CONFIRMATION_COPY) beside its Spanish equivalent.
  *
  * ONE MESSAGE FOR EVERYONE. The follow-up line used to render only when the
  * client had asked to be contacted; their copy says "If you requested a
@@ -523,7 +501,7 @@ const SCREEN_DESCRIPTIONS: (string | undefined)[] = [
  * No answers, no name, no scores, no submission id: a lobby device is shared,
  * and whatever is on this screen is visible to whoever picks the phone up next.
  */
-function Confirmation() {
+function Confirmation({ lang }: { lang: SurveyLanguage }) {
   return (
     <div className="done">
       <div className="done__mark" aria-hidden="true">
@@ -531,25 +509,12 @@ function Confirmation() {
           <path d="M20 6 9 17l-5-5" />
         </svg>
       </div>
-      <h1 className="done__title">Thank you &mdash; your feedback has been recorded!</h1>
-      <p className="done__body">
-        We truly appreciate you taking the time to share your experience with us.
-        We read every response, and your feedback helps us learn, grow, and
-        continue providing the best possible care and support to the individuals
-        and families we serve.
-      </p>
-      <p className="done__body">
-        Your voice matters and helps us continue making The Family Connection a
-        place where clients feel heard, supported, and connected.
-      </p>
-      <p className="done__body">
-        If you requested a follow-up, a member of our team will reach out to you
-        soon.
-      </p>
-      <p className="done__body done__body--strong">
-        Thank you for trusting The Family Connection to be part of your journey.
-      </p>
-      <p className="done__body">You may now close this page.</p>
+      <h1 className="done__title">{confirmation("title", lang)}</h1>
+      <p className="done__body">{confirmation("paragraph1", lang)}</p>
+      <p className="done__body">{confirmation("paragraph2", lang)}</p>
+      <p className="done__body">{confirmation("paragraph3", lang)}</p>
+      <p className="done__body done__body--strong">{confirmation("closingLine", lang)}</p>
+      <p className="done__body">{confirmation("closePage", lang)}</p>
     </div>
   );
 }

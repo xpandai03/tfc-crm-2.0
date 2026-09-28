@@ -5,7 +5,9 @@
  *
  * Covers: the four required identity fields, the legal-name label, one comment
  * mechanism per question, the stored shape, the protections that must still
- * hold, and backward compatibility with submissions taken before the change.
+ * hold, backward compatibility with submissions taken before the change, and
+ * (2026-09-28) the Spanish form: every string in both languages, and a payload
+ * that does not change with the language it was filled in.
  *
  * NO PHI. Every identity below is invented for this file.
  */
@@ -38,6 +40,32 @@ import {
   surveySubmissionSchema,
 } from "../server/survey/schema";
 import { buildSurveyDocument } from "../server/pdf/survey-template";
+import {
+  ANCHOR_COPY,
+  CONFIRMATION_COPY,
+  MESSAGE_COPY,
+  MODALITY_COPY,
+  OPTION_COPY,
+  QUESTION_COPY,
+  UI_COPY,
+  type Copy,
+} from "../shared/survey-copy.es";
+import {
+  anchorsFor,
+  languageFromSearch,
+  message,
+  optionLabel,
+  promptFor,
+} from "../client-survey/src/i18n";
+import { buildSubmitBody, type Draft } from "../client-survey/src/submit-body";
+import {
+  DEFAULT_SURVEY_LANGUAGE,
+  MODALITY_FOR_VARIANT,
+  dateOfBirthProblem,
+  type ChoiceQuestion,
+  type ScaleQuestion,
+  type SurveyLanguage,
+} from "../shared/survey-questions";
 import type { FormSubmission } from "../server/sync/db";
 
 let pass = 0, fail = 0;
@@ -125,9 +153,18 @@ eq("phoneDigits keeps a country code", phoneDigits("+1 505-555-0142"), "+1505555
 // ---------------------------------------------------------------------------
 console.log("\n[2] The name label says legal name and explains why");
 const formSrc = readFileSync(join(process.cwd(), "client-survey", "src", "SurveyForm.tsx"), "utf8");
-ok('the label reads "Your legal name"', formSrc.includes('label="Your legal name"'));
-ok("no \"full name\" label remains", !formSrc.includes('label="Your full name"'));
-ok("the legal-name hint is rendered", formSrc.includes("hint={LEGAL_NAME_HINT}"));
+const submitSrc = readFileSync(join(process.cwd(), "client-survey", "src", "submit-body.ts"), "utf8");
+// The words moved to shared/survey-copy.es.ts on 2026-09-28; the form renders
+// them by key. Same assertions, read through the copy file.
+ok("the name field renders the legal-name label", formSrc.includes('label={ui("legalNameLabel", lang)}'));
+eq('the label reads "Your legal name"', UI_COPY.legalNameLabel.en, "Your legal name");
+ok("no \"full name\" label remains",
+  !formSrc.includes("Your full name") && !JSON.stringify(UI_COPY).includes("Your full name"));
+ok("the legal-name hint is rendered", formSrc.includes('hint={ui("legalNameHint", lang)}'));
+eq("the rendered English hint IS LEGAL_NAME_HINT", UI_COPY.legalNameHint.en, LEGAL_NAME_HINT);
+ok("the Spanish hint also says legal name and why",
+  /nombre legal/.test(UI_COPY.legalNameHint.es) && /expediente/.test(UI_COPY.legalNameHint.es));
+ok("the Spanish hint does not mention insurance either", !/seguro|identificaci/i.test(UI_COPY.legalNameHint.es));
 ok('the hint says "not a preferred"', /not a preferred/i.test(LEGAL_NAME_HINT));
 ok("the hint says why", /find your record/i.test(LEGAL_NAME_HINT));
 ok('the hint says "legal name"', /legal name/i.test(LEGAL_NAME_HINT));
@@ -163,16 +200,23 @@ for (const variant of SURVEY_VARIANTS) {
     schema.safeParse({ ...validBody(variant), comments: {} }).success);
 }
 ok("the comment prompt is an invitation, not an instruction", COMMENT_PROMPT.endsWith("?"));
+eq("the rendered English comment prompt IS COMMENT_PROMPT (the PDF prints it)",
+  UI_COPY.commentPrompt.en, COMMENT_PROMPT);
+ok("...and the Spanish one is a question too", /^¿.*\?$/.test(UI_COPY.commentPrompt.es));
 const fieldsSrc = readFileSync(join(process.cwd(), "client-survey", "src", "fields.tsx"), "utf8");
 ok("the comment box is always rendered, never behind a Reveal",
   !/Reveal[\s\S]{0,400}CommentField/.test(formSrc) && formSrc.includes("showsCommentBox(q) && ("));
 // Client request, 2026-09-23: step 2 (the therapist pick) has no open comment
 // box. The server still ACCEPTS comments.therapist, so earlier rows and an open
 // tab on the previous bundle are unaffected; only the form stops writing it.
+// showsCommentBox and the submit loop moved to submit-body.ts (2026-09-28) so
+// the body can be tested without a browser.
 ok("step 2 hides the therapist comment box",
-  /showsCommentBox = \(q: SurveyQuestion\): boolean =>\s*isCommentable\(q\) && q\.kind !== "therapist"/.test(formSrc));
+  /showsCommentBox = \(q: SurveyQuestion\): boolean =>\s*isCommentable\(q\) && q\.kind !== "therapist"/.test(submitSrc));
+ok("the form imports that rule rather than redefining it",
+  /import \{[^}]*showsCommentBox[^}]*\} from "\.\/submit-body"/.test(formSrc) && !/const showsCommentBox/.test(formSrc));
 ok("the submit loop skips keys whose box is not shown",
-  /for \(const key of commentKeysFor\(variant\)\) \{[\s\S]{0,200}showsCommentBox\(q\)\) continue;/.test(formSrc));
+  /for \(const key of commentKeysFor\(variant\)\) \{[\s\S]{0,200}showsCommentBox\(q\)\) continue;/.test(submitSrc));
 for (const variant of SURVEY_VARIANTS) {
   ok(`${variant}: the server still accepts a stored therapist comment`,
     surveySubmissionSchema(variant).safeParse({ ...validBody(variant), comments: { therapist: "ZZTEST comment" } }).success);
@@ -370,6 +414,219 @@ console.log("\n[8] The PDF renders a comment on every question and paginates");
     ok("the document has a footer with page numbers",
       typeof (doc as { footer?: unknown }).footer === "function");
   }
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n[11] Spanish: every client-facing string exists in both languages");
+{
+  const nonEmpty = (c: Copy | undefined) => !!c && c.en.trim() !== "" && c.es.trim() !== "";
+  const vars = (t: string) => (t.match(/\{\w+\}/g) ?? []).sort().join(",");
+
+  for (const variant of SURVEY_VARIANTS) {
+    const byVariant = QUESTION_COPY.byVariant[variant];
+    for (const q of questionsFor(variant)) {
+      const copy = byVariant[q.key] ?? QUESTION_COPY.shared[q.key];
+      ok(`${variant}/${q.key}: has a prompt in both languages`, nonEmpty(copy));
+      // The en: line is a reference copy for the translator. If the English
+      // wording changes, this fails until the Spanish line is looked at too.
+      eq(`${variant}/${q.key}: the copy file's en: line matches the instrument`, copy?.en, q.prompt);
+      ok(`${variant}/${q.key}: the Spanish prompt is what renders`,
+        promptFor(variant, q, "es") === copy?.es && promptFor(variant, q, "en") === q.prompt);
+
+      if (q.kind === "scale") {
+        const sq = q as ScaleQuestion;
+        const a = ANCHOR_COPY[sq.key];
+        ok(`${variant}/${q.key}: both anchors in both languages`, nonEmpty(a?.low) && nonEmpty(a?.high));
+        eq(`${variant}/${q.key}: anchor en: lines match the instrument`,
+          [a?.low.en, a?.high.en], [sq.lowAnchor, sq.highAnchor]);
+        ok(`${variant}/${q.key}: Spanish anchors keep the 0 and the 10`,
+          a?.low.es.startsWith("0") === true && a?.high.es.startsWith("10") === true);
+        eq(`${variant}/${q.key}: English anchors render unchanged`,
+          anchorsFor(sq, "en"), { low: sq.lowAnchor, high: sq.highAnchor });
+      }
+      if (q.kind === "choice") {
+        for (const o of (q as ChoiceQuestion).options) {
+          ok(`${variant}/${q.key}: option "${o}" has a Spanish label`, nonEmpty(OPTION_COPY[o]));
+          eq(`  its en: line is the stored value`, OPTION_COPY[o]?.en, o);
+          eq(`  English shows the value itself`, optionLabel(o, "en"), o);
+        }
+      }
+    }
+    ok(`${variant}: the modality label has both languages`,
+      nonEmpty(MODALITY_COPY[MODALITY_FOR_VARIANT[variant]]));
+  }
+
+  // No orphans: every entry in the question/anchor maps belongs to a real
+  // question, so a stale line cannot sit in the file looking authoritative.
+  const allKeys = new Set(SURVEY_VARIANTS.flatMap((v) => questionsFor(v).map((q) => q.key)));
+  for (const key of Object.keys(QUESTION_COPY.shared)) ok(`shared copy "${key}" is a real question`, allKeys.has(key));
+  for (const variant of SURVEY_VARIANTS) {
+    const keys = new Set(questionsFor(variant).map((q) => q.key));
+    for (const key of Object.keys(QUESTION_COPY.byVariant[variant])) {
+      ok(`${variant} copy "${key}" is a question on that form`, keys.has(key));
+    }
+  }
+  for (const key of Object.keys(ANCHOR_COPY)) ok(`anchor copy "${key}" is a real question`, allKeys.has(key));
+
+  for (const [name, group] of [
+    ["UI", UI_COPY], ["confirmation", CONFIRMATION_COPY], ["modality", MODALITY_COPY], ["option", OPTION_COPY],
+  ] as const) {
+    for (const [key, c] of Object.entries(group as Record<string, Copy>)) {
+      ok(`${name}.${key}: neither language is empty`, nonEmpty(c));
+      eq(`${name}.${key}: the same {placeholders} in both`, vars(c.es), vars(c.en));
+    }
+  }
+  for (const [en, es] of Object.entries(MESSAGE_COPY)) {
+    ok(`message "${en.slice(0, 40)}": Spanish is not empty`, es.trim() !== "");
+  }
+
+  // The confirmation's English is the practice's final copy, verbatim.
+  eq("confirmation title is verbatim", CONFIRMATION_COPY.title.en,
+    "Thank you — your feedback has been recorded!");
+  eq("confirmation closing line is verbatim", CONFIRMATION_COPY.closingLine.en,
+    "Thank you for trusting The Family Connection to be part of your journey.");
+
+  // The practice name is never translated.
+  for (const c of [UI_COPY.privacyNote, UI_COPY.footer, UI_COPY.pageTitle, CONFIRMATION_COPY.paragraph2, CONFIRMATION_COPY.closingLine]) {
+    ok(`"The Family Connection" survives in Spanish: ${c.es.slice(0, 30)}…`, c.es.includes("The Family Connection"));
+  }
+}
+
+console.log("\n[12] Spanish: every error a client can see has a translation");
+{
+  // Every message the four shared identity rules can return, produced by
+  // asking them — not by copying their text here.
+  const today = new Date("2026-09-28T12:00:00Z");
+  const produced = [
+    legalNameProblem(""), legalNameProblem("x".repeat(500)),
+    dateOfBirthProblem("", today), dateOfBirthProblem("1990-02-31", today),
+    dateOfBirthProblem("2030-01-01", today), dateOfBirthProblem("1850-01-01", today),
+    emailProblem(""), emailProblem("nope"), emailProblem(`${"a".repeat(170)}@b.co`),
+    phoneProblem(""), phoneProblem("12345"), phoneProblem("1".repeat(20)),
+  ].filter((m): m is string => m !== null);
+  eq("the rules produced all eleven distinct messages", new Set(produced).size, 11);
+  for (const m of new Set(produced)) {
+    ok(`validation "${m}" has Spanish`, !!MESSAGE_COPY[m]);
+    ok(`  and renders it`, message(m, "es") === MESSAGE_COPY[m] && message(m, "en") === m);
+  }
+
+  // Every error string the server can send back, read from the route source so
+  // a new one fails here until it is translated.
+  const routeSrc = readFileSync(join(process.cwd(), "server", "survey", "routes.ts"), "utf8");
+  const serverMsgs = [...routeSrc.matchAll(/error:\s*\n?\s*"([^"]+)"/g)].map((m) => m[1]);
+  ok(`found the route's error strings (${serverMsgs.length})`, serverMsgs.length >= 7);
+  for (const m of serverMsgs) ok(`server "${m}" has Spanish`, !!MESSAGE_COPY[m]);
+
+  // And the two fixed fallbacks the bundle itself shows.
+  const apiSrc = readFileSync(join(process.cwd(), "client-survey", "src", "api.ts"), "utf8");
+  const stepSrc = readFileSync(join(process.cwd(), "client-survey", "src", "MultiStepForm.tsx"), "utf8");
+  const fallbacks = [
+    ...[...apiSrc.matchAll(/GENERIC_FAILURE =\s*\n?\s*"([^"]+)"/g)].map((m) => m[1]),
+    ...[...stepSrc.matchAll(/setError\("([^"]+)"\)/g)].map((m) => m[1]),
+  ];
+  eq("found both fallbacks", fallbacks.length, 2);
+  for (const m of fallbacks) ok(`fallback "${m}" has Spanish`, !!MESSAGE_COPY[m]);
+  ok("the banner translates what it shows", /\{message\(error, lang\)\}/.test(stepSrc));
+  ok("field errors are translated", /value\.trim\(\) \? message\(problem, lang\) : null/.test(formSrc));
+
+  eq("an unknown message is shown as it came, never blank", message("Something new.", "es"), "Something new.");
+}
+
+console.log("\n[13] Spanish: the language changes nothing that is stored except `language`");
+{
+  for (const variant of SURVEY_VARIANTS) {
+    // A draft filled in exactly as a client would, answering every question
+    // and writing a couple of comments. ZZTEST identity only.
+    const draft: Draft = {
+      client: { name: " ZZTEST Persona ", dateOfBirth: "1990-04-12", email: "zztest@example.invalid", phone: "(505) 555-0142" },
+      answers: {},
+      comments: {},
+    };
+    for (const q of questionsFor(variant)) {
+      if (q.kind === "scale") draft.answers[q.key] = 6;
+      else if (q.kind === "choice") draft.answers[q.key] = (q as ChoiceQuestion).options[1];
+      else if (q.kind === "therapist") draft.answers[q.key] = "Example Therapist (ABQ)";
+      else draft.answers[q.key] = "ZZTEST closing comment";
+    }
+    const firstChoice = questionsFor(variant).find((q) => q.kind === "choice")!;
+    draft.comments[firstChoice.key] = "ZZTEST comment";
+    draft.comments.overallRating = "ZZTEST another";
+
+    const bodies = (["en", "es"] as SurveyLanguage[]).map((lang) =>
+      buildSubmitBody(variant, { ...draft, language: lang }, lang, Date.now() - 60_000, ""));
+    const [en, es] = bodies;
+    eq(`${variant}: en body says en`, en.language, "en");
+    eq(`${variant}: es body says es`, es.language, "es");
+    const strip = (b: Record<string, unknown>) => { const { language: _l, formLoadedAt: _f, ...rest } = b; return rest; };
+    eq(`${variant}: the bodies are identical apart from language`,
+      strip(es as unknown as Record<string, unknown>), strip(en as unknown as Record<string, unknown>));
+    ok(`${variant}: answers hold the English stored values`,
+      Object.values(es.answers).every((v) => typeof v === "number" || !Object.values(OPTION_COPY).some((c) => c.es === v && c.es !== c.en)));
+
+    // Through the real server schema and the real stored-row builder.
+    const schema = surveySubmissionSchema(variant);
+    const payloads = bodies.map((b) => {
+      const parsed = schema.safeParse(b);
+      ok(`${variant}/${b.language}: the body parses on the server`, parsed.success,
+        parsed.success ? "" : JSON.stringify(parsed.error.issues.slice(0, 3)));
+      return parsed.success ? buildSurveyPayload(variant, parsed.data, "2026-09-28T00:00:00.000Z") as Record<string, unknown> : {};
+    });
+    eq(`${variant}: stored language is recorded`, [payloads[0].language, payloads[1].language], ["en", "es"]);
+    const { language: _a, ...storedEn } = payloads[0];
+    const { language: _b, ...storedEs } = payloads[1];
+    eq(`${variant}: the stored rows are identical apart from language`, storedEs, storedEn);
+
+    // A tab still running the English-only bundle sends no language at all.
+    const legacy = schema.safeParse(validBody(variant));
+    if (legacy.success) {
+      eq(`${variant}: no language sent -> stored as "en"`,
+        (buildSurveyPayload(variant, legacy.data, "2026-09-28T00:00:00.000Z") as Record<string, unknown>).language,
+        DEFAULT_SURVEY_LANGUAGE);
+    }
+    ok(`${variant}: an unknown language is refused`,
+      !schema.safeParse({ ...validBody(variant), language: "fr" }).success);
+
+    // Belt and braces: Spanish ANSWER text can never be stored, because the
+    // server only accepts the English option values.
+    const spanishAnswer = validBody(variant) as Record<string, any>;
+    spanishAnswer.answers.followUpRequested = "Sí";
+    ok(`${variant}: a Spanish label sent as an answer is rejected`, !schema.safeParse(spanishAnswer).success);
+  }
+
+  // Switching language on step 3 keeps steps 1 and 2: the answers live in the
+  // draft by key and value, and the switch only sets draft.language.
+  ok("switching language only sets draft.language",
+    /setDraft\(\(d\) => \(\{ \.\.\.d, language \}\)\)/.test(formSrc));
+  const fieldsSrc2 = readFileSync(join(process.cwd(), "client-survey", "src", "fields.tsx"), "utf8");
+  ok("a choice stores the option value and only shows the label",
+    /value=\{option\}/.test(fieldsSrc2) && /onChange=\{\(\) => onChange\(option\)\}/.test(fieldsSrc2)
+      && /\{optionLabel\(option, lang\)\}/.test(fieldsSrc2));
+}
+
+console.log("\n[14] Spanish: one form per modality, a ?lang=es link, and a badge for staff");
+{
+  eq("still exactly two form routes", [...SURVEY_VARIANTS], ["in-person", "telehealth"]);
+  eq("?lang=es opens in Spanish", languageFromSearch("?lang=es"), "es");
+  eq("?lang=ES too", languageFromSearch("?lang=ES"), "es");
+  eq("?lang=en is English", languageFromSearch("?lang=en"), "en");
+  eq("an unknown ?lang is ignored", languageFromSearch("?lang=fr"), null);
+  eq("no ?lang is no preference", languageFromSearch(""), null);
+  ok("the form reads ?lang from the page URL", /languageFromSearch\(window\.location\.search\)/.test(formSrc));
+  const stepSrc = readFileSync(join(process.cwd(), "client-survey", "src", "MultiStepForm.tsx"), "utf8");
+  ok("the switch is in the shell, so it is on every step and the confirmation",
+    /function Shell[\s\S]{0,1500}<LanguageSwitch lang=\{lang\} onChange=\{onLanguageChange\} \/>/.test(stepSrc));
+  ok("the confirmation is rendered in the chosen language", formSrc.includes("successNode={<Confirmation lang={lang} />}"));
+
+  const copySrc = readFileSync(join(process.cwd(), "shared", "survey-copy.es.ts"), "utf8");
+  const imports = [...copySrc.matchAll(/^import .*$/gm)].map((m) => m[0]);
+  ok("the copy file imports types only (it ships in the public bundle)",
+    imports.length > 0 && imports.every((l) => l.startsWith("import type ")));
+
+  const subsSrc2 = readFileSync(join(process.cwd(), "client", "src", "pages", "submissions.tsx"), "utf8");
+  ok("the Submissions row shows a language badge for a non-English survey",
+    /surveyLanguage\(sub\) !== "en" && \(\s*<Badge[\s\S]{0,600}\{surveyLanguage\(sub\)\.toUpperCase\(\)\}/.test(subsSrc2));
+  ok("the badge reads the language code only, never an answer",
+    /function surveyLanguage\(sub: FormSubmission\) \{\s*return languageFromParam\(sub\.payload\?\.language\) \?\? DEFAULT_SURVEY_LANGUAGE;\s*\}/.test(subsSrc2));
 }
 
 // ---------------------------------------------------------------------------

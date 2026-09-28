@@ -24,7 +24,9 @@ import {
   CLIENT_NAME_MAX,
   CLIENT_PHONE_MAX,
   COMMENT_MAX,
+  DEFAULT_SURVEY_LANGUAGE,
   MODALITY_FOR_VARIANT,
+  SURVEY_LANGUAGES,
   SCALE_MAX,
   SCALE_MIN,
   SURVEY_VERSION,
@@ -148,6 +150,11 @@ export function surveySubmissionSchema(variant: SurveyVariant) {
        * majority of submissions will look like.
        */
       comments: commentsSchemaFor(variant).optional(),
+      /**
+       * The language the form was shown in. Optional so a tab still running
+       * the English-only bundle keeps submitting; absent is stored as "en".
+       */
+      language: z.enum(SURVEY_LANGUAGES as [string, ...string[]]).optional(),
       /** Epoch ms captured when the form first rendered. See the min-time check. */
       formLoadedAt: z.number().int().positive(),
       /**
@@ -219,6 +226,9 @@ export function buildSurveyPayload(
     surveyVersion: SURVEY_VERSION,
     formVariant: variant,
     modality: MODALITY_FOR_VARIANT[variant],
+    // Which language the client read. Answers below are the same English
+    // values either way; this only tells staff the form was shown in Spanish.
+    language: input.language ?? DEFAULT_SURVEY_LANGUAGE,
     submittedAt,
     client: {
       name: input.client.name,

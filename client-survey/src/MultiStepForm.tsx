@@ -41,6 +41,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { message, ui, type SurveyLanguage } from "./i18n";
 
 export type FormScreen = {
   id: string;
@@ -72,9 +73,14 @@ export function MultiStepForm({
   onSubmit,
   successNode,
   isComplete,
+  lang,
+  onLanguageChange,
 }: {
   screens: FormScreen[];
   modalityLabel: string;
+  /** Shown language. Changing it re-labels the screen; answers are untouched. */
+  lang: SurveyLanguage;
+  onLanguageChange: (lang: SurveyLanguage) => void;
   /** Resolves true when the response was stored. */
   onSubmit: () => Promise<{ ok: true } | { ok: false; message: string }>;
   successNode: ReactNode;
@@ -120,6 +126,8 @@ export function MultiStepForm({
       const result = await onSubmit();
       if (!result.ok) setError(result.message);
     } catch {
+      // Kept in English and translated where the banner shows it, like every
+      // other error, so switching language after a failure re-labels it too.
       setError("We could not save your response just now. Please try again.");
     } finally {
       // Left on the last screen with every answer intact when a submit fails.
@@ -183,21 +191,21 @@ export function MultiStepForm({
 
   // Placed AFTER every hook, not before them: an early return above a hook call
   // changes the hook order between renders, which React forbids.
+  const shell = { modalityLabel, lang, onLanguageChange };
+
   if (isComplete) {
     return (
-      <Shell modalityLabel={modalityLabel}>
+      <Shell {...shell}>
         <div className="card">{successNode}</div>
       </Shell>
     );
   }
 
   return (
-    <Shell modalityLabel={modalityLabel}>
+    <Shell {...shell}>
       <div className="progress">
         <div className="progress__label">
-          <span>
-            Step {stepIndex + 1} of {total}
-          </span>
+          <span>{ui("stepCounter", lang, { step: stepIndex + 1, total })}</span>
           <span>{Math.round(((stepIndex + 1) / total) * 100)}%</span>
         </div>
         <div
@@ -206,7 +214,7 @@ export function MultiStepForm({
           aria-valuemin={1}
           aria-valuemax={total}
           aria-valuenow={stepIndex + 1}
-          aria-label="Survey progress"
+          aria-label={ui("progressLabel", lang)}
         >
           <motion.div
             className="progress__fill"
@@ -219,7 +227,7 @@ export function MultiStepForm({
 
       {error && (
         <div className="banner" role="alert">
-          {error}
+          {message(error, lang)}
         </div>
       )}
 
@@ -253,7 +261,7 @@ export function MultiStepForm({
             onClick={handleBack}
             disabled={submitting}
           >
-            Back
+            {ui("back", lang)}
           </button>
         ) : (
           <span className="nav__spacer" />
@@ -267,12 +275,12 @@ export function MultiStepForm({
           {submitting ? (
             <>
               <span className="spinner" aria-hidden="true" />
-              Sending…
+              {ui("sending", lang)}
             </>
           ) : isLast ? (
-            "Submit"
+            ui("submit", lang)
           ) : (
-            "Continue"
+            ui("continue", lang)
           )}
         </button>
       </div>
@@ -280,11 +288,52 @@ export function MultiStepForm({
   );
 }
 
+/**
+ * English / Español, at the top of every step and the confirmation.
+ *
+ * Each option is written in its own language, so it reads the same whichever
+ * is showing — a Spanish speaker looking at the English form finds "Español",
+ * not "Spanish". Two buttons rather than a toggle: a toggle's on/off does not
+ * say which language you are going TO.
+ */
+export function LanguageSwitch({
+  lang,
+  onChange,
+}: {
+  lang: SurveyLanguage;
+  onChange: (lang: SurveyLanguage) => void;
+}) {
+  const options: { value: SurveyLanguage; label: string; htmlLang: string }[] = [
+    { value: "en", label: "English", htmlLang: "en" },
+    { value: "es", label: "Español", htmlLang: "es" },
+  ];
+  return (
+    <div className="lang-switch" role="group" aria-label={ui("languageSwitchLabel", lang)}>
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          lang={o.htmlLang}
+          className={`lang-switch__btn${lang === o.value ? " lang-switch__btn--active" : ""}`}
+          aria-pressed={lang === o.value}
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function Shell({
   modalityLabel,
+  lang,
+  onLanguageChange,
   children,
 }: {
   modalityLabel: string;
+  lang: SurveyLanguage;
+  onLanguageChange: (lang: SurveyLanguage) => void;
   children: ReactNode;
 }) {
   return (
@@ -299,10 +348,11 @@ function Shell({
         <div className="shell__header-inner">
           <img className="shell__logo" src={logoUrl} alt="The Family Connection" />
           <span className="shell__modality">{modalityLabel}</span>
+          <LanguageSwitch lang={lang} onChange={onLanguageChange} />
         </div>
       </header>
       <main className="shell__main">{children}</main>
-      <p className="footer-note">The Family Connection &middot; Albuquerque, New Mexico</p>
+      <p className="footer-note">{ui("footer", lang)}</p>
     </div>
   );
 }
