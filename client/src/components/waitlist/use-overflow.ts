@@ -21,10 +21,18 @@ export function useHorizontalOverflow<T extends HTMLElement>() {
     const el = ref.current;
     if (!el) return;
 
+    // Measure the element that actually SCROLLS. The ref sits on the table's
+    // outer card, which is overflow-hidden; the scrolling happens one level
+    // down, in the Table primitive's own overflow-auto wrapper (the <table>'s
+    // parent). Measuring the outer card never saw an overflow, so the frozen
+    // Name column never engaged — found 2026-09-28 while placing the hold badge
+    // in it. Falls back to the ref when there is no table yet.
+    const scroller = (): HTMLElement => el.querySelector("table")?.parentElement ?? el;
     const measure = () => {
+      const s = scroller();
       // 1px tolerance: sub-pixel layout rounding otherwise reports a phantom
       // overflow on exactly-fitting tables and flickers the mode.
-      setIsOverflowing(el.scrollWidth - el.clientWidth > 1);
+      setIsOverflowing(s.scrollWidth - s.clientWidth > 1);
     };
 
     measure();
@@ -38,6 +46,7 @@ export function useHorizontalOverflow<T extends HTMLElement>() {
     // container would miss that.
     const table = el.querySelector("table");
     if (table) ro.observe(table);
+    if (table?.parentElement && table.parentElement !== el) ro.observe(table.parentElement);
     return () => ro.disconnect();
   });
 
