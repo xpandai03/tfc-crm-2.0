@@ -110,6 +110,7 @@ import {
   STATUS_LABELS,
   getUmbrellaForStatus,
   type UmbrellaId,
+  statusOptionLabel,
 } from "@/lib/status-config";
 
 // Helper to derive author initials from full name
@@ -873,7 +874,7 @@ export default function ContactDetail() {
       // Create pending toast
       const toastRef = toast({
         title: "Updating status...",
-        description: `Changing to ${STATUS_LABELS[variables.statusCode] || variables.statusCode}`,
+        description: `Changing to ${statusOptionLabel(variables.statusCode)}`,
       });
 
       // Cancel any outgoing refetches
@@ -901,7 +902,7 @@ export default function ContactDetail() {
         context.toastRef.update({
           id: context.toastRef.id,
           title: "Status updated",
-          description: `Status changed to ${STATUS_LABELS[variables.statusCode] || variables.statusCode}`,
+          description: `Status changed to ${statusOptionLabel(variables.statusCode)}`,
         });
         setTimeout(() => context.toastRef.dismiss(), 2000);
       }
@@ -1619,13 +1620,13 @@ export default function ContactDetail() {
                               >
                                 <SelectTrigger className="w-[200px]" data-testid="select-status">
                                   <SelectValue>
-                                    {STATUS_LABELS[currentStatusCode] || `Status ${currentStatusCode}`}
+                                    {statusOptionLabel(currentStatusCode)}
                                   </SelectValue>
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {Object.entries(STATUS_LABELS).map(([code, label]) => (
+                                  {Object.keys(STATUS_LABELS).map((code) => (
                                     <SelectItem key={code} value={code}>
-                                      {code} - {label}
+                                      {code} - {statusOptionLabel(Number(code))}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>

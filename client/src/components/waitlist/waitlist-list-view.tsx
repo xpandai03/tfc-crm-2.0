@@ -29,6 +29,7 @@ import {
   STATUS_UMBRELLAS,
   STATUS_LABELS,
   getUmbrellaForStatus,
+  statusOptionLabel,
   stringStatusToCode,
   isActiveStatus,
   type UmbrellaId,
@@ -669,7 +670,7 @@ export function WaitlistListView({
               )}
               {availableStatusCodes.map((code) => (
                 <SelectItem key={code} value={code.toString()}>
-                  {code} - {STATUS_LABELS[code] || `Status ${code}`}
+                  {code} - {statusOptionLabel(code)}
                 </SelectItem>
               ))}
             </SelectContent>

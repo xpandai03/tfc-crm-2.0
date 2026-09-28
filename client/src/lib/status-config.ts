@@ -291,6 +291,31 @@ export function stringStatusToCode(status: string | undefined | null): number {
 }
 
 /**
+ * The label for a status in a PICKER, where codes sit side by side.
+ *
+ * Two codes share the label "Left Voicemail": 101 (Waitlist) and 201 (Pending
+ * Scheduling). In a dropdown the two read identically, and choosing the wrong
+ * one moves a contact to the other umbrella. So any label carried by more than
+ * one code gets its umbrella name beside it:
+ *
+ *   101 -> "Left Voicemail (Waitlist)"
+ *   201 -> "Left Voicemail (Pending Scheduling)"
+ *
+ * Unique labels are returned unchanged. Display only: STATUS_LABELS, the stored
+ * code and every export keep the plain label.
+ */
+export function statusOptionLabel(statusCode: number): string {
+  const label = STATUS_LABELS[statusCode];
+  if (!label) return `Status ${statusCode}`;
+  const shared = Object.entries(STATUS_LABELS).some(
+    ([code, other]) => Number(code) !== statusCode && other === label,
+  );
+  if (!shared) return label;
+  const umbrella = getUmbrellaForStatus(statusCode);
+  return umbrella ? `${label} (${STATUS_UMBRELLAS[umbrella].label})` : label;
+}
+
+/**
  * Convert numeric status code to display label
  */
 export function statusCodeToLabel(statusCode: number | undefined | null): string {
