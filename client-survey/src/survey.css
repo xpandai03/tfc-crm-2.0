@@ -146,6 +146,50 @@ body {
   text-align: center;
 }
 
+/*
+  English / Español. Sits under the modality label in the navy masthead, on the
+  same centre line, so it is on every step and the confirmation without taking
+  a row of the card. Two plain buttons in a pill; the active one is filled.
+  44px tall hit area on touch (padding + line-height) for a waiting-room phone.
+*/
+.lang-switch {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.12);
+  border: 1px solid rgb(255 255 255 / 0.22);
+}
+
+.lang-switch__btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: rgb(255 255 255 / 0.85);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 9px 16px;
+  min-height: 34px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.lang-switch__btn:hover:not(.lang-switch__btn--active) {
+  color: #ffffff;
+  background: rgb(255 255 255 / 0.08);
+}
+
+.lang-switch__btn:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+.lang-switch__btn--active {
+  background: #ffffff;
+  color: var(--navy);
+}
+
 .shell__main {
   flex: 1;
   width: 100%;

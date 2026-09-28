@@ -42,6 +42,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { variantFromPath } from "@shared/survey-questions";
 import { SurveyForm } from "./SurveyForm";
+import { DEFAULT_SURVEY_LANGUAGE, languageFromSearch, ui } from "./i18n";
 import logoUrl from "./assets/tfc-logo-white.png";
 import "./survey.css";
 
@@ -53,6 +54,9 @@ function variantFromLocation(): ReturnType<typeof variantFromPath> {
 }
 
 function UnknownForm() {
+  // No form, so no switch; a Spanish QR code's ?lang=es is still honoured.
+  const lang = languageFromSearch(window.location.search) ?? DEFAULT_SURVEY_LANGUAGE;
+  document.documentElement.lang = lang;
   return (
     <div className="shell">
       {/* Same centred masthead as the wizard, minus the modality — this page is
@@ -64,12 +68,8 @@ function UnknownForm() {
       </header>
       <main className="shell__main">
         <div className="card">
-          <h1 className="card__title">This link doesn&rsquo;t look right</h1>
-          <p className="card__description">
-            Please check the link from your email, or scan the code again. If it
-            still doesn&rsquo;t work, contact the office and we will take your
-            feedback directly.
-          </p>
+          <h1 className="card__title">{ui("unknownLinkTitle", lang)}</h1>
+          <p className="card__description">{ui("unknownLinkBody", lang)}</p>
         </div>
       </main>
     </div>

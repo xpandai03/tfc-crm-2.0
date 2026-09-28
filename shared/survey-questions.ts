@@ -69,6 +69,26 @@ export function variantFromPath(segment: string): SurveyVariant | null {
   return (SURVEY_VARIANTS as readonly string[]).includes(s) ? (s as SurveyVariant) : null;
 }
 
+/**
+ * The language the form was SHOWN in, stored on the submission as `language`.
+ *
+ * Display only. Answers are stored as the English values below whichever
+ * language the client read, so nothing that reads an answer needs to know this
+ * exists. Spanish copy lives in shared/survey-copy.es.ts. A submission stored
+ * before 2026-09-28 has no `language` and was English.
+ */
+export type SurveyLanguage = "en" | "es";
+
+export const SURVEY_LANGUAGES: readonly SurveyLanguage[] = ["en", "es"];
+
+export const DEFAULT_SURVEY_LANGUAGE: SurveyLanguage = "en";
+
+/** "es" / "ES" / " es " -> "es". Anything unrecognised -> null. */
+export function languageFromParam(value: unknown): SurveyLanguage | null {
+  const s = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return (SURVEY_LANGUAGES as readonly string[]).includes(s) ? (s as SurveyLanguage) : null;
+}
+
 // ============================================================================
 // Question shapes
 // ============================================================================

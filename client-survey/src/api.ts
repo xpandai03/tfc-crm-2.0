@@ -2,7 +2,7 @@
  * The public survey's two network calls. Nothing else talks to the server.
  */
 
-import type { SurveyVariant } from "@shared/survey-questions";
+import type { SurveyLanguage, SurveyVariant } from "@shared/survey-questions";
 
 export interface PublicProvider {
   /** "Name (LOCATION)" — the shape the source form rendered. */
@@ -41,6 +41,8 @@ export interface SubmitBody {
   /** Optional per-question free text, keyed by question key. Omitted entirely
    *  when the client wrote nothing, which is the common case. */
   comments?: Record<string, string>;
+  /** The language the form was shown in. Changes nothing else in the body. */
+  language: SurveyLanguage;
   formLoadedAt: number;
   company?: string;
 }
@@ -68,7 +70,8 @@ export async function submitSurvey(
     };
     if (res.ok && json.success === true) return { ok: true };
     // The server writes these messages for the client to read; they never
-    // contain submitted values.
+    // contain submitted values. They are English; the form translates them
+    // where it shows them (i18n.ts message()).
     return { ok: false, message: json.error || GENERIC_FAILURE };
   } catch {
     // Never log the body. A network failure tells us nothing worth the risk.

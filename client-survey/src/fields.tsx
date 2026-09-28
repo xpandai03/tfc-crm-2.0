@@ -9,6 +9,7 @@
 import { useId, useMemo, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { PublicProvider } from "./api";
+import { optionLabel, ui, type SurveyLanguage } from "./i18n";
 
 export function Label({
   htmlFor,
@@ -96,6 +97,7 @@ export function TextAreaField({
   maxLength,
   rows,
   hint,
+  lang,
 }: {
   label: string;
   value: string;
@@ -103,6 +105,7 @@ export function TextAreaField({
   maxLength: number;
   rows?: number;
   hint?: string;
+  lang: SurveyLanguage;
 }) {
   const id = useId();
   const remaining = maxLength - value.length;
@@ -123,7 +126,7 @@ export function TextAreaField({
         onChange={(e) => onChange(e.target.value)}
       />
       {showCount && (
-        <span className="char-count">{remaining} characters left</span>
+        <span className="char-count">{ui("charactersLeft", lang, { remaining })}</span>
       )}
     </div>
   );
@@ -132,6 +135,11 @@ export function TextAreaField({
 /**
  * Single-select. Rendered as native radios so keyboard and screen-reader
  * behaviour is the browser's, with the visual marker styled over the top.
+ *
+ * VALUE AND LABEL ARE SEPARATE. `options` are the stored values (the English
+ * wording); only the text a client reads goes through optionLabel(). A client
+ * reading "Sí" stores "Yes", and switching language mid-form cannot change an
+ * answer already given.
  */
 export function ChoiceField({
   label,
@@ -140,6 +148,7 @@ export function ChoiceField({
   onChange,
   required,
   name,
+  lang,
 }: {
   label: string;
   options: readonly string[];
@@ -147,6 +156,7 @@ export function ChoiceField({
   onChange: (v: string) => void;
   required?: boolean;
   name: string;
+  lang: SurveyLanguage;
 }) {
   return (
     <fieldset style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
@@ -175,7 +185,7 @@ export function ChoiceField({
                 onChange={() => onChange(option)}
               />
               <span className="choice__marker" aria-hidden="true" />
-              <span className="choice__text">{option}</span>
+              <span className="choice__text">{optionLabel(option, lang)}</span>
             </label>
           );
         })}
@@ -201,12 +211,14 @@ export function ScaleField({
   highAnchor,
   value,
   onChange,
+  lang,
 }: {
   label: string;
   lowAnchor: string;
   highAnchor: string;
   value: number | null;
   onChange: (v: number) => void;
+  lang: SurveyLanguage;
 }) {
   const groupId = useId();
   return (
@@ -229,7 +241,7 @@ export function ScaleField({
             type="button"
             className={`scale__btn${value === n ? " scale__btn--selected" : ""}`}
             aria-pressed={value === n}
-            aria-label={`${n} out of 10`}
+            aria-label={ui("scaleButtonLabel", lang, { n })}
             onClick={() => onChange(n)}
           >
             {n}
@@ -253,6 +265,7 @@ export function TherapistField({
   onChange,
   loading,
   degraded,
+  lang,
 }: {
   label: string;
   providers: PublicProvider[];
@@ -260,6 +273,7 @@ export function TherapistField({
   onChange: (v: string) => void;
   loading: boolean;
   degraded: boolean;
+  lang: SurveyLanguage;
 }) {
   const [query, setQuery] = useState("");
   const searchId = useId();
@@ -277,7 +291,7 @@ export function TherapistField({
           {label}
           <span className="field__required" aria-hidden="true"> *</span>
         </span>
-        <div className="picker__empty">Loading the list of therapists…</div>
+        <div className="picker__empty">{ui("therapistLoading", lang)}</div>
       </div>
     );
   }
@@ -293,9 +307,7 @@ export function TherapistField({
           <span className="field__required" aria-hidden="true"> *</span>
         </span>
         <div className="picker__empty">
-          {degraded
-            ? "We could not load the list of therapists just now. Please reload the page, or contact the office and we will take your feedback directly."
-            : "No therapists are listed at the moment. Please contact the office and we will take your feedback directly."}
+          {degraded ? ui("therapistDegraded", lang) : ui("therapistNone", lang)}
         </div>
       </div>
     );
@@ -311,13 +323,13 @@ export function TherapistField({
         className="input picker__search"
         type="search"
         value={query}
-        placeholder="Start typing a name…"
+        placeholder={ui("therapistSearchPlaceholder", lang)}
         autoComplete="off"
         onChange={(e) => setQuery(e.target.value)}
       />
       <div className="picker__list" role="radiogroup" aria-label={label}>
         {filtered.length === 0 ? (
-          <div className="picker__empty">No therapist matches that name.</div>
+          <div className="picker__empty">{ui("therapistNoMatch", lang)}</div>
         ) : (
           filtered.map((p) => {
             const selected = value === p.label;
@@ -342,8 +354,8 @@ export function TherapistField({
       </div>
       <div className="picker__count">
         {query.trim()
-          ? `${filtered.length} of ${providers.length} shown`
-          : `${providers.length} therapists`}
+          ? ui("therapistShownCount", lang, { shown: filtered.length, total: providers.length })
+          : ui("therapistTotalCount", lang, { total: providers.length })}
       </div>
     </div>
   );
@@ -371,11 +383,13 @@ export function CommentField({
   value,
   onChange,
   maxLength,
+  lang,
 }: {
   prompt: string;
   value: string;
   onChange: (v: string) => void;
   maxLength: number;
+  lang: SurveyLanguage;
 }) {
   const id = useId();
   const remaining = maxLength - value.length;
@@ -384,7 +398,7 @@ export function CommentField({
     <div className="comment">
       <label className="comment__label" htmlFor={id}>
         {prompt}
-        <span className="comment__optional">Optional</span>
+        <span className="comment__optional">{ui("optional", lang)}</span>
       </label>
       <textarea
         id={id}
@@ -394,7 +408,9 @@ export function CommentField({
         maxLength={maxLength}
         onChange={(e) => onChange(e.target.value)}
       />
-      {showCount && <span className="char-count">{remaining} characters left</span>}
+      {showCount && (
+        <span className="char-count">{ui("charactersLeft", lang, { remaining })}</span>
+      )}
     </div>
   );
 }

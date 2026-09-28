@@ -20,7 +20,12 @@ import { SurveySnapshot } from "@/components/survey-snapshot";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessReferralUpload } from "@shared/access-control";
-import { SURVEY_FORM_TYPE, SURVEY_SOURCE } from "@shared/survey-questions";
+import {
+  DEFAULT_SURVEY_LANGUAGE,
+  SURVEY_FORM_TYPE,
+  SURVEY_SOURCE,
+  languageFromParam,
+} from "@shared/survey-questions";
 import { REASON_SHORT, isMatchReason } from "@shared/survey-match-reasons";
 import { attachFailureText, attachIneligibleText } from "@shared/survey-attach-reasons";
 
@@ -145,6 +150,15 @@ type MatchFilter = "all" | "surveys" | "review" | "matched" | "no_contact";
  */
 function isSurveySubmission(sub: FormSubmission): boolean {
   return sub.formType === SURVEY_FORM_TYPE || sub.source === SURVEY_SOURCE;
+}
+
+/**
+ * The language a survey was shown in. A row stored before the Spanish form
+ * existed has no `language` and was English. Only the language code is read —
+ * answers are the same English values either way.
+ */
+function surveyLanguage(sub: FormSubmission) {
+  return languageFromParam(sub.payload?.language) ?? DEFAULT_SURVEY_LANGUAGE;
 }
 
 /** Extract a human-readable summary from submission payload based on form type. */
@@ -764,6 +778,16 @@ export default function Submissions() {
                         <Badge variant={srcBadge.variant} className="text-[10px] px-1.5 py-0 shrink-0">
                           {srcBadge.label}
                         </Badge>
+                        {isSurveySubmission(sub) && surveyLanguage(sub) !== "en" && (
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] px-1.5 py-0 shrink-0"
+                            title="The client filled in this survey in Spanish"
+                            data-testid={`language-${sub.id}`}
+                          >
+                            {surveyLanguage(sub).toUpperCase()}
+                          </Badge>
+                        )}
                         {isSurveySubmission(sub) && <MatchBadge state={stateFor(sub.id)} />}
                         {isSurveySubmission(sub) && <MatchReasonNote state={stateFor(sub.id)} />}
                         {isSurveySubmission(sub) && <MatchCheckedNote state={stateFor(sub.id)} />}
