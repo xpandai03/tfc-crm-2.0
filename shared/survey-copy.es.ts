@@ -27,8 +27,12 @@
  * THE SPANISH does not reproduce the English source's typos ("We're you
  * greeted", "an technical difficulties"); it is written as correct Spanish.
  *
- * Neutral Latin American Spanish, formal "usted". First-pass translation,
- * 2026-09-28, pending the client's review.
+ * CLIENT WORDING (2026-09-28). The questions, answer options and 0-10 labels
+ * are the practice's own Spanish, from their TherapyNotes forms, shipped as
+ * written apart from unambiguous spelling, accents and opening "¿". Their
+ * register (tú and usted both appear) and gender forms are theirs; do not
+ * "tidy" them. Everything else (screens, buttons, messages, confirmation) is
+ * still the first-pass translation, pending the client's review.
  *
  * IMPORTS: types only. This module is compiled into the PUBLIC survey bundle,
  * so it may not import anything that carries staff data.
@@ -50,27 +54,27 @@ export interface Copy {
 const SHARED_QUESTIONS: Record<string, Copy> = {
   therapist: {
     en: "Please select the treating therapist's name",
-    es: "Por favor, seleccione el nombre de su terapeuta",
+    es: "Terapeuta Tratante",
   },
   goalsRating: {
     en: "On a scale of 0-10, how would you rate your goals and topics for session?",
-    es: "En una escala del 0 al 10, ¿cómo calificaría los objetivos y temas de su sesión?",
+    es: "Metas y Temas",
   },
   approachRating: {
     en: "On a scale of 0-10, how would you rate your therapist's approach or methods?",
-    es: "En una escala del 0 al 10, ¿cómo calificaría el enfoque o los métodos de su terapeuta?",
+    es: "Enfoque o Método",
   },
   overallRating: {
     en: "On a scale of 0-10, how would you rate your session overall?",
-    es: "En una escala del 0 al 10, ¿cómo calificaría su sesión en general?",
+    es: "En General",
   },
   followUpRequested: {
     en: "Would you like our team to follow up with you regarding your survey?",
-    es: "¿Desea que nuestro equipo se comunique con usted sobre su encuesta?",
+    es: "¿Quieres que te hagamos un seguimiento?",
   },
   additionalComments: {
     en: "Additional Comments",
-    es: "Comentarios adicionales",
+    es: "Comentarios Adicionales",
   },
 };
 
@@ -78,27 +82,27 @@ const SHARED_QUESTIONS: Record<string, Copy> = {
 const IN_PERSON_QUESTIONS: Record<string, Copy> = {
   facilityClean: {
     en: "Was the facility clean and inviting?",
-    es: "¿Las instalaciones estaban limpias y eran acogedoras?",
+    es: "¿La agencia estaba limpia y acogedora?",
   },
   greetedOnArrival: {
     en: "We're you greeted upon arrival?",
-    es: "¿Le dieron la bienvenida al llegar?",
+    es: "¿Fuistes recibido a tu llegada?",
   },
   seenWithinTenMinutes: {
     en: "Were you called back to a room within 10 minutes of your scheduled appointment time?",
-    es: "¿Le llamaron para pasar al consultorio dentro de los 10 minutos siguientes a la hora de su cita?",
+    es: "¿Fue llamado de nuevo de los 10 minutos de su cita?",
   },
   privacyRespected: {
     en: "Did you feel your privacy was respected?",
-    es: "¿Sintió que se respetó su privacidad?",
+    es: "¿Su privacidad fue tratado con respeto?",
   },
   endedFeelingValued: {
     en: "Did you end session feeling like you are of value to us?",
-    es: "Al terminar la sesión, ¿sintió que usted es importante para nosotros?",
+    es: "¿Te fuiste sintiendo que eres un valor para nosotros?",
   },
   connectionRating: {
     en: "On a scale of 0-10 how would you rate your connection with your therapist?",
-    es: "En una escala del 0 al 10, ¿cómo calificaría su conexión con su terapeuta?",
+    es: "Relación",
   },
 };
 
@@ -106,27 +110,27 @@ const IN_PERSON_QUESTIONS: Record<string, Copy> = {
 const TELEHEALTH_QUESTIONS: Record<string, Copy> = {
   platformSatisfaction: {
     en: "How satisfied were you with the Telehealth platform or telephone for your session?",
-    es: "¿Qué tan satisfactoria fue la plataforma de telesalud o el teléfono que usó para su sesión?",
+    es: "¿Qué tan satisfecho estuvo con la plataforma de telesalud o el teléfono para la sesión de hoy?",
   },
   techDifficultyResponse: {
     en: "If you had an technical difficulties, did you receive a prompt call from your provider to resolve the issue?",
-    es: "Si tuvo alguna dificultad técnica, ¿recibió una llamada rápida de su proveedor para resolver el problema?",
+    es: "Si tuvo dificultades técnicas, ¿recibió una pronta respuesta al llamar?",
   },
   seenWithinTenMinutes: {
     en: "Were you called within 10 minutes of your appointment time to begin your session?",
-    es: "¿Le llamaron dentro de los 10 minutos siguientes a la hora de su cita para comenzar su sesión?",
+    es: "¿La sesión comenzó dentro de los 10 minutos de la hora programada?",
   },
   privacyRespected: {
     en: "Did you feel your privacy was respected in this treatment format?",
-    es: "¿Sintió que se respetó su privacidad en este formato de tratamiento?",
+    es: "¿Sentiste que se respetó tu privacidad en este formato de tratamiento?",
   },
   endedFeelingValued: {
     en: "Did you end session feeling like you are a value to us?",
-    es: "Al terminar la sesión, ¿sintió que usted es importante para nosotros?",
+    es: "¿Te fuiste sintiendo que eres un valor para nosotros?",
   },
   connectionRating: {
     en: "On a scale of 0-10, how would you rate your connection with your therapist?",
-    es: "En una escala del 0 al 10, ¿cómo calificaría su conexión con su terapeuta?",
+    es: "Relación",
   },
 };
 
@@ -140,47 +144,50 @@ export const QUESTION_COPY: {
 
 // ============================================================================
 // The words under the 0 and the 10 on each rating question
+//
+// The client uses ONE pair of labels for all four questions (their form, as
+// written). The English still differs per question; the Spanish does not.
 // ============================================================================
 
 export const ANCHOR_COPY: Record<string, { low: Copy; high: Copy }> = {
   connectionRating: {
     low: {
       en: "0-Not being heard, understood or respected",
-      es: "0-No sentí que me escucharan, comprendieran ni respetaran",
+      es: "0-No me sentí escuchado, entendido y respetado",
     },
     high: {
       en: "10- Felt heard, understood, and respected",
-      es: "10- Sentí que me escucharon, comprendieron y respetaron",
+      es: "10-Me sentí escuchado, entendido y respetado",
     },
   },
   goalsRating: {
     low: {
       en: "0-Did not work or talk about goals",
-      es: "0-No trabajamos ni hablamos sobre mis objetivos",
+      es: "0-No me sentí escuchado, entendido y respetado",
     },
     high: {
       en: "10-Worked or talked about goals",
-      es: "10-Trabajamos o hablamos sobre mis objetivos",
+      es: "10-Me sentí escuchado, entendido y respetado",
     },
   },
   approachRating: {
     low: {
       en: "0- The approach is not a good fit for me",
-      es: "0- El enfoque no es adecuado para mí",
+      es: "0-No me sentí escuchado, entendido y respetado",
     },
     high: {
       en: "10-The approach is a good fit for me",
-      es: "10-El enfoque es adecuado para mí",
+      es: "10-Me sentí escuchado, entendido y respetado",
     },
   },
   overallRating: {
     low: {
       en: "0- There was something missing in session",
-      es: "0- Faltó algo en la sesión",
+      es: "0-No me sentí escuchado, entendido y respetado",
     },
     high: {
       en: "10- Overall session was right for me",
-      es: "10- En general, la sesión fue adecuada para mí",
+      es: "10-Me sentí escuchado, entendido y respetado",
     },
   },
 };
@@ -191,9 +198,9 @@ export const ANCHOR_COPY: Record<string, { low: Copy; high: Copy }> = {
 
 export const OPTION_COPY: Record<string, Copy> = {
   Excellent: { en: "Excellent", es: "Excelente" },
-  Satisfied: { en: "Satisfied", es: "Satisfecho(a)" },
+  Satisfied: { en: "Satisfied", es: "Satisfecho" },
   Neutral: { en: "Neutral", es: "Neutral" },
-  "Could be better": { en: "Could be better", es: "Podría mejorar" },
+  "Could be better": { en: "Could be better", es: "Podría ser mejor" },
   "Needs improvement immediately": {
     en: "Needs improvement immediately",
     es: "Necesita mejorar de inmediato",
