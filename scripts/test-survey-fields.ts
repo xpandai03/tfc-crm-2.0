@@ -630,6 +630,63 @@ console.log("\n[14] Spanish: one form per modality, a ?lang=es link, and a badge
 }
 
 // ---------------------------------------------------------------------------
+console.log("\n[15] Spanish: the client's own wording is what ships (2026-09-28)");
+{
+  // The practice supplied their Spanish for the questions, options and 0-10
+  // labels. Pinned here so a later retranslation cannot quietly replace it.
+  // Only spelling, accents and opening ¿ were corrected; see the PR.
+  const CLIENT: Record<string, Record<string, string>> = {
+    "in-person": {
+      therapist: "Terapeuta Tratante",
+      facilityClean: "¿La agencia estaba limpia y acogedora?",
+      greetedOnArrival: "¿Fuistes recibido a tu llegada?",
+      seenWithinTenMinutes: "¿Fue llamado de nuevo de los 10 minutos de su cita?",
+      privacyRespected: "¿Su privacidad fue tratado con respeto?",
+      endedFeelingValued: "¿Te fuiste sintiendo que eres un valor para nosotros?",
+      connectionRating: "Relación",
+      goalsRating: "Metas y Temas",
+      approachRating: "Enfoque o Método",
+      overallRating: "En General",
+      followUpRequested: "¿Quieres que te hagamos un seguimiento?",
+      additionalComments: "Comentarios Adicionales",
+    },
+    telehealth: {
+      therapist: "Terapeuta Tratante",
+      platformSatisfaction: "¿Qué tan satisfecho estuvo con la plataforma de telesalud o el teléfono para la sesión de hoy?",
+      techDifficultyResponse: "Si tuvo dificultades técnicas, ¿recibió una pronta respuesta al llamar?",
+      seenWithinTenMinutes: "¿La sesión comenzó dentro de los 10 minutos de la hora programada?",
+      privacyRespected: "¿Sentiste que se respetó tu privacidad en este formato de tratamiento?",
+      endedFeelingValued: "¿Te fuiste sintiendo que eres un valor para nosotros?",
+      connectionRating: "Relación",
+      goalsRating: "Metas y Temas",
+      approachRating: "Enfoque o Método",
+      overallRating: "En General",
+      followUpRequested: "¿Quieres que te hagamos un seguimiento?",
+      additionalComments: "Comentarios Adicionales",
+    },
+  };
+  for (const variant of SURVEY_VARIANTS) {
+    const qs = questionsFor(variant);
+    eq(`${variant}: the client's text covers every question on the form`,
+      qs.map((q) => q.key).sort(), Object.keys(CLIENT[variant]).sort());
+    for (const q of qs) {
+      eq(`${variant}/${q.key}: client wording`, promptFor(variant, q, "es"), CLIENT[variant][q.key]);
+      eq(`${variant}/${q.key}: English unchanged`, promptFor(variant, q, "en"), q.prompt);
+    }
+  }
+  // One pair of 0-10 labels for all four ratings, as the client's form has it.
+  for (const key of ["connectionRating", "goalsRating", "approachRating", "overallRating"]) {
+    eq(`${key}: client 0-10 labels`, [ANCHOR_COPY[key].low.es, ANCHOR_COPY[key].high.es],
+      ["0-No me sentí escuchado, entendido y respetado", "10-Me sentí escuchado, entendido y respetado"]);
+  }
+  eq("rating options, client wording", ["Excellent", "Satisfied", "Neutral", "Could be better", "Needs improvement immediately"]
+    .map((o) => optionLabel(o, "es")), ["Excelente", "Satisfecho", "Neutral", "Podría ser mejor", "Necesita mejorar de inmediato"]);
+  eq("Yes / No, client wording", [optionLabel("Yes", "es"), optionLabel("No", "es")], ["Sí", "No"]);
+  eq("N/A has no client text and keeps the earlier label", optionLabel("N/A", "es"), "No aplica");
+  ok("no machine gender form survives on the options", !Object.values(OPTION_COPY).some((c) => c.es.includes("(a)")));
+}
+
+// ---------------------------------------------------------------------------
 console.log("\n[10] The public bundle carries no staff data");
 // script/assert-survey-bundle.ts is the real gate and runs in `npm run build`.
 // Asserted here so this suite fails if it is ever removed from the build.
