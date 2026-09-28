@@ -23,6 +23,10 @@ export type ActivityType =
   // the reason only — never the free-text note. See shared/account-hold.ts.
   | "contact_hold_set"
   | "contact_hold_cleared"
+  // A file added to / removed from a contact's Documents (soft delete).
+  // Metadata: documentId, the staff-given name, source. Never the bytes.
+  | "document_uploaded"
+  | "document_removed"
   | "contact_deleted"
   | "contact_assigned"
   | "assignment_deleted"
@@ -490,6 +494,17 @@ function formatActivitySummary(
     case "contact_hold_cleared": {
       const reason = String(metadata.reason || "");
       return reason ? `Cleared hold on ${name} (was: ${reason})` : `Cleared hold on ${name}`;
+    }
+
+    case "document_uploaded": {
+      const doc = String(metadata.name || "a document");
+      return metadata.source === "fax_referral"
+        ? `Saved the fax referral to ${name}'s documents: ${doc}`
+        : `Uploaded ${doc} to ${name}'s documents`;
+    }
+
+    case "document_removed": {
+      return `Removed ${String(metadata.name || "a document")} from ${name}'s documents`;
     }
 
     case "contact_deleted": {

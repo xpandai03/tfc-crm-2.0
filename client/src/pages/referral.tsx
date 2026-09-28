@@ -7,6 +7,7 @@ import { PdfPreview } from "@/components/referral/pdf-preview";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessReferralUpload } from "@shared/access-control";
 import { useToast } from "@/hooks/use-toast";
+import { attachFaxReferral } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -216,6 +217,26 @@ export default function Referral() {
         return;
       }
       const { contactId } = await res.json();
+
+      // Keep the referral PDF on the contact it created, as a document. The
+      // contact already exists at this point; if the copy fails, say so and
+      // point at the Documents card rather than losing the contact.
+      let attachFailed = false;
+      if (file) {
+        try {
+          await attachFaxReferral(contactId, file);
+        } catch {
+          attachFailed = true;
+        }
+      }
+      if (attachFailed) {
+        toast({
+          title: "Referral PDF not saved to the contact",
+          description: "The contact was created. Upload the referral from its Documents card.",
+          variant: "destructive",
+        });
+      }
+
       toast({
         title: "Contact created",
         description: `${payload.name} · Ready to upload the next referral.`,
@@ -238,7 +259,7 @@ export default function Referral() {
       });
       setIsSubmitting(false);
     }
-  }, [formState, toast, user?.name, reset]);
+  }, [formState, file, toast, user?.name, reset]);
 
   const inReviewState = file !== null && formState !== null;
 

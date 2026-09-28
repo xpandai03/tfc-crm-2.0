@@ -1,4 +1,5 @@
 import { apiRequest } from "./queryClient";
+import type { ContactDocument } from "@shared/contact-documents";
 import type { ContactSnapshot, WaitlistContact, WaitlistSummary } from "@shared/schema";
 import type { DataSource, DataMode } from "./data-source-context";
 
@@ -246,6 +247,63 @@ export async function setContactHold(
 export async function clearContactHold(contactId: number): Promise<{ success: boolean; holdActive: boolean }> {
   const response = await apiRequest("POST", `/api/contact/${contactId}/hold/clear`, {});
   return response.json();
+}
+
+// ============================================================================
+// Contact documents (server/documents/routes.ts). Multipart uploads go through
+// fetch + FormData rather than apiRequest, which always sends JSON.
+// ============================================================================
+
+async function documentError(res: Response, fallback: string): Promise<Error> {
+  try {
+    const body = await res.json();
+    return new Error(body?.message || body?.error || fallback);
+  } catch {
+    return new Error(fallback);
+  }
+}
+
+export async function listContactDocuments(contactId: number): Promise<{ documents: ContactDocument[] }> {
+  const res = await fetch(`/api/contact/${contactId}/documents`, { credentials: "include", cache: "no-store" });
+  if (!res.ok) throw await documentError(res, "Failed to load documents");
+  return res.json();
+}
+
+export async function uploadContactDocument(
+  contactId: number,
+  file: File,
+  name: string,
+): Promise<{ document: ContactDocument }> {
+  const fd = new FormData();
+  fd.append("name", name);
+  fd.append("file", file);
+  const res = await fetch(`/api/contact/${contactId}/documents`, { method: "POST", credentials: "include", body: fd });
+  if (!res.ok) throw await documentError(res, "Failed to upload the document");
+  return res.json();
+}
+
+/**
+ * Keep the fax referral PDF on the contact it just created. Called by the
+ * referral upload page after /api/intake succeeds; the server names it and
+ * marks it as the fax referral.
+ */
+export async function attachFaxReferral(contactId: number, file: File): Promise<{ document: ContactDocument; duplicate: boolean }> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`/api/contact/${contactId}/documents/fax-referral`, { method: "POST", credentials: "include", body: fd });
+  if (!res.ok) throw await documentError(res, "Failed to save the referral PDF");
+  return res.json();
+}
+
+export async function removeContactDocument(contactId: number, documentId: number): Promise<{ success: boolean }> {
+  const res = await fetch(`/api/contact/${contactId}/documents/${documentId}`, { method: "DELETE", credentials: "include" });
+  if (!res.ok) throw await documentError(res, "Failed to remove the document");
+  return res.json();
+}
+
+/** Same-origin, session-checked on every request. Never a signed or public URL. */
+export function documentContentUrl(contactId: number, documentId: number, disposition: "inline" | "attachment"): string {
+  return `/api/contact/${contactId}/documents/${documentId}/content?disposition=${disposition}`;
 }
 
 export async function getAttentionFlags(): Promise<{ flags: AttentionFlag[] }> {

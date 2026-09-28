@@ -77,6 +77,7 @@ import { ReminderModal } from "@/components/ui/reminder-modal";
 import { AssignProviderModal } from "@/components/ui/assign-provider-modal";
 import { SendEmailModal } from "@/components/ui/send-email-modal";
 import { AssignmentSelector } from "@/components/ui/assignment-selector";
+import { ContactDocumentsCard } from "@/components/contact-documents-card";
 import { useDataSource, type DataSource } from "@/lib/data-source-context";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
@@ -1267,7 +1268,7 @@ export default function ContactDetail() {
       // Merge activity_log events (emails, TN, etc.) into timeline.
       // Preserve `email_sent` type so the violet Mail icon + Download Snapshot button render.
       const activityEvents: TimelineEvent[] = contactActivities
-        .filter(a => ["email_sent", "therapy_notes_started", "therapy_notes_created", "therapy_notes_failed", "contact_updated", "contact_hold_set", "contact_hold_cleared"].includes(a.type))
+        .filter(a => ["email_sent", "therapy_notes_started", "therapy_notes_created", "therapy_notes_failed", "contact_updated", "contact_hold_set", "contact_hold_cleared", "document_uploaded", "document_removed"].includes(a.type))
         .map((a): TimelineEvent => {
           const isEmail = a.type === "email_sent";
           const templateId = isEmail ? (a.metadata?.template as string | undefined) ?? null : null;
@@ -1943,6 +1944,11 @@ export default function ContactDetail() {
                     : "Send Options"
                 }
               />
+
+              {/* Documents — just above the Intake Summary (which carries the
+                  intake PDF download), so the right column's files sit
+                  together near the top. Collapsed by default with a count. */}
+              {contactId && <ContactDocumentsCard contactId={contactId} />}
 
               {/* Intake Summary - Editable intake state with color-coded sections */}
               <Card className={cn("overflow-visible", isContactFlagged && "ring-2 ring-amber-400/50 dark:ring-amber-500/40")}>
