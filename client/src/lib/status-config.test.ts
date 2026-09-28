@@ -7,9 +7,12 @@
  * widened active-count bound — so a missed/incorrect surface is caught.
  */
 import assert from "node:assert";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   isActiveStatus,
   getUmbrellaForStatus,
+  statusOptionLabel,
   STATUS_LABELS,
   STATUS_UMBRELLAS,
 } from "./status-config";
@@ -65,10 +68,40 @@ check("server active(403)", serverActive(403), false);
 check("server active(206)", serverActive(206), true);
 for (const c of [103, 104, 203, 204, 205, 400]) check(`server active(${c})===false`, serverActive(c), false);
 
+// ---- the two "Left Voicemail" codes are distinguishable in a picker ----
+// 101 is Waitlist, 201 is Pending Scheduling. Same label; staff picking 101 for a
+// Ready-to-Schedule contact moved it to Waitlist. The mapping itself is correct:
+check("101 is in Waitlist", getUmbrellaForStatus(101), "WL");
+check("201 is in Pending Scheduling", getUmbrellaForStatus(201), "PS");
+check("101 label unchanged (exports, reports)", STATUS_LABELS[101], "Left Voicemail");
+check("201 label unchanged (exports, reports)", STATUS_LABELS[201], "Left Voicemail");
+// ...and the pickers now say which is which.
+check("picker label 101", statusOptionLabel(101), "Left Voicemail (Waitlist)");
+check("picker label 201", statusOptionLabel(201), "Left Voicemail (Pending Scheduling)");
+// A label no other code shares is shown exactly as before.
+for (const [code, label] of Object.entries(STATUS_LABELS)) {
+  const shared = Object.values(STATUS_LABELS).filter((l) => l === label).length > 1;
+  if (!shared) check(`picker label ${code} unchanged`, statusOptionLabel(Number(code)), label);
+}
+// The property that matters: no two codes read the same in a picker, including
+// any duplicate added later.
+const pickerLabels = Object.keys(STATUS_LABELS).map((c) => statusOptionLabel(Number(c)));
+check("every picker label is distinct", new Set(pickerLabels).size, pickerLabels.length);
+check("unknown code falls back", statusOptionLabel(999), "Status 999");
+// Both status pickers use it: the contact page's Workflow Status (items and the
+// closed trigger) and the waitlist Status filter.
+const root = process.cwd();
+const contactPage = readFileSync(join(root, "client", "src", "pages", "contact-detail.tsx"), "utf8");
+const listView = readFileSync(join(root, "client", "src", "components", "waitlist", "waitlist-list-view.tsx"), "utf8");
+check("contact page items use statusOptionLabel", contactPage.includes("{code} - {statusOptionLabel(Number(code))}"), true);
+check("contact page trigger uses statusOptionLabel", /<SelectValue>\s*\{statusOptionLabel\(currentStatusCode\)\}/.test(contactPage), true);
+check("waitlist Status filter uses statusOptionLabel", listView.includes("{code} - {statusOptionLabel(code)}"), true);
+check("the save path still sends the numeric code", /onValueChange=\{\(val\) => handleStatusChange\(parseInt\(val, 10\)\)\}/.test(contactPage), true);
+
 if (failures.length > 0) {
   console.error(`FAIL — ${failures.length} status-config assertion(s):`);
   for (const f of failures) console.error("  - " + f);
   process.exit(1);
 }
-console.log("PASS — status-config: 206/402/500 classification consistent (client + server replica)");
+console.log("PASS — status-config: 206/402/500 classification consistent (client + server replica); picker labels distinct");
 assert.ok(true);
