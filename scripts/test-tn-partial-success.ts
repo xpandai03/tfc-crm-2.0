@@ -239,19 +239,25 @@ const callbackNow = routesSrc.slice(
   routesSrc.indexOf('app.post("/api/internal/tn-progress/:contactId"'),
   routesSrc.indexOf("// Submissions API"),
 );
-const callbackAtBuild = execSync("git show 1028740:server/routes.ts", { encoding: "utf8" });
-const callbackThen = callbackAtBuild.slice(
-  callbackAtBuild.indexOf('app.post("/api/internal/tn-progress/:contactId"'),
-  callbackAtBuild.indexOf("// Submissions API"),
-);
-ok("the progress callback is byte-identical to when this shipped",
-  callbackNow === callbackThen);
-ok("the phases the agent may report are unchanged",
-  routesSrc.includes('"upload_intake_pdf", "upload_snapshot_pdf", "schedule_appointment", "workflow_complete"'));
-ok("the V2 payload sent to the agent is unchanged",
-  execSync("git diff 1028740 --name-only -- server/therapy-notes/ shared/", { encoding: "utf8" })
-    .split("\n").filter(Boolean)
-    .every((f) => !f.includes("therapy-notes")));
+// RE-PINNED 2026-09-28 (contact documents → TherapyNotes). These three were
+// byte-identity checks against 1028740, which any deliberate change to the
+// callback, the phase list or the payload breaks — and the documents work
+// changes all three on purpose (a new "upload_documents" phase, stamping in the
+// callback, a `documents` field). The payload one already failed on main. What
+// the partial-success display actually depends on is asserted instead:
+//  - the callback still writes the terminal entries computeTnRun keys off;
+//  - every phase the display knows is still accepted;
+//  - the payload still carries the progress-callback contract.
+ok("the progress callback still writes both terminals the display keys off",
+  /body\.phase === "workflow_complete" && body\.status === "ok"[\s\S]{0,200}type: "tn_schedule_completed"/.test(callbackNow) &&
+  /else if \(body\.status === "failed"\)[\s\S]{0,200}type: "tn_schedule_failed"/.test(callbackNow));
+const phaseList = routesSrc.slice(routesSrc.indexOf("const TN_PHASES = ["), routesSrc.indexOf("const TN_PHASE_STATUSES"));
+ok("every phase the display knows is still accepted",
+  ["entry", "login", "navigate", "fill_form", "save", "upload_intake_pdf", "upload_snapshot_pdf",
+   "schedule_appointment", "workflow_complete"].every((ph) => phaseList.includes(`"${ph}"`)));
+const types = fs.readFileSync(path.join(process.cwd(), "server", "therapy-notes", "types.ts"), "utf8");
+ok("the V2 payload still carries the progress-callback contract",
+  /contact_id: number;/.test(types) && /run_id: string;/.test(types) && /callback_url: string;/.test(types));
 // The agent repository is a separate checkout that other sessions work in, so
 // "it has no uncommitted changes" is not this build's to assert. What is ours is
 // that nothing we wrote is in there.

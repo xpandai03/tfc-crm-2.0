@@ -59,6 +59,12 @@ export interface ContactDocument {
   uploadedByEmail: string;
   uploadedByName: string | null;
   uploadedAt: string;
+  /**
+   * When the TherapyNotes agent confirmed this document on the patient's chart
+   * (the "In TN" marker). NULL = not filed yet; only NULL documents are sent on
+   * the next Add to Schedule run.
+   */
+  tnUploadedAt: string | null;
 }
 
 /**

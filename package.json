@@ -31,6 +31,7 @@
     "test:custody-hold": "tsx --tsconfig tsconfig.test.json scripts/test-custody-hold.ts",
     "test:custody-hold-db": "tsx scripts/test-custody-hold-db.ts",
     "test:contact-documents": "tsx scripts/test-contact-documents.ts",
+    "test:tn-documents": "tsx --tsconfig tsconfig.test.json scripts/test-tn-documents.ts",
     "test:survey-matching": "tsx scripts/test-survey-matching.ts",
     "test:survey-matching-run": "tsx scripts/test-survey-matching-run.ts",
     "test:tn-partial": "tsx scripts/test-tn-partial-success.ts",
