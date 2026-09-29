@@ -184,8 +184,10 @@ console.log("\n[8] The payload, and what changed about it");
   });
   // Every identifying field has ALWAYS come from the submission. The matched
   // path added contact_id, and the chart id came later; nothing else.
+  // clinician_name still comes from the submission — in its TherapyNotes form
+  // since 2026-09-29: "(LOCATION)" dropped, scheduling alias applied.
   ([["first_name", "Test"], ["last_name", "LS"], ["dob", "04/12/1990"],
-    ["phone", "(505) 555-0143"], ["clinician_name", "Amanda Davison (ABQ)"]] as const)
+    ["phone", "(505) 555-0143"], ["clinician_name", "Amanda Davison"]] as const)
     .forEach(([k, v]) => {
       check(`${k} still comes from the submission`, body[k] === v);
     });

@@ -67,6 +67,7 @@
  */
 
 import { normalizeProviderName } from "../providers/normalize-name";
+import { clinicianNameMatches, surveyTherapistToTnClinician } from "../providers/tn-clinician-name";
 import {
   REASON_LABEL,
   type MatchReason,
@@ -512,13 +513,19 @@ export function collapseIdentities(
  * wrong match is not the way to find out.
  */
 function providerMatches(c: ContactIdentity, wanted: string): boolean {
+  // `wanted` is the survey's therapist in its TherapyNotes form (location
+  // dropped, scheduling alias applied). Each candidate value goes through the
+  // SAME normalisation, then the scheduling word rule: every word of the
+  // survey's name must appear in the candidate's. One-way on purpose — a
+  // malformed assignment holding only a first name can never satisfy a full
+  // name, so an unreadable provider still only ever fails to break a tie.
+  // (2026-09-29: exact equality let "Tyra Jones (ABQ)" never meet a "Ty Jones"
+  // chart. Shared rules: server/providers/tn-clinician-name.ts.)
   if (!wanted) return false;
-  if (providerKey(c.assignedProvider) === wanted && providerKey(c.assignedProvider) !== "") {
-    return true;
-  }
-  return (c.clinicians ?? []).some((cl) => {
-    const k = providerKey(cl);
-    return k !== "" && k === wanted;
+  const values = [c.assignedProvider, ...(c.clinicians ?? [])];
+  return values.some((v) => {
+    const tn = surveyTherapistToTnClinician(v);
+    return tn !== "" && clinicianNameMatches(wanted, tn);
   });
 }
 
@@ -646,7 +653,7 @@ export function matchSubmission(
   // records — and a couple recorded under one TherapyNotes account shares every
   // field above as well. This is the ONE place a tie is broken, and only the
   // provider breaks it.
-  const wanted = providerKey(submitted.provider);
+  const wanted = surveyTherapistToTnClinician(submitted.provider);
   const allIds = dedupeIds(candidates);
 
   if (!wanted) {
