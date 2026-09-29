@@ -97,7 +97,9 @@ eq("first_name", before.first_name, "Zzmary");
 eq("last_name", before.last_name, "Zzwatson");
 eq("dob is still MM/DD/YYYY", before.dob, "04/12/1990");
 eq("phone is sent as submitted", before.phone, "(505) 555-0143");
-eq("clinician_name", before.clinician_name, "Zzamanda Zzdavison (ABQ)");
+// 2026-09-29: sent in its TherapyNotes form — "(LOCATION)" dropped, alias
+// applied (surveyTherapistToTnClinician). Was the raw roster label.
+eq("clinician_name", before.clinician_name, "Zzamanda Zzdavison");
 eq("pdf_url still points at the internal route",
   before.pdf_url, "https://crm.test/api/internal/survey-pdf/7");
 eq("document_name is passed through", before.document_name, "Client Survey");

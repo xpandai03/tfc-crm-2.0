@@ -43,6 +43,10 @@ export const PROVIDER_NAME_CORRECTIONS: Record<string, string> = {
   // Abbreviated in the sheet. "Ty Jones" is the form TherapyNotes renders, so
   // this correction DOES need a TN-facing value.
   "Ty Jones": "Tyra Jones",
+  // TherapyNotes renders the full hyphenated surname; the CRM shows "Danya
+  // Estrada" (2026-09-29 audit). Scheduling already matched by word subset;
+  // the survey tiebreak and attach needed the exact TN form.
+  "Danya Estrada-Rivera": "Danya Estrada",
 };
 
 /**
@@ -96,4 +100,43 @@ export function toTherapyNotesClinicianName(displayName: string): string {
   const raw = displayName ?? "";
   const tnName = TN_CLINICIAN_NAMES[normalizeProviderName(raw)];
   return tnName ?? raw;
+}
+
+// ============================================================================
+// Survey therapist answers → the same TherapyNotes name (2026-09-29)
+//
+// The public survey's therapist question is answered from the roster, which
+// renders "Name (LOCATION)" — "Tyra Jones (ABQ)". Sent onward unchanged, the
+// location code became a word the agent required on the chart and the Tyra→Ty
+// alias never applied, so no survey ever attached. Both the attach payload and
+// the survey matcher's provider tiebreak now go through the functions below:
+// one normalisation, one word rule, the same as scheduling's.
+// ============================================================================
+
+/** "Tyra Jones (ABQ)" -> "Tyra Jones". Any parenthesised group is dropped. */
+export function stripLocationSuffix(label: string | null | undefined): string {
+  return String(label ?? "").replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * A survey's therapist answer as the name TherapyNotes renders:
+ * location stripped, then the scheduling alias map. An unknown name passes
+ * through (location stripped).
+ */
+export function surveyTherapistToTnClinician(answer: string | null | undefined): string {
+  return toTherapyNotesClinicianName(stripLocationSuffix(answer));
+}
+
+/**
+ * The scheduling word rule: every word of `sent` appears in `rendered`, case
+ * and punctuation insensitive, order-free — so "Ty Jones" matches "Ty Jones",
+ * "Jones, Ty" and "Jones, Ty, LMHC". An empty `sent` never matches.
+ */
+export function clinicianNameMatches(sent: string | null | undefined, rendered: string | null | undefined): boolean {
+  const want = nameTokens(String(sent ?? ""));
+  const have = nameTokens(String(rendered ?? ""));
+  if (want.size === 0) return false;
+  let ok = true;
+  want.forEach((t) => { if (!have.has(t)) ok = false; });
+  return ok;
 }

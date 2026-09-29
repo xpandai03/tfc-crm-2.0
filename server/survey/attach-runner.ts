@@ -21,6 +21,7 @@
  */
 
 import { getSubmissionById, getRecentSurveySubmissions, type FormSubmission } from "../sync/db";
+import { surveyTherapistToTnClinician } from "../providers/tn-clinician-name";
 import { SURVEY_FORM_TYPE } from "@shared/survey-questions";
 import { logActivity } from "../activity/db";
 import { getMatchState, markAttachRefusalForReview } from "./match-db";
@@ -288,7 +289,10 @@ export function buildAttachBody(params: {
     last_name: fields.lastName,
     dob: fields.dob,
     phone: fields.phone,
-    clinician_name: fields.clinicianName,
+    // The TherapyNotes form of the survey's therapist answer: "(LOCATION)"
+    // dropped and the scheduling alias applied ("Tyra Jones (ABQ)" -> "Ty
+    // Jones"). See surveyTherapistToTnClinician.
+    clinician_name: surveyTherapistToTnClinician(fields.clinicianName),
     pdf_url: `${baseUrl}/api/internal/survey-pdf/${submissionId}`,
     document_name: documentName,
     // Omitted rather than null when there is no contact. The agent's schema has
@@ -393,6 +397,7 @@ export async function attachOne(params: {
   let reason: string | null = "unknown_error";
   let tnPatientUrl: string | null = null;
   let selectionMode: string | null = null;
+  let clinicianCheck: string | null = null;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ATTACH_TIMEOUT_MS);
@@ -419,7 +424,7 @@ export async function attachOne(params: {
       // The route answers synchronously with SurveyAttachOutput.
       let parsed: {
         status?: string; failure_reason?: string; tn_patient_url?: string;
-        selection_mode?: string;
+        selection_mode?: string; message?: string;
       } | null = null;
       try { parsed = JSON.parse(text); } catch { parsed = null; }
       // Recorded on BOTH outcomes. The question it answers is usually asked
@@ -435,6 +440,13 @@ export async function attachOne(params: {
         tnPatientUrl = typeof parsed.tn_patient_url === "string" ? parsed.tn_patient_url : null;
       } else {
         reason = parsed?.failure_reason || "unknown_error";
+        // A clinician refusal names the two clinician strings it compared —
+        // staff names only, in a format the agent controls — so whether it is
+        // real can be seen without re-running it. No other refusal's text is
+        // kept: those can describe the patient.
+        if (reason === "clinician_mismatch" && typeof parsed?.message === "string") {
+          clinicianCheck = parsed.message.slice(0, 300);
+        }
       }
     }
   } catch (err) {
@@ -481,12 +493,14 @@ export async function attachOne(params: {
     metadata: {
       submissionId, contactId: elig.fields.contactId, trigger,
       ...(reason ? { failureReason: reason } : {}), durationMs,
+      ...(clinicianCheck ? { clinicianCheck } : {}),
     },
   }).catch((e) => console.error("[survey-attach] activity write failed:", e instanceof Error ? e.message : "unknown"));
 
   console.log(
     `[survey-attach] ${status.toUpperCase()} id=${submissionId} ` +
-    `${reason ? `reason=${reason} ` : ""}ms=${durationMs}`,
+    `${reason ? `reason=${reason} ` : ""}ms=${durationMs}` +
+    (clinicianCheck ? ` clinician_check="${clinicianCheck}"` : ""),
   );
   return { submissionId, status, reason, durationMs, sentToReview };
 }

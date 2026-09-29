@@ -66,14 +66,18 @@ const untouched = [
   "Anna Aldridge", "Amanda Davison, LMFT", "Debra Dederich-Elsner",
   "Laura Garcia-Rosecrans, LMHC", "Angelica Villicana, LCSW (spanish)",
   "Renee Singletary, LMSW (Bilingual-Spanish)", "Ginger Rippey", "Ivory Kahler",
-  "Abena Marfowaa Owusu-Nkwantabisah", "Amanda Plotner", "Danya Estrada",
+  "Abena Marfowaa Owusu-Nkwantabisah", "Amanda Plotner",
   "", "   ",
 ];
 for (const n of untouched) {
   check(`"${n}" unchanged`, buildPayload(n).clinician_name === n, buildPayload(n).clinician_name);
 }
-check("exactly one provider has a TN-specific name today",
-  Object.keys(TN_CLINICIAN_NAMES).length === 1, JSON.stringify(TN_CLINICIAN_NAMES));
+// 2026-09-29: Danya Estrada -> Danya Estrada-Rivera added from the clinician
+// name audit (TherapyNotes renders the hyphenated surname).
+check("exactly two providers have a TN-specific name today",
+  Object.keys(TN_CLINICIAN_NAMES).length === 2, JSON.stringify(TN_CLINICIAN_NAMES));
+check("Danya Estrada's TN name is the hyphenated form",
+  toTherapyNotesClinicianName("Danya Estrada") === "Danya Estrada-Rivera");
 
 // ---------------------------------------------------------------------------
 console.log("\n[3] Display name unchanged — the correction map still produces it");
@@ -81,8 +85,8 @@ check('sheet "Ty Jones" still displays as "Tyra Jones"',
   PROVIDER_NAME_CORRECTIONS["Ty Jones"] === "Tyra Jones");
 check('sheet "Neuhart Jessica" still displays as "Jessica Neuhart"',
   PROVIDER_NAME_CORRECTIONS["Neuhart Jessica"] === "Jessica Neuhart");
-check("the correction map has exactly the two entries it had before",
-  Object.keys(PROVIDER_NAME_CORRECTIONS).length === 2);
+check("the correction map has exactly its three entries",
+  Object.keys(PROVIDER_NAME_CORRECTIONS).length === 3);
 
 // ---------------------------------------------------------------------------
 console.log("\n[4] Reorder-only correction needs no TN-specific value");
