@@ -50,6 +50,15 @@ export async function initContactDocumentsTable(): Promise<void> {
       ON contact_documents (contact_id, uploaded_at, id)
       WHERE deleted_at IS NULL
   `);
+  // Filed-to-TherapyNotes stamp (2026-09-28). Added here on every boot, like
+  // the table itself — this table is CRM-only and new, so an idempotent
+  // nullable ADD COLUMN is a metadata change with nothing to lock against.
+  // migrations/add-contact-documents-tn-stamp.sql does the same by hand.
+  await pool.query(`
+    ALTER TABLE contact_documents
+      ADD COLUMN IF NOT EXISTS tn_uploaded_at   TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS tn_upload_run_id TEXT
+  `);
   console.log("[contact-documents] Table initialized");
 }
 
@@ -64,7 +73,8 @@ const META_COLUMNS = `
   source,
   uploaded_by_email AS "uploadedByEmail",
   uploaded_by_name  AS "uploadedByName",
-  uploaded_at       AS "uploadedAt"
+  uploaded_at       AS "uploadedAt",
+  tn_uploaded_at    AS "tnUploadedAt"
 `;
 
 export function sha256Hex(bytes: Buffer): string {
@@ -160,6 +170,31 @@ export async function findActiveDocumentByHash(
     [contactId, source, sha256],
   );
   return (rows[0] as ContactDocument | undefined) ?? null;
+}
+
+/**
+ * Stamp documents the TherapyNotes agent confirmed on the chart.
+ *
+ * Scoped to the contact the callback is for, so an id belonging to another
+ * contact is ignored. Never overwrites an existing stamp: the first run that
+ * filed a document keeps the credit, and a later "already on the chart" report
+ * changes nothing. Returns the ids actually stamped.
+ */
+export async function stampDocumentsUploadedToTn(
+  contactId: number,
+  runId: string,
+  documentIds: number[],
+): Promise<number[]> {
+  if (documentIds.length === 0) return [];
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `UPDATE contact_documents
+        SET tn_uploaded_at = NOW(), tn_upload_run_id = $2
+      WHERE contact_id = $1 AND id = ANY($3::int[]) AND tn_uploaded_at IS NULL
+      RETURNING id`,
+    [contactId, runId, documentIds],
+  );
+  return rows.map((r) => r.id as number);
 }
 
 // ============================================================================

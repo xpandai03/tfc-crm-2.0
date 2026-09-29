@@ -22,6 +22,7 @@
  * any byte of a file.
  */
 
+import { timingSafeEqual } from "crypto";
 import type { Express, NextFunction, Request, Response } from "express";
 import multer from "multer";
 import { canAccessReferralUpload } from "@shared/access-control";
@@ -137,7 +138,46 @@ export function faxReferralName(now: Date): string {
   return `Fax referral ${d}`;
 }
 
+/** Constant-time check of the TN agent's X-API-Key against TN_API_KEY. */
+function agentKeyOk(req: Request): boolean {
+  const expected = process.env.TN_API_KEY || "";
+  const got = String(req.headers["x-api-key"] || "");
+  if (!expected || got.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(got), Buffer.from(expected));
+}
+
 export function registerContactDocumentRoutes(app: Express): void {
+  // --------------------------------------------------------------------------
+  // The TN agent fetches a document it was sent in an Add to Schedule payload.
+  //
+  // The intake PDF's pattern (/api/internal/contact-intake-pdf/:id): allow-
+  // listed in auth.ts's publicPaths so the session middleware skips it, and
+  // the X-API-Key matching TN_API_KEY is the ONLY gate — no key, wrong key or
+  // no key configured is a 401. Same (document, contact) scoping as the staff
+  // route: an id under another contact is a 404, and so is a removed one.
+  // --------------------------------------------------------------------------
+  app.get("/api/internal/contact-document/:contactId/:documentId", async (req, res) => {
+    try {
+      if (!agentKeyOk(req)) return res.status(401).json({ error: "Unauthorized" });
+      const contactId = Number.parseInt(req.params.contactId, 10);
+      const documentId = Number.parseInt(req.params.documentId, 10);
+      if (!Number.isInteger(contactId) || contactId <= 0 || !Number.isInteger(documentId) || documentId <= 0) {
+        return res.status(400).json({ error: "Invalid id" });
+      }
+      const doc = await getContactDocumentContent(contactId, documentId);
+      if (!doc) return res.status(404).json({ error: "Document not found" });
+      res.setHeader("Content-Type", doc.mimeType);
+      res.setHeader("Content-Length", String(doc.content.length));
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Cache-Control", "private, no-store");
+      console.log(`[contact-documents] agent fetched id=${documentId} contact=${contactId} bytes=${doc.content.length}`);
+      return res.end(doc.content);
+    } catch (error) {
+      console.error("[contact-documents] agent fetch failed:", error instanceof Error ? error.message : "unknown");
+      return res.status(500).json({ error: "Failed to load the document" });
+    }
+  });
+
   // --------------------------------------------------------------------------
   // List (metadata only)
   // --------------------------------------------------------------------------

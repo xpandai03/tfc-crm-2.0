@@ -95,6 +95,8 @@ import { PAPERWORK_STATUSES, isValidPaperworkStatus } from "@shared/paperwork-st
 import { CUSTODY_DOC_STATUSES, isValidCustodyDocStatus } from "@shared/custody-doc-status";
 import { putContactOnHold, takeContactOffHold } from "./contacts/account-hold";
 import { registerContactDocumentRoutes } from "./documents/routes";
+import { buildTnDocumentList, documentIdsToStamp, TN_DOCUMENT_NAME_MAX } from "./documents/tn";
+import { listContactDocuments, stampDocumentsUploadedToTn } from "./documents/db";
 import {
   getViewPreferences,
   saveViewPreferences,
@@ -582,6 +584,13 @@ export function validateAgentPayload(p: TnV2AgentPayload): string[] {
   }
   for (const [field, value] of [["intake_pdf_url", p.intake_pdf_url], ["snapshot_pdf_url", p.snapshot_pdf_url]] as const) {
     if (!/^https?:\/\//i.test(value || "")) problems.push(`${field} must be an http(s) URL`);
+  }
+  // Documents are built by buildTnDocumentList and cannot break these rules;
+  // checked anyway so a document can never be the reason the agent 422s a run.
+  for (const d of p.documents ?? []) {
+    if (!d.tn_name || d.tn_name.length > TN_DOCUMENT_NAME_MAX || !/^https?:\/\//i.test(d.url || "")) {
+      problems.push(`a contact document could not be prepared for TherapyNotes (documents, id ${d.crm_document_id})`);
+    }
   }
   return problems;
 }
@@ -6174,11 +6183,14 @@ export async function registerRoutes(
         contact_id: contactId,
         run_id: runId,
         callback_url: callbackUrl,
+        // Contact documents not yet in TherapyNotes, filed after the booking.
+        // Fetched by the agent from /api/internal/contact-document with its key.
+        documents: buildTnDocumentList(await listContactDocuments(contactId), contactId, baseUrl),
       };
 
       // Definitive payload log for the next test (X-API-Key is sent as a header,
       // not in the body, so nothing to mask here).
-      console.log(`[tn-v2 trigger] Sending payload to V2: contact=${contactId} run=${runId} fields=${Object.keys(payload).length}`);
+      console.log(`[tn-v2 trigger] Sending payload to V2: contact=${contactId} run=${runId} fields=${Object.keys(payload).length} documents=${payload.documents?.length ?? 0}`);
 
       // Pre-validate the WHOLE payload against the agent's schema, not just the
       // three fields this used to check. Every constrained field is verified
@@ -6204,7 +6216,12 @@ export async function registerRoutes(
       await logActivity({
         type: "tn_schedule_started", actorEmail: userEmail, entityType: "contact",
         entityId: String(contactId), entityName: contactName,
-        metadata: { contactId, runId, alertText, warnings, appointmentDatetime: `${payload.appointment_date} ${payload.appointment_time}`.trim() },
+        metadata: {
+          contactId, runId, alertText, warnings,
+          appointmentDatetime: `${payload.appointment_date} ${payload.appointment_time}`.trim(),
+          // Ids only — which documents this run was asked to file.
+          documentsSent: (payload.documents ?? []).map((d) => d.crm_document_id),
+        },
       });
       console.log(`[tn-v2] Started run ${runId} for contact ${contactId}: hasAlert=${Boolean(alertText)}, warnings=${warnings.length}`);
 
@@ -6279,7 +6296,11 @@ export async function registerRoutes(
   // API-key gated (TN_API_KEY), allow-listed in auth.ts. High-frequency → keep fast.
   const TN_PHASES = [
     "entry", "login", "navigate", "fill_form", "save",
-    "upload_intake_pdf", "upload_snapshot_pdf", "schedule_appointment", "workflow_complete",
+    "upload_intake_pdf", "upload_snapshot_pdf", "schedule_appointment",
+    // Contact documents, after the booking. Always reported "ok" by the agent,
+    // with per-document results in metadata; a partial result is not a failure.
+    "upload_documents",
+    "workflow_complete",
   ];
   const TN_PHASE_STATUSES = ["started", "ok", "failed"];
 
@@ -6330,6 +6351,24 @@ export async function registerRoutes(
         entityName: contactName,
         metadata: { contactId: pathContactId, runId: body.runId, phase: body.phase, status: body.status, message, ...meta },
       });
+
+      // Stamp the contact documents the agent confirmed on the chart. Reported
+      // on upload_documents and again on workflow_complete; stamping is
+      // idempotent and scoped to this contact, so whichever arrives first
+      // wins and the other changes nothing. A stamping error must not turn a
+      // run's progress into a 500 — it is logged, and the unstamped document
+      // is simply offered again next run (where the agent finds it by name).
+      if (body.status === "ok" && (body.phase === "upload_documents" || body.phase === "workflow_complete")) {
+        const ids = documentIdsToStamp(meta);
+        if (ids.length > 0) {
+          try {
+            const stamped = await stampDocumentsUploadedToTn(pathContactId, body.runId, ids);
+            console.log(`[tn-progress] run ${body.runId}: documents on chart ${ids.length}, newly stamped ${stamped.length}`);
+          } catch (e) {
+            console.error(`[tn-progress] run ${body.runId}: could not stamp documents:`, e instanceof Error ? e.message : "unknown");
+          }
+        }
+      }
 
       // Write the runId-tagged TERMINAL entry the UI keys off (computeTnRun):
       //  - success ONLY on workflow_complete/ok

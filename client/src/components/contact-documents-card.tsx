@@ -172,6 +172,18 @@ export function ContactDocumentsCard({ contactId }: { contactId: number }) {
                     {d.source === "fax_referral" && (
                       <Badge variant="outline" className="text-[10px] px-1 py-0 h-4">Fax referral</Badge>
                     )}
+                    {/* Filed to the TherapyNotes chart by an Add to Schedule run.
+                        Documents without it are sent on the next run. */}
+                    {d.tnUploadedAt && (
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] px-1 py-0 h-4 border-emerald-300 text-emerald-700 dark:border-emerald-700 dark:text-emerald-400"
+                        title={`Filed to TherapyNotes ${when(d.tnUploadedAt)}`}
+                        data-testid={`badge-in-tn-${d.id}`}
+                      >
+                        In TN
+                      </Badge>
+                    )}
                     <span>{uploader(d)} · {when(d.uploadedAt)}</span>
                   </div>
                   <div className="flex items-center gap-1 pt-0.5">

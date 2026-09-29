@@ -86,7 +86,8 @@ async function main() {
   )).rows.map((r) => r.column_name);
   eq("columns", cols, [
     "contact_id", "content", "deleted_at", "deleted_by_email", "display_name", "id", "mime_type",
-    "original_filename", "sha256", "size_bytes", "source", "uploaded_at", "uploaded_by_email", "uploaded_by_name",
+    "original_filename", "sha256", "size_bytes", "source", "tn_upload_run_id", "tn_uploaded_at",
+    "uploaded_at", "uploaded_by_email", "uploaded_by_name",
   ]);
 
   // --- Contacts

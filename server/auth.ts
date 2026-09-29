@@ -370,6 +370,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     "/api/export/",        // all export endpoints (use X-Sync-Key auth)
     "/api/migrate",        // Migration endpoint (uses X-Migrate-Key auth)
     "/api/internal/contact-intake-pdf/", // TN V2 agent intake PDF (uses X-API-Key/TN_API_KEY auth; trailing slash → prefix match)
+    "/api/internal/contact-document/", // TN V2 agent fetches a contact document it was sent (X-API-Key/TN_API_KEY only)
     "/api/internal/contact-snapshot-pdf/", // TN V2 agent appointment-confirmation snapshot PDF (X-API-Key/TN_API_KEY auth)
     "/api/internal/tn-progress/", // TN V2 agent async progress callbacks (X-API-Key/TN_API_KEY auth)
   ];

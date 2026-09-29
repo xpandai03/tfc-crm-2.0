@@ -15,6 +15,23 @@
 
 export const TN_STALE_MS = 10 * 60 * 1000;
 
+/**
+ * Staff-facing sentences for the agent's failure CODES that name something
+ * staff can fix. The code is what the agent reports and what is stored; this is
+ * only what the failure card shows. A code with no entry is shown as-is.
+ */
+export const TN_FAILURE_TEXT: Record<string, string> = {
+  zip_not_recognised:
+    "Zip code not recognised by TherapyNotes; check the address on the contact",
+  // The same condition as reported by an agent before 28 September.
+  zip_autocomplete_failed:
+    "TherapyNotes did not fill the city from the zip code; check the address on the contact",
+};
+
+export function tnFailureText(reason: string): string {
+  return TN_FAILURE_TEXT[reason] ?? reason;
+}
+
 // Parse an activity `createdAt` to epoch ms. The API serves Postgres
 // `created_at::text`, e.g. "2026-07-01 20:21:15.549361+00" — a space separator
 // and a BARE 2-digit offset ("+00") that Date.parse() rejects (→ NaN). Normalize
@@ -126,7 +143,7 @@ export function computeTnRun(activities: TnActivity[] | undefined): {
     // Success clears silently; an explicit terminal failure surfaces its reason.
     if (terminal.type === "tn_schedule_failed") {
       const reason = (terminal.metadata?.failureReason as string) || terminal.summary || "unknown error";
-      return { inFlight: false, runId, failedReason: reason, ...progress };
+      return { inFlight: false, runId, failedReason: tnFailureText(reason), ...progress };
     }
     // Unchanged: a successful run returns exactly what it always returned.
     return { inFlight: false, runId };

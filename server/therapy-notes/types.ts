@@ -56,6 +56,15 @@ export interface TnV2AgentPayload {
   contact_id: number;
   run_id: string;
   callback_url: string;
+  // Contact documents to file after the appointment (fax referral first, then
+  // by upload time), only those not yet filed. See server/documents/tn.ts.
+  // An agent that predates this field ignores it.
+  documents?: Array<{
+    crm_document_id: number;
+    tn_name: string;
+    mime_type: "application/pdf" | "image/jpeg" | "image/png";
+    url: string;
+  }>;
 }
 
 // Matches the TN agent's response schema
