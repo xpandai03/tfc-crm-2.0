@@ -613,20 +613,75 @@ export function isCalendarDate(value: string): boolean {
   );
 }
 
+/** Oldest plausible age. A date of birth further back is a mistyped year. */
+export const DOB_MAX_AGE_YEARS = 120;
+
+/** What a client sees for a year that cannot be theirs: in the future, or too long ago. */
+export const DOB_YEAR_MESSAGE = "Please check the year of birth.";
+
 /**
  * Shared date-of-birth rule so the form and the server agree on what they
  * reject. Returns null when acceptable, or a message written for the client.
  * `today` is injected so the server can use its own clock.
+ *
+ * Rejects only an unreadable date, a future date, and an age over
+ * DOB_MAX_AGE_YEARS. A young age is NOT rejected: the practice sees children,
+ * and a parent may fill this in for a child.
  */
 export function dateOfBirthProblem(value: string, today: Date): string | null {
   const v = (value ?? "").trim();
   if (!v) return "Please enter your date of birth.";
   if (!isCalendarDate(v)) return "Please enter your date of birth as a real date.";
-  if (v > today.toISOString().slice(0, 10)) {
-    return "That date is in the future. Please check it.";
-  }
-  if (v < DOB_MIN_ISO) return "Please check the year on that date.";
+  const todayIso = today.toISOString().slice(0, 10);
+  if (v > todayIso) return DOB_YEAR_MESSAGE;
+  const oldest = `${Number(todayIso.slice(0, 4)) - DOB_MAX_AGE_YEARS}${todayIso.slice(4)}`;
+  if (v < DOB_MIN_ISO || v < oldest) return DOB_YEAR_MESSAGE;
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Date of birth as three boxes: month, day, year
+// ---------------------------------------------------------------------------
+//
+// The form used <input type="date">. On iPhone that is the system date picker,
+// and a client reported the year going back to 2026 when they changed it. That
+// picker cannot be driven from a test, so the form no longer uses it: three
+// plain number boxes behave the same on every phone and keyboard.
+//
+// The draft still holds ONE string. Once all three boxes are filled it is ISO
+// YYYY-MM-DD, exactly what <input type="date"> sent and what the matcher's
+// canonicalDob reads. While the client is still typing it is the raw parts
+// joined with "-" (e.g. "19-06-"). That string fails isCalendarDate, so it
+// cannot be submitted, and it holds exactly what was typed, so nothing the
+// client typed is rewritten.
+
+export interface DobParts {
+  month: string;
+  day: string;
+  year: string;
+}
+
+export const DOB_PART_MAX = { month: 2, day: 2, year: 4 } as const;
+
+/** Split a stored value into the three boxes. Unrecognised text gives three empty boxes. */
+export function dobParts(value: string | null | undefined): DobParts {
+  const m = /^(\d{0,4})-(\d{0,2})-(\d{0,2})$/.exec((value ?? "").trim());
+  return m ? { year: m[1], month: m[2], day: m[3] } : { year: "", month: "", day: "" };
+}
+
+/**
+ * The stored value for three boxes. Month and day are zero-padded only in this
+ * string; the boxes keep what was typed.
+ */
+export function composeDob(p: DobParts): string {
+  if (!p.year && !p.month && !p.day) return "";
+  const pad = (s: string) => (s.length === 1 ? `0${s}` : s);
+  return `${p.year}-${pad(p.month)}-${pad(p.day)}`;
+}
+
+/** One box's new content: digits only, cut to that box's length. */
+export function dobPartInput(part: keyof DobParts, raw: string): string {
+  return raw.replace(/\D/g, "").slice(0, DOB_PART_MAX[part]);
 }
 
 /**

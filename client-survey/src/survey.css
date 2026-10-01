@@ -360,6 +360,33 @@ body {
   border-color: var(--destructive);
 }
 
+/* Date of birth: three number boxes, month / day / year. The year box is wider
+   because it holds four digits. A fieldset carries the browser's own border
+   and padding, which are reset here so it lines up with the other fields. */
+.dob {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.dob > legend {
+  padding: 0;
+}
+
+.dob__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.6fr;
+  gap: 10px;
+}
+
+.dob__label {
+  display: block;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  margin-bottom: 4px;
+}
+
 .textarea {
   min-height: 96px;
   resize: vertical;
