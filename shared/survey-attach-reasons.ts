@@ -179,6 +179,7 @@ export function attachFailureText(reason: string | null | undefined): string {
  */
 export const ATTACH_INELIGIBLE_TEXT = {
   not_a_survey: "Only client surveys can be filed to a chart.",
+  deleted: "This survey was deleted from Submissions, so it is not filed to a chart.",
   // THESE TWO NO LONGER GATE THE BUTTON. A survey can be filed on its own
   // details, with no CRM contact — the agent verifies name, date of birth,
   // phone and therapist against the chart, and never needed a contact for any

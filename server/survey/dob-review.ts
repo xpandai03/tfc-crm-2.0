@@ -79,7 +79,7 @@ export async function findImplausibleDobSurveys(today: Date): Promise<DobReviewC
       FROM form_submissions f
       LEFT JOIN survey_match_reviews r ON r.submission_id = f.id
       LEFT JOIN survey_attach_attempts a ON a.submission_id = f.id
-     WHERE f.form_type = 'survey'
+     WHERE f.form_type = 'survey' AND f.deleted_at IS NULL
      ORDER BY f.id`);
   const out: DobReviewCandidate[] = [];
   for (const r of rows) {

@@ -50,6 +50,7 @@
     "test:active-counts": "tsx scripts/test-active-counts.ts",
     "test:auto-matching": "tsx scripts/test-survey-auto-matching.ts",
     "test:attach-chart-id": "tsx scripts/test-attach-chart-id.ts",
+    "test:survey-delete-db": "tsx --tsconfig tsconfig.test.json scripts/test-survey-delete-db.ts",
     "test:count-overrides": "tsx scripts/test-active-count-overrides.ts",
     "test:snapshot": "tsx scripts/test-survey-snapshot.ts",
     "test:attach-review": "tsx scripts/test-attach-review-and-pull-health.ts",

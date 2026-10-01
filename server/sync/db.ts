@@ -354,6 +354,14 @@ export async function initSyncTables(): Promise<void> {
       ON form_submissions(form_type)
   `);
 
+  // SOFT DELETE for survey submissions (2026-10-01). Staff remove a test survey
+  // from the Submissions page; the row, its answers and its PDF stay. Added on
+  // every boot, NOT behind RUN_MIGRATIONS: every survey list filters on
+  // deleted_at, so a boot without the column would break them. ADD COLUMN IF
+  // NOT EXISTS is a no-op once the column is there.
+  await pool.query(`ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE form_submissions ADD COLUMN IF NOT EXISTS deleted_by TEXT`);
+
   // Additive column migrations — only run when RUN_MIGRATIONS=true to avoid
   // unnecessary ALTER TABLE pressure on every cold start during rapid deploys
   if (process.env.RUN_MIGRATIONS === "true") {
@@ -2242,6 +2250,8 @@ export interface FormSubmission {
   contactId: number | null;
   name: string;
   payload: Record<string, unknown>;
+  /** Set when staff deleted the survey. Only getSubmissionById returns such rows. */
+  deletedAt?: string | null;
 }
 
 /** Insert a submission from the existing intake flow. Returns the new row ID. */
@@ -2355,7 +2365,7 @@ export async function getRecentSurveySubmissions(limit: number = 1000): Promise<
       name,
       payload
     FROM form_submissions
-    WHERE form_type = 'survey'
+    WHERE form_type = 'survey' AND deleted_at IS NULL
     ORDER BY created_at DESC
     LIMIT $1
   `, [limit]);
@@ -2379,6 +2389,7 @@ export async function getRecentSubmissions(limit: number = 50): Promise<FormSubm
       name,
       payload
     FROM form_submissions
+    WHERE deleted_at IS NULL
     ORDER BY created_at DESC
     LIMIT $1
   `, [limit]);
@@ -2413,7 +2424,33 @@ export async function getSubmissionsForContact(contactId: number): Promise<FormS
   }));
 }
 
-/** Fetch a single form submission by ID. */
+/**
+ * Soft-delete one SURVEY submission. Returns the row's id, contact and date, or
+ * null when there is no such survey or it is already deleted.
+ *
+ * Scoped to form_type = 'survey': an intake submission is never deleted here.
+ * Nothing is removed: the answers and the PDF stay, and the row simply leaves
+ * every list (each survey reader filters deleted_at IS NULL). Nothing in
+ * TherapyNotes is touched.
+ *
+ * To RESTORE (there is no UI): UPDATE form_submissions SET deleted_at = NULL,
+ * deleted_by = NULL WHERE id = <id> AND form_type = 'survey';
+ */
+export async function softDeleteSurveySubmission(
+  submissionId: number,
+  actorEmail: string,
+): Promise<{ id: number; contactId: number | null; createdAt: string } | null> {
+  const { rows } = await getPool().query(
+    `UPDATE form_submissions
+        SET deleted_at = NOW(), deleted_by = $2
+      WHERE id = $1 AND form_type = 'survey' AND deleted_at IS NULL
+      RETURNING id, contact_id AS "contactId", created_at::text AS "createdAt"`,
+    [submissionId, actorEmail],
+  );
+  return (rows[0] as { id: number; contactId: number | null; createdAt: string } | undefined) ?? null;
+}
+
+/** Fetch a single form submission by ID. Deleted surveys included, flagged by deletedAt. */
 export async function getSubmissionById(submissionId: number): Promise<FormSubmission | null> {
   const pool = getPool();
   const result = await pool.query(`
@@ -2425,7 +2462,8 @@ export async function getSubmissionById(submissionId: number): Promise<FormSubmi
       submitted_at  AS "submittedAt",
       contact_id    AS "contactId",
       name,
-      payload
+      payload,
+      deleted_at::text AS "deletedAt"
     FROM form_submissions
     WHERE id = $1
   `, [submissionId]);

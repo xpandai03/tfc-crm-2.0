@@ -13,7 +13,17 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, ExternalLink, Code2, FileText, Inbox, FileUp, Download, UserCheck, UserSearch, UserX, RefreshCw, Upload, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Loader2, ExternalLink, Code2, FileText, Inbox, FileUp, Download, UserCheck, UserSearch, UserX, RefreshCw, Upload, CheckCircle2, AlertTriangle, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { SurveyMatchReviewDialog } from "@/components/survey-match-review";
 import { SurveyExportDialog } from "@/components/survey-export-dialog";
 import { SurveySnapshot } from "@/components/survey-snapshot";
@@ -112,9 +122,9 @@ interface MatchState {
   status: "matched" | "review" | "no_contact";
   reason: string;
   matchedContactId: number | null;
-  /** The TherapyNotes chart, when this resolved to one. Already served by
-   *  /api/survey/matching/states (match-db.ts mapRow) — this type simply had
-   *  never declared it, so the value was arriving and being dropped. */
+  /** ADVISORY: the TherapyNotes chart id the nightly pull showed. It changes
+   *  between TherapyNotes page loads, so it never identifies a chart later.
+   *  Not shown, not linked, not sent to attach. See match-db.ts. */
   matchedChartId: string | null;
   candidateIds: number[];
   resolvedBy: string | null;
@@ -491,6 +501,8 @@ export default function Submissions() {
   const { user } = useAuth();
   const [selectedSubmission, setSelectedSubmission] = useState<FormSubmission | null>(null);
   const [reviewingId, setReviewingId] = useState<number | null>(null);
+  /** The survey awaiting a delete confirmation. */
+  const [deleteTarget, setDeleteTarget] = useState<FormSubmission | null>(null);
   const [matchFilter, setMatchFilter] = useState<MatchFilter>("all");
   const [exportOpen, setExportOpen] = useState(false);
   const { toast } = useToast();
@@ -595,6 +607,25 @@ export default function Submissions() {
     },
     onError: (e: Error) =>
       toast({ title: "Could not reach the automation", description: e.message, variant: "destructive" }),
+  });
+
+  // Soft delete of a SURVEY row. The server keeps the row, answers and PDF and
+  // takes it out of every survey list; nothing changes in TherapyNotes.
+  const deleteMutation = useMutation({
+    mutationFn: async (submissionId: number) => {
+      const res = await fetch(`/api/survey/submissions/${submissionId}`, { method: "DELETE" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "The survey could not be deleted.");
+      return json as { submissionId: number };
+    },
+    onSuccess: (r) => {
+      toast({ title: "Survey deleted", description: `Survey #${r.submissionId} was removed from Submissions.` });
+      setDeleteTarget(null);
+      qc.invalidateQueries({ queryKey: ["/api/submissions"] });
+      qc.invalidateQueries({ queryKey: ["/api/survey/matching/states"] });
+    },
+    onError: (e: Error) =>
+      toast({ title: "Not deleted", description: e.message, variant: "destructive" }),
   });
 
   const allSubmissions = data?.submissions ?? [];
@@ -897,6 +928,20 @@ export default function Submissions() {
                           </Button>
                         </a>
                       )}
+                      {/* SURVEY ROWS ONLY: an intake submission is never deleted
+                          from here. Confirmed in a dialog that names the row. */}
+                      {isSurveySubmission(sub) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs text-destructive hover:text-destructive"
+                          onClick={() => setDeleteTarget(sub)}
+                          data-testid={`button-delete-survey-${sub.id}`}
+                        >
+                          <Trash2 className="h-3 w-3 mr-1" />
+                          Delete
+                        </Button>
+                      )}
                       {/* Absent for survey rows — see RawPayloadModal. */}
                       {!isSurveySubmission(sub) && (
                         <Button
@@ -934,6 +979,36 @@ export default function Submissions() {
         onClose={() => setSelectedSubmission(null)}
         submission={selectedSubmission}
       />
+
+      {/* Delete confirmation for a survey row. */}
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete survey #{deleteTarget?.id}
+              {deleteTarget ? `, submitted ${formatExactTime(deleteTarget.createdAt)}` : ""}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              It will disappear from Submissions, the snapshot, provider counts and the export.
+              The survey stays on record, and nothing is removed from TherapyNotes.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteMutation.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (deleteTarget) deleteMutation.mutate(deleteTarget.id);
+              }}
+              data-testid="button-confirm-delete-survey"
+            >
+              {deleteMutation.isPending ? "Deleting…" : "Delete survey"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Survey workbook export — range picker and download. */}
       <SurveyExportDialog open={exportOpen} onOpenChange={setExportOpen} />
