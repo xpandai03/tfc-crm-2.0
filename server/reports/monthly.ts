@@ -23,7 +23,7 @@
 
 import { getPool } from "../db/pool";
 import { getDashboardSummary, type DashboardSummary } from "../dashboard/db";
-import { REFERRAL_REPORT_STATUS_LABELS } from "../sync/db";
+import { REFERRAL_REPORT_STATUS_LABELS, isTestSubmissionName } from "../sync/db";
 import { getStatusBucket, STATUS_BUCKET_LABELS, type StatusBucket } from "@shared/status-buckets";
 import { DASHBOARD_LOCATIONS, locationIdForContact } from "@shared/dashboard-locations";
 import { SERVICE_TYPE_LABELS, SERVICE_TYPE_COLUMNS, ORIGIN_COLUMNS, ORIGIN_LABELS, type OriginColumn } from "../dashboard/db";
@@ -186,21 +186,44 @@ export const COHORT_SQL = `SELECT
        count(*)::int AS n
      FROM sync_contacts
      WHERE date_added >= $1 AND date_added < $2
+       AND NOT ($4::boolean AND EXISTS (
+             SELECT 1 FROM form_submissions f
+              WHERE f.id = sync_contacts.source_submission_id
+                AND ${isTestSubmissionName("f.name")}))
      GROUP BY 1,2,3,4,5,6,7,8`;
 
-export async function buildMonthlyReport(period: string): Promise<MonthlyReport> {
+/**
+ * Test rows (isTestSubmissionName, the rule the Insights card uses) leave the
+ * cohort from THIS period on, and not before.
+ *
+ * Earlier periods keep counting them on purpose. A report is rebuilt from the
+ * database every time it is opened, and September 2026 was already emailed as
+ * 150 referrals, including 6 ZZTEST submissions (Insights says 144). June
+ * likewise holds 2. Applying the rule to every period would quietly rewrite
+ * reports already sent. From October on the two surfaces count the same rows.
+ */
+export const TEST_ROWS_EXCLUDED_FROM = "2026-10";
+
+/** The cohort for a period, exactly as the report reads it. */
+export async function fetchCohortRows(period: string): Promise<CohortRow[]> {
   const { start, endExclusive } = resolvePeriod(period);
+  const { rows } = await getPool().query<CohortRow>(
+    COHORT_SQL, [start, endExclusive, LEGACY_ID_CEILING, period >= TEST_ROWS_EXCLUDED_FROM],
+  );
+  return rows;
+}
+
+export async function buildMonthlyReport(period: string): Promise<MonthlyReport> {
+  resolvePeriod(period); // validates format, throws on junk
 
   // --- Population A: reuse the dashboard aggregation verbatim ---------------
   const snapshot = await getDashboardSummary("active");
 
   // --- Population B: the cohort --------------------------------------------
   // Grouped, not row-by-row: this returns aggregate tuples, never a contact.
-  const pool = getPool();
-  const { rows } = await pool.query<CohortRow>(
-    COHORT_SQL, [start, endExclusive, LEGACY_ID_CEILING],
-  );
+  const rows = await fetchCohortRows(period);
 
+  const pool = getPool();
   const undated = await pool.query<{ n: number }>(
     `SELECT count(*)::int AS n FROM sync_contacts
       WHERE date_added IS NULL OR TRIM(date_added) = ''`,
