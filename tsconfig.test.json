@@ -1,6 +1,7 @@
 {
   "include": [
     "client/src/**/*",
+    "client-survey/src/**/*",
     "shared/**/*",
     "server/**/*"
   ],

@@ -91,6 +91,14 @@ export const REVIEW_REASONS = [
   "attach_chart_not_in_search",
   /** More than one chart carries this name and date of birth. */
   "attach_multiple_charts",
+  // --- Held back BEFORE filing (2026-10-01) ---------------------------------
+  //
+  // The survey's year of birth cannot be the client's: the iPhone date picker
+  // put this year on some surveys. Staff confirm the date with the client.
+  // Same attach_ prefix on purpose, so the 03:00 re-match leaves the row in
+  // review instead of re-matching it on the wrong date.
+  /** The year of birth on the survey is not a plausible one. */
+  "attach_dob_implausible",
 ] as const;
 
 export type MatchedReason = typeof MATCHED_REASONS[number];
@@ -185,6 +193,7 @@ export const REASON_FIELD: Record<MatchReason, MatchField | null> = {
   // so the name is where a reviewer starts.
   attach_chart_not_in_search: "name",
   attach_multiple_charts: "name",
+  attach_dob_implausible: "dateOfBirth",
 };
 
 export function failedFieldFor(reason: string): MatchField | null {
@@ -220,6 +229,7 @@ export const REASON_LABEL: Record<MatchReason, string> = {
   attach_name_mismatch: "Name on survey does not match the name on the chart",
   attach_chart_not_in_search: "The chart this survey matched did not appear in the TherapyNotes search — there may be a duplicate or renamed chart",
   attach_multiple_charts: "More than one TherapyNotes chart has this name and date of birth",
+  attach_dob_implausible: "Date of birth appears wrong (the year is not plausible); confirm with the client",
 };
 
 /** Short chip text for a dense list row. Full sentence lives in REASON_LABEL. */
@@ -247,6 +257,7 @@ export const REASON_SHORT: Record<MatchReason, string> = {
   attach_name_mismatch: "Chart name differs",
   attach_chart_not_in_search: "Matched chart not found in search",
   attach_multiple_charts: "Several charts share name + DOB",
+  attach_dob_implausible: "Year of birth looks wrong",
 };
 
 /** Label for any stored reason, including a human resolution's own sentence. */

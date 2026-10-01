@@ -67,6 +67,31 @@ import {
   type SurveyLanguage,
 } from "../shared/survey-questions";
 import type { FormSubmission } from "../server/sync/db";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import {
+  DOB_MAX_AGE_YEARS,
+  DOB_YEAR_MESSAGE,
+  composeDob,
+  dobPartInput,
+  dobParts,
+  isCalendarDate,
+} from "../shared/survey-questions";
+import { DateOfBirthField } from "../client-survey/src/fields";
+import { canonicalDob } from "../server/survey/matching";
+import {
+  DOB_IMPLAUSIBLE_REASON,
+  decideDobReview,
+  implausibleDobYear,
+  type DobReviewCandidate,
+} from "../server/survey/dob-review";
+import {
+  REASON_LABEL,
+  REASON_SHORT,
+  REVIEW_REASONS,
+  failedFieldFor,
+  isAttachRefusal,
+} from "../shared/survey-match-reasons";
 
 let pass = 0, fail = 0;
 const failures: string[] = [];
@@ -504,7 +529,8 @@ console.log("\n[12] Spanish: every error a client can see has a translation");
     emailProblem(""), emailProblem("nope"), emailProblem(`${"a".repeat(170)}@b.co`),
     phoneProblem(""), phoneProblem("12345"), phoneProblem("1".repeat(20)),
   ].filter((m): m is string => m !== null);
-  eq("the rules produced all eleven distinct messages", new Set(produced).size, 11);
+  // Ten: a future date and an age over 120 share DOB_YEAR_MESSAGE.
+  eq("the rules produced all ten distinct messages", new Set(produced).size, 10);
   for (const m of new Set(produced)) {
     ok(`validation "${m}" has Spanish`, !!MESSAGE_COPY[m]);
     ok(`  and renders it`, message(m, "es") === MESSAGE_COPY[m] && message(m, "en") === m);
@@ -684,6 +710,114 @@ console.log("\n[15] Spanish: the client's own wording is what ships (2026-09-28)
   eq("Yes / No, client wording", [optionLabel("Yes", "es"), optionLabel("No", "es")], ["Sí", "No"]);
   eq("N/A has no client text and keeps the earlier label", optionLabel("N/A", "es"), "No aplica");
   ok("no machine gender form survives on the options", !Object.values(OPTION_COPY).some((c) => c.es.includes("(a)")));
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n[13] Date of birth: three boxes, any year, nothing rewritten");
+{
+  const today = new Date("2026-10-01T18:00:00Z");
+  const formSrc = readFileSync(join(process.cwd(), "client-survey", "src", "SurveyForm.tsx"), "utf8");
+  ok("the identity screen no longer uses <input type=\"date\">", !/type="date"/.test(formSrc));
+  ok("it uses DateOfBirthField", /<DateOfBirthField/.test(formSrc));
+
+  // Typed digits become the stored value, and the stored value becomes the boxes again.
+  eq("1985-06-15 splits into its boxes", dobParts("1985-06-15"), { year: "1985", month: "06", day: "15" });
+  eq("and the boxes make it again", composeDob(dobParts("1985-06-15")), "1985-06-15");
+  eq("one-digit month and day are padded in the stored value only",
+    composeDob({ month: "6", day: "5", year: "1985" }), "1985-06-05");
+  eq("empty boxes store nothing", composeDob({ month: "", day: "", year: "" }), "");
+  eq("an unrecognised stored value gives empty boxes", dobParts("June 15"), { year: "", month: "", day: "" });
+
+  // Partial typing: every prefix of a year survives a round trip unchanged.
+  for (const y of ["1", "19", "198", "1985"]) {
+    const stored = composeDob({ month: "06", day: "15", year: y });
+    eq(`a year typed as far as "${y}" comes back as "${y}"`, dobParts(stored).year, y);
+    ok(`  and "${y}" cannot be submitted until it is four digits`,
+      (dateOfBirthProblem(stored, today) === null) === (y.length === 4));
+  }
+  eq("a partial month survives", dobParts(composeDob({ month: "1", day: "", year: "" })).month, "01");
+  eq("only digits reach a box", dobPartInput("year", "19a8-5"), "1985");
+  eq("a box takes no more than its length", dobPartInput("year", "198567"), "1985");
+  eq("month takes two digits", dobPartInput("month", "123"), "12");
+
+  // Every year from 120 years ago to this year is accepted, and is exactly what the matcher reads.
+  const thisYear = today.getUTCFullYear();
+  let accepted = 0, readable = 0;
+  for (let y = thisYear - DOB_MAX_AGE_YEARS + 1; y <= thisYear - 1; y++) {
+    const v = composeDob({ month: "06", day: "15", year: String(y) });
+    if (dateOfBirthProblem(v, today) === null) accepted++;
+    if (canonicalDob(v) === v && isCalendarDate(v)) readable++;
+  }
+  eq("every year from 1907 to 2025 is accepted", accepted, DOB_MAX_AGE_YEARS - 1);
+  eq("  and each is the YYYY-MM-DD the matcher reads unchanged", readable, DOB_MAX_AGE_YEARS - 1);
+  eq("a date earlier this year is accepted (a baby is not refused)", dateOfBirthProblem("2026-06-15", today), null);
+  eq("today is accepted", dateOfBirthProblem("2026-10-01", today), null);
+  eq("a future date asks for the year", dateOfBirthProblem("2027-06-15", today), DOB_YEAR_MESSAGE);
+  eq("tomorrow asks for the year", dateOfBirthProblem("2026-10-02", today), DOB_YEAR_MESSAGE);
+  eq("over 120 asks for the year", dateOfBirthProblem("1906-09-30", today), DOB_YEAR_MESSAGE);
+  eq("exactly 120 is accepted", dateOfBirthProblem("1906-10-01", today), null);
+  eq("a two-digit year is not a date", dateOfBirthProblem(composeDob({ month: "06", day: "15", year: "85" }), today),
+    "Please enter your date of birth as a real date.");
+  eq("the year message reads as the client brief asks", DOB_YEAR_MESSAGE, "Please check the year of birth.");
+  ok("the year message has Spanish", MESSAGE_COPY[DOB_YEAR_MESSAGE] === "Por favor, revise el año de nacimiento.");
+
+  // The server refuses the same dates, naming the field, before anything is stored.
+  const client = (dateOfBirth: string) => ({ name: "Example Person", dateOfBirth, email: "x@example.invalid", phone: "5055550142" });
+  eq("server: a future year is refused with the year message",
+    serverIdentityProblem(client("2027-01-01"), today), { field: "dateOfBirth", message: DOB_YEAR_MESSAGE });
+  eq("server: over 120 is refused with the year message",
+    serverIdentityProblem(client("1890-01-01"), today), { field: "dateOfBirth", message: DOB_YEAR_MESSAGE });
+  eq("server: 1985 is accepted", serverIdentityProblem(client("1985-06-15"), today), null);
+  eq("server: this year (age 0) is accepted, nothing else is refused",
+    serverIdentityProblem(client("2026-06-15"), today), null);
+
+  // The language switch: the same value renders the same three boxes, labelled in each language.
+  const render = (lang: SurveyLanguage) => renderToStaticMarkup(createElement(DateOfBirthField, {
+    label: "x", value: "1985-06-15", onChange: () => {}, required: true, lang,
+  }));
+  const boxValues = (html: string) => [...html.matchAll(/name="dob-(\w+)"[^>]*value="(\d*)"|value="(\d*)"[^>]*name="dob-(\w+)"/g)]
+    .map((m) => `${m[1] ?? m[4]}=${m[2] ?? m[3]}`).sort();
+  const en = render("en"), es = render("es");
+  eq("English renders month 06, day 15, year 1985", boxValues(en), ["day=15", "month=06", "year=1985"]);
+  eq("Spanish renders the same boxes", boxValues(es), boxValues(en));
+  ok("English labels and placeholders", /Month/.test(en) && /Year/.test(en) && /YYYY/.test(en));
+  ok("Spanish labels and placeholders", /Mes/.test(es) && /Año/.test(es) && /AAAA/.test(es));
+  ok("number keypad on phones", (en.match(/inputmode="numeric"/gi) ?? []).length === 3);
+  ok("autofill can fill all three", /bday-month/.test(en) && /bday-day/.test(en) && /bday-year/.test(en));
+  ok("no date picker anywhere in the field", !/type="date"/.test(en));
+  ok("no error is shown under a complete, valid date", !/role="alert"/.test(en));
+}
+
+console.log("\n[14] Surveys with an impossible year of birth go to review");
+{
+  const today = new Date("2026-10-01T18:00:00Z");
+  eq("2026 is implausible", implausibleDobYear("2026-06-15", today), 2026);
+  eq("2025 is implausible", implausibleDobYear("2025-01-01", today), 2025);
+  eq("2024 is implausible", implausibleDobYear("2024-12-31", today), 2024);
+  eq("2023 is left alone (a child client is possible)", implausibleDobYear("2023-06-15", today), null);
+  eq("1985 is left alone", implausibleDobYear("1985-06-15", today), null);
+  eq("1890 is implausible", implausibleDobYear("1890-01-01", today), 1890);
+  eq("an unreadable date is the matcher's business", implausibleDobYear("June 15", today), null);
+
+  const c = (over: Partial<DobReviewCandidate>): DobReviewCandidate => ({
+    submissionId: 1, dobYear: 2026, matchStatus: "review", matchReason: "no_candidates",
+    humanResolved: false, attachStatus: null, ...over,
+  });
+  eq("a row in review is routed", decideDobReview(c({})).action, "route");
+  eq("a row the matcher never saw is routed", decideDobReview(c({ matchStatus: null, matchReason: null })).action, "route");
+  eq("a failed attach attempt still routes", decideDobReview(c({ attachStatus: "failed" })).action, "route");
+  eq("a matched row is reported, not unmatched", decideDobReview(c({ matchStatus: "matched", matchReason: "name_dob" })).action, "report-only");
+  eq("a filed row is reported, not touched", decideDobReview(c({ attachStatus: "attached" })).action, "report-only");
+  eq("a staff decision is reported, not overridden", decideDobReview(c({ humanResolved: true })).action, "report-only");
+  eq("a row already routed is left as it is",
+    decideDobReview(c({ matchReason: DOB_IMPLAUSIBLE_REASON })).action, "already-routed");
+
+  ok("the reason is a known review reason", (REVIEW_REASONS as readonly string[]).includes(DOB_IMPLAUSIBLE_REASON));
+  ok("it carries the attach_ prefix, so the nightly re-match leaves it in review", isAttachRefusal(DOB_IMPLAUSIBLE_REASON));
+  eq("it points the reviewer at the date of birth", failedFieldFor(DOB_IMPLAUSIBLE_REASON), "dateOfBirth");
+  eq("staff read why", REASON_LABEL.attach_dob_implausible,
+    "Date of birth appears wrong (the year is not plausible); confirm with the client");
+  ok("and a short chip", !!REASON_SHORT.attach_dob_implausible);
 }
 
 // ---------------------------------------------------------------------------

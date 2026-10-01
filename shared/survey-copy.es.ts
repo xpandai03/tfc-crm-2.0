@@ -243,6 +243,12 @@ export const UI_COPY = {
     es: "Por favor, use su nombre legal, no un nombre preferido ni abreviado, para que podamos encontrar su expediente.",
   },
   dateOfBirthLabel: { en: "Date of birth", es: "Fecha de nacimiento" },
+  dobMonthLabel: { en: "Month", es: "Mes" },
+  dobDayLabel: { en: "Day", es: "Día" },
+  dobYearLabel: { en: "Year", es: "Año" },
+  dobMonthPlaceholder: { en: "MM", es: "MM" },
+  dobDayPlaceholder: { en: "DD", es: "DD" },
+  dobYearPlaceholder: { en: "YYYY", es: "AAAA" },
   emailLabel: { en: "Email address", es: "Correo electrónico" },
   phoneLabel: { en: "Phone number", es: "Número de teléfono" },
 
@@ -340,9 +346,7 @@ export const MESSAGE_COPY: Record<string, string> = {
   "Please enter your date of birth.": "Por favor, escriba su fecha de nacimiento.",
   "Please enter your date of birth as a real date.":
     "Por favor, escriba una fecha de nacimiento válida.",
-  "That date is in the future. Please check it.":
-    "Esa fecha es posterior a hoy. Por favor, revísela.",
-  "Please check the year on that date.": "Por favor, revise el año de esa fecha.",
+  "Please check the year of birth.": "Por favor, revise el año de nacimiento.",
   "Please enter your email address.": "Por favor, escriba su correo electrónico.",
   "Please check that email address.": "Por favor, revise ese correo electrónico.",
   "Please enter your phone number.": "Por favor, escriba su número de teléfono.",

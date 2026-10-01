@@ -6,8 +6,16 @@
  * shared/access-control.ts). See main.tsx for the full reasoning.
  */
 
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import {
+  DOB_PART_MAX,
+  composeDob,
+  dobPartInput,
+  dobParts,
+  type DobParts,
+} from "@shared/survey-questions";
+import type { UiKey } from "@shared/survey-copy.es";
 import type { PublicProvider } from "./api";
 import { optionLabel, ui, type SurveyLanguage } from "./i18n";
 
@@ -55,7 +63,7 @@ export function TextField({
   error?: string | null;
   required?: boolean;
   hint?: string;
-  type?: "text" | "email" | "date" | "tel";
+  type?: "text" | "email" | "tel";
   maxLength?: number;
   autoComplete?: string;
   inputMode?: "text" | "email" | "tel";
@@ -87,6 +95,113 @@ export function TextField({
         </span>
       )}
     </div>
+  );
+}
+
+/**
+ * Date of birth as three number boxes (month, day, year), not <input type="date">.
+ * See the "three boxes" note in shared/survey-questions.ts for why.
+ *
+ * The boxes keep their own text. A change from the parent (a restored draft)
+ * replaces them only when it differs from what they already make, so a partly
+ * typed year is never rewritten mid-entry. A language switch re-renders the
+ * labels and leaves the boxes alone.
+ *
+ * An error shows once focus leaves all three boxes, or once every box is full.
+ * A message under a year that is two digits in would only interrupt.
+ */
+export function DateOfBirthField({
+  label,
+  value,
+  onChange,
+  error,
+  required,
+  lang,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  error?: string | null;
+  required?: boolean;
+  lang: SurveyLanguage;
+}) {
+  const id = useId();
+  const errorId = `${id}-error`;
+  const [parts, setParts] = useState<DobParts>(() => dobParts(value));
+  const [left, setLeft] = useState(() => value.trim() !== "");
+  const refs = { month: useRef<HTMLInputElement>(null), day: useRef<HTMLInputElement>(null), year: useRef<HTMLInputElement>(null) };
+
+  useEffect(() => {
+    if (value !== composeDob(parts)) setParts(dobParts(value));
+    // Only an outside change to `value` should reach the boxes.
+  }, [value]);
+
+  const full = (Object.keys(DOB_PART_MAX) as (keyof DobParts)[])
+    .every((k) => parts[k].length === DOB_PART_MAX[k]);
+  const shownError = error && (left || full) ? error : null;
+
+  const set = (part: keyof DobParts, raw: string) => {
+    const next = { ...parts, [part]: dobPartInput(part, raw) };
+    setParts(next);
+    onChange(composeDob(next));
+    // A full month or day moves on to the next box, as a printed form would.
+    if (next[part].length === DOB_PART_MAX[part] && next[part] !== parts[part]) {
+      if (part === "month") refs.day.current?.focus();
+      if (part === "day") refs.year.current?.focus();
+    }
+  };
+
+  const box = (part: keyof DobParts, labelKey: UiKey, placeholderKey: UiKey, autoComplete: string) => (
+    <div className={`dob__part dob__part--${part}`}>
+      <label className="dob__label" htmlFor={`${id}-${part}`}>{ui(labelKey, lang)}</label>
+      <input
+        ref={refs[part]}
+        id={`${id}-${part}`}
+        name={`dob-${part}`}
+        className="input"
+        type="text"
+        inputMode="numeric"
+        pattern="[0-9]*"
+        autoComplete={autoComplete}
+        placeholder={ui(placeholderKey, lang)}
+        // No maxLength: it would cut a paste such as "1985." before the
+        // digits are picked out. dobPartInput enforces the length instead.
+        value={parts[part]}
+        aria-invalid={shownError ? "true" : undefined}
+        aria-describedby={shownError ? errorId : undefined}
+        onChange={(e) => set(part, e.target.value)}
+      />
+    </div>
+  );
+
+  return (
+    <fieldset
+      className="dob"
+      data-dob
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setLeft(true);
+      }}
+    >
+      <legend className="field__label">
+        {label}
+        {required && (
+          <span className="field__required" aria-hidden="true">
+            {" "}
+            *
+          </span>
+        )}
+      </legend>
+      <div className="dob__row">
+        {box("month", "dobMonthLabel", "dobMonthPlaceholder", "bday-month")}
+        {box("day", "dobDayLabel", "dobDayPlaceholder", "bday-day")}
+        {box("year", "dobYearLabel", "dobYearPlaceholder", "bday-year")}
+      </div>
+      {shownError && (
+        <span className="field__error" id={errorId} role="alert">
+          {shownError}
+        </span>
+      )}
+    </fieldset>
   );
 }
 

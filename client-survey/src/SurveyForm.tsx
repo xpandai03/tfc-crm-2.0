@@ -41,6 +41,7 @@ import { MultiStepForm, type FormScreen } from "./MultiStepForm";
 import {
   ChoiceField,
   CommentField,
+  DateOfBirthField,
   ScaleField,
   TextAreaField,
   TextField,
@@ -362,13 +363,13 @@ export function SurveyForm({ variant }: { variant: SurveyVariant }) {
             onChange={(v) => setClient({ name: v })}
             error={shown(draft.client.name, nameProblem)}
           />
-          <TextField
+          <DateOfBirthField
             label={ui("dateOfBirthLabel", lang)}
             required
-            type="date"
             value={draft.client.dateOfBirth}
             onChange={(v) => setClient({ dateOfBirth: v })}
             error={shown(draft.client.dateOfBirth, dobProblem)}
+            lang={lang}
           />
           {/* Required as of 2026-09-03 — it is a matching field, not a way to
               reach the client, so the old "optional, only if you want us to
