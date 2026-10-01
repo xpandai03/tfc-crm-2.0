@@ -24,6 +24,7 @@ function getEventIcon(type: string) {
     case "note_added":
       return <MessageSquare className="h-4 w-4 text-green-500" />;
     case "note_deleted":
+    case "survey_deleted":
       return <Trash2 className="h-4 w-4 text-red-500" />;
     case "contact_updated":
       return <Pencil className="h-4 w-4 text-purple-500" />;

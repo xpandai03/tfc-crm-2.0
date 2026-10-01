@@ -177,7 +177,7 @@ console.log("\n[8] The payload, and what changed about it");
     fields: {
       firstName: "Test", lastName: "LS", dob: "04/12/1990",
       phone: "(505) 555-0143", clinicianName: "Amanda Davison (ABQ)",
-      contactId: null, chartId: null,
+      contactId: null,
     },
     documentName: "Client Survey",
     baseUrl: "https://crm.test",
@@ -198,12 +198,12 @@ console.log("\n[8] The payload, and what changed about it");
       fields: {
         firstName: "Test", lastName: "LS", dob: "04/12/1990",
         phone: "(505) 555-0143", clinicianName: "Amanda Davison (ABQ)",
-        contactId: 42, chartId: null,
+        contactId: 42,
       },
       documentName: "Client Survey",
     }).contact_id === 42);
-  check("a manual attach on a MATCHED row still carries its contact id",
-    /trigger === "manual" && \(elig\.fields\.contactId === null/.test(runner));
+  check("a manual attach carries the match row's contact id, whatever the row's status",
+    /trigger === "manual" && elig\.fields\.contactId === null\)/.test(runner));
 }
 
 // ===========================================================================

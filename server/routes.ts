@@ -6432,6 +6432,48 @@ export async function registerRoutes(
     }
   });
 
+  // Delete a SURVEY submission (soft). Staff remove a test survey from the
+  // Submissions page. The row, answers and PDF stay in form_submissions with
+  // deleted_at / deleted_by set, and every survey list, the snapshot, provider
+  // counts, the export and the attach batch stop seeing it. Nothing is removed
+  // from TherapyNotes. Survey rows only: an intake submission is never deleted
+  // here. Any signed-in staff member (the page has no management gate for
+  // actions). Restore: see softDeleteSurveySubmission.
+  app.delete("/api/survey/submissions/:submissionId(\\d+)", async (req: any, res) => {
+    const submissionId = parseInt(req.params.submissionId, 10);
+    const actorEmail = (req.user?.email as string) || "";
+    if (!actorEmail) return res.status(401).json({ error: "Sign in to delete a survey." });
+    try {
+      const { softDeleteSurveySubmission } = await import("./sync/db");
+      const deleted = await softDeleteSurveySubmission(submissionId, actorEmail);
+      if (!deleted) {
+        return res.status(404).json({ error: "No survey with that id, or it is already deleted." });
+      }
+      const { getMatchState } = await import("./survey/match-db");
+      const state = await getMatchState(submissionId).catch(() => null);
+      const contactId = deleted.contactId ?? state?.matchedContactId ?? null;
+      // entityName is a FIXED string: the Activity page renders it, and a
+      // client's name there would put them in a feed.
+      const entry = { submissionId, contactId };
+      await logActivity({
+        type: "survey_deleted", actorEmail, entityType: "submission",
+        entityId: String(submissionId), entityName: "Client survey", metadata: entry,
+      });
+      if (contactId !== null) {
+        await logActivity({
+          type: "survey_deleted", actorEmail, entityType: "contact",
+          entityId: String(contactId), entityName: "Client survey", metadata: entry,
+        });
+      }
+      console.log(`[survey] DELETED id=${submissionId} contact=${contactId ?? "none"}`);
+      return res.json({ deleted: true, submissionId, createdAt: deleted.createdAt });
+    } catch (error) {
+      console.error(`[survey] delete failed for id=${submissionId}:`,
+        error instanceof Error ? error.message : "unknown");
+      return res.status(500).json({ error: "The survey could not be deleted." });
+    }
+  });
+
   // Unified form ingestion — any form can POST here
   app.post("/api/submissions", async (req, res) => {
     try {

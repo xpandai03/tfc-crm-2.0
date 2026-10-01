@@ -62,7 +62,8 @@ export type ActivityType =
   | "tn_schedule_completed"
   | "tn_schedule_failed"
   | "survey_attach_completed"
-  | "survey_attach_failed";
+  | "survey_attach_failed"
+  | "survey_deleted";
 
 export interface LogActivityParams {
   type: ActivityType;
@@ -625,6 +626,11 @@ function formatActivitySummary(
       const how = metadata.trigger === "scheduled" ? "overnight run" : "staff";
       return `Client survey #${String(metadata.submissionId ?? "?")} not filed (${how}): ${reason}`;
     }
+
+    // entityName is the FIXED string "Client survey", as for attach above.
+    case "survey_deleted":
+      return `Client survey #${String(metadata.submissionId ?? "?")} deleted from Submissions ` +
+        `(kept on record; nothing removed from TherapyNotes)`;
 
     case "report_exported": {
       // Referral report builder — PHI-identified export audit entry. No PHI in

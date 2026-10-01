@@ -83,21 +83,14 @@ export interface AttachPayloadFields {
    * schema has always had this as Optional; it is metadata, not a key.
    */
   contactId: number | null;
-  /**
-   * The TherapyNotes chart this submission's match resolved to, when it
-   * resolved to one.
-   *
-   * NULL is an ordinary case, not a degraded one: a survey attached before
-   * matching ran, or matched to a CRM contact that has never been linked to a
-   * chart, has no id and is selected by name exactly as it always was.
-   *
-   * When it is set, it tells the agent WHICH record to open — which is what
-   * lets a common surname or two people sharing a date of birth stop being a
-   * refusal. It says nothing about whether to file: the agent still verifies
-   * all four fields against the chart it opens.
-   */
-  chartId: string | null;
 }
+
+// NO CHART ID IS SENT. The match's TherapyNotes chart id (matched_chart_id) is
+// ADVISORY: TherapyNotes' record id changes between page loads, so the id the
+// nightly pull captured never matches what a later search shows, and every
+// attach that selected by it refused (2026-09-22 to 2026-10-01). The agent
+// selects by name + date of birth and verifies four fields; the stored id is
+// kept for display and audit only. Do not add it back to the payload.
 
 export type Eligibility =
   | { eligible: true; fields: AttachPayloadFields }
@@ -175,16 +168,9 @@ export async function checkEligibility(submission: FormSubmission): Promise<Elig
   if (state.status !== "matched") {
     return { eligible: false, code: "no_match" };
   }
-  // The chart id rides along when the match found one. It is NOT part of the
-  // eligibility rule — a match without a chart id is exactly as eligible as it
-  // was yesterday, and is selected by name.
   return {
     eligible: true,
-    fields: {
-      ...identity.fields,
-      contactId: state.matchedContactId,
-      chartId: state.matchedChartId || null,
-    },
+    fields: { ...identity.fields, contactId: state.matchedContactId },
   };
 }
 
@@ -214,10 +200,12 @@ export async function checkEligibility(submission: FormSubmission): Promise<Elig
  */
 export function checkIdentityEligibility(
   submission: FormSubmission,
-): { eligible: true; fields: Omit<AttachPayloadFields, "contactId" | "chartId"> } | { eligible: false; code: AttachIneligibleCode } {
+): { eligible: true; fields: Omit<AttachPayloadFields, "contactId"> } | { eligible: false; code: AttachIneligibleCode } {
   if (submission.formType !== SURVEY_FORM_TYPE) {
     return { eligible: false, code: "not_a_survey" };
   }
+  // A survey staff deleted is never filed, by the batch or the button.
+  if (submission.deletedAt) return { eligible: false, code: "deleted" };
 
   const p = (submission.payload ?? {}) as {
     client?: { name?: unknown; dateOfBirth?: unknown; phone?: unknown };
@@ -299,15 +287,7 @@ export function buildAttachBody(params: {
     // it Optional, and sending an explicit null says something different from
     // not saying it at all.
     ...(fields.contactId !== null ? { contact_id: fields.contactId } : {}),
-    // Omitted rather than null for the same reason as contact_id: the agent
-    // treats absent as "select by name", and an explicit null would be a third
-    // thing to reason about on both sides.
-    //
-    // TRIMMED, and a blank counts as absent. The agent collapses blanks too, so
-    // this changes nothing end to end — but sending "   " would mean the CRM
-    // asserting it knows a record when it does not, and the place to stop that
-    // is where the claim is made.
-    ...((fields.chartId ?? "").trim() ? { expected_chart_id: fields.chartId!.trim() } : {}),
+    // No expected_chart_id: see the note under AttachPayloadFields.
   };
 }
 
@@ -340,7 +320,7 @@ export async function attachOne(params: {
     : ((): Eligibility => {
         const id = checkIdentityEligibility(submission);
         return id.eligible
-          ? { eligible: true, fields: { ...id.fields, contactId: null, chartId: null } }
+          ? { eligible: true, fields: { ...id.fields, contactId: null } }
           : id;
       })();
   if (!elig.eligible) {
@@ -368,23 +348,13 @@ export async function attachOne(params: {
     return { submissionId, status: "skipped", reason: code, durationMs: 0 };
   }
 
-  // A manual attach on a row that IS matched still carries its contact id — the
-  // id is useful metadata and withholding it would make the manual path record
-  // less than the scheduled one for no reason.
-  //
-  // The chart id comes from the same lookup, and on its own terms: a matched
-  // row can carry a chart id without a contact id, so this is deliberately not
-  // nested inside the contact branch.
-  if (trigger === "manual" && (elig.fields.contactId === null || elig.fields.chartId === null)) {
+  // THE SAME PAYLOAD AS THE BATCH. A manual attach carries the match's contact
+  // id when the match row has one, whatever its status, so a re-run from the
+  // review queue sends exactly what the batch would. The contact id is
+  // correlation metadata for the agent; it never selects a chart.
+  if (trigger === "manual" && elig.fields.contactId === null) {
     const state = await getMatchState(submissionId).catch(() => null);
-    if (state?.status === "matched") {
-      if (elig.fields.contactId === null && state.matchedContactId) {
-        elig.fields.contactId = state.matchedContactId;
-      }
-      if (elig.fields.chartId === null && state.matchedChartId) {
-        elig.fields.chartId = state.matchedChartId;
-      }
-    }
+    if (state?.matchedContactId) elig.fields.contactId = state.matchedContactId;
   }
 
   const body = buildAttachBody({
@@ -404,10 +374,7 @@ export async function attachOne(params: {
   try {
     console.log(
       `[survey-attach] DISPATCH id=${submissionId} ` +
-      `contact=${elig.fields.contactId ?? "none"} trigger=${trigger} ` +
-      // Presence only. A chart id names one patient's record as directly as a
-      // name does, so it is not written to a log line.
-      `expected_chart=${elig.fields.chartId ? "yes" : "no"}`,
+      `contact=${elig.fields.contactId ?? "none"} trigger=${trigger}`,
     );
     const res = await fetch(SURVEY_ATTACH_AGENT_URL, {
       method: "POST",

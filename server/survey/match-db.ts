@@ -33,7 +33,12 @@ export interface SurveyMatchRow {
   status: MatchStatus;
   reason: string;
   matchedContactId: number | null;
-  /** The TherapyNotes chart, when this resolved to one. */
+  /**
+   * The TherapyNotes chart id the nightly pull showed for the matched record.
+   * ADVISORY, for display and audit only. TherapyNotes' record id changes
+   * between page loads, so this never identifies a chart later: attach does not
+   * send it (2026-10-01) and nothing should select, link or deduplicate by it.
+   */
   matchedChartId: string | null;
   candidateIds: number[];
   resolvedBy: string | null;
@@ -325,7 +330,7 @@ export async function getMatchCounts(): Promise<MatchCounts> {
     SELECT COALESCE(m.status, 'unprocessed') AS status, count(*)::int AS n
       FROM form_submissions s
       LEFT JOIN survey_match_reviews m ON m.submission_id = s.id
-     WHERE s.form_type = 'survey'
+     WHERE s.form_type = 'survey' AND s.deleted_at IS NULL
      GROUP BY 1
   `);
   const out: MatchCounts = { matched: 0, review: 0, no_contact: 0, unprocessed: 0 };
