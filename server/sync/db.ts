@@ -1289,7 +1289,7 @@ export async function getReferralReportData(params: ReferralReportParams): Promi
     WHERE f.form_type = 'intake'
       AND f.created_at::timestamptz >= ($1::timestamp AT TIME ZONE 'America/Denver')
       AND f.created_at::timestamptz <  ($2::timestamp AT TIME ZONE 'America/Denver')
-      AND f.name NOT LIKE 'ZZ_%'
+      AND NOT ${isTestSubmissionName("f.name")}
     ORDER BY f.created_at::timestamptz ASC, f.id ASC
     `,
     [from, toExclusive],
@@ -1677,6 +1677,22 @@ export async function generateIntakeContactId(): Promise<number> {
 }
 
 /**
+ * The date_added stamped on a new intake contact: the calendar day in MOUNTAIN
+ * time, the same clock the Insights card bounds its month in.
+ *
+ * It was the UTC day (toISOString). Any referral after 6pm MDT / 5pm MST was
+ * stamped the next day, which on the last day of a month moves it into the next
+ * month's report while the Insights card keeps it in this one. 73 contacts carry
+ * a UTC-stamped date (none had crossed a month yet). They are left as they are,
+ * so past reports do not change.
+ */
+export function referralDateFor(at: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Denver", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(at); // "YYYY-MM-DD"
+}
+
+/**
  * Insert a new contact created via /api/intake.
  * Writes directly to sync_contacts with full structured fields — no n8n, no Excel.
  */
@@ -1724,7 +1740,7 @@ export async function insertIntakeContact(fields: {
   language?: string | null;
 }): Promise<void> {
   const pool = getPool();
-  const today = new Date().toISOString().split("T")[0];
+  const today = referralDateFor();
 
   await pool.query(`
     INSERT INTO sync_contacts (
@@ -2301,6 +2317,19 @@ export async function insertSubmission(fields: {
 }
 
 /**
+ * THE test-row rule for every referral count: the name AS SUBMITTED on the
+ * intake form starts "ZZ" (ZZTEST…). It reads form_submissions.name, never the
+ * contact's current name, because staff rename test contacts: two September
+ * test contacts no longer start with ZZ, but their submissions still do.
+ *
+ * The Insights card, the referral report builder and the monthly report all
+ * read this one rule. Before it existed the monthly report had no test-row rule
+ * at all, and September 2026 read 150 by email against 144 on Insights.
+ */
+export const isTestSubmissionName = (nameColumn: string): string =>
+  `(${nameColumn} LIKE 'ZZ_%')`;
+
+/**
  * Read-only inflow count: inbound INTAKE submissions received within a month,
  * bounded in Mountain Time (America/Denver). Used by the Insights "Referrals in
  * [month]" card. Replaces Lane's manual list-count (which caps at ~50 rows and
@@ -2324,7 +2353,7 @@ export async function insertSubmission(fields: {
  *   - referral-sourced only → uncomment the `source = 'uploaded_referral'` line
  *   - distinct people → swap COUNT(*) for COUNT(DISTINCT contact_id)
  *
- * Test-row exclusion: `name NOT LIKE 'ZZ_%'`. (Do NOT exclude by contact_id —
+ * Test-row exclusion: isTestSubmissionName (below). (Do NOT exclude by contact_id —
  * ALL real intake contacts live in the 900000+ range via generateIntakeContactId,
  * so a `contact_id < 900000` filter would zero out the count.)
  */
@@ -2337,7 +2366,7 @@ export async function getReferralsCount(monthStart: string, nextMonthStart: stri
     WHERE form_type = 'intake'
       AND created_at::timestamptz >= ($1::timestamp AT TIME ZONE 'America/Denver')
       AND created_at::timestamptz <  ($2::timestamp AT TIME ZONE 'America/Denver')
-      AND name NOT LIKE 'ZZ_%'
+      AND NOT ${isTestSubmissionName("name")}
       -- AND source = 'uploaded_referral'   -- toggle: referral-sourced only (off by default)
     `,
     [monthStart, nextMonthStart],
