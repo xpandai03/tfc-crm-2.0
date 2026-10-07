@@ -399,6 +399,7 @@ function resolveBuildInfo(): { commit: string; source: string } {
     await initTnPatientsTable();
     await initContactDocumentsTable();
     await initNotificationTables();
+    await (await import("./therapy-notes/portal")).initPortalColumns();
     startNotificationWorker();
     startReminderCron();
     // Monthly management report. Schedule + timezone are logged on the line

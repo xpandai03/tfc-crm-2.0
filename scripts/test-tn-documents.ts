@@ -171,7 +171,8 @@ async function main() {
   const routes = readFileSync(join(process.cwd(), "server", "routes.ts"), "utf8");
   ok("the payload carries the unstamped documents",
     routes.includes("documents: buildTnDocumentList(await listContactDocuments(contactId), contactId, baseUrl),"));
-  ok("upload_documents is an accepted phase", /"schedule_appointment",[\s\S]{0,300}"upload_documents",[\s\S]{0,40}"workflow_complete",/.test(routes));
+  ok("upload_documents is an accepted phase", /"schedule_appointment",[\s\S]{0,300}"upload_documents",[\s\S]{0,300}"workflow_complete",/.test(routes));
+  ok("…followed by the portal phase (2026-10-07)", /"upload_documents",[\s\S]{0,300}"portal",[\s\S]{0,40}"workflow_complete",/.test(routes));
   ok("the callback stamps on upload_documents and workflow_complete, when ok",
     /body\.status === "ok" && \(body\.phase === "upload_documents" \|\| body\.phase === "workflow_complete"\)[\s\S]{0,200}documentIdsToStamp\(meta\)[\s\S]{0,300}stampDocumentsUploadedToTn\(pathContactId, body\.runId, ids\)/.test(routes));
   ok("the run's started entry records which documents were sent (ids only)",

@@ -2844,6 +2844,7 @@ export default function ContactDetail() {
                   contactId={Number(contactId)}
                   initialDate={tnV2State?.scheduledAppointmentDate ?? contact.scheduledAppointmentDate ?? null}
                   initialTime={tnV2State?.scheduledAppointmentTime ?? contact.scheduledAppointmentTime ?? null}
+                  portal={tnV2State?.portal ?? null}
                   onSaved={() => {
                     refetchTnV2State();
                     queryClient.invalidateQueries({ queryKey: ["/api/contact", contactId] });

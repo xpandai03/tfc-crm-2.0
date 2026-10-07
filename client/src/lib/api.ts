@@ -504,6 +504,18 @@ export interface TnV2State {
   emailSent: boolean;
   canGenerateIntakePdf: boolean; // contact has intake data → intake PDF is generatable
   canGenerateSnapshotPdf: boolean; // appointment-confirmation snapshot exists → snapshot PDF is generatable
+  /** Patient-portal step after booking; null before any run reported one. */
+  portal?: PortalState | null;
+}
+
+export interface PortalState {
+  status: "done" | "dry_run" | "failed" | "skipped";
+  documents: string[];
+  sentAt: string | null;
+  step: string | null;
+  reason: string | null;
+  missing: string[];
+  welcomeEmail: string | null;
 }
 
 export interface TnV2RunResult {

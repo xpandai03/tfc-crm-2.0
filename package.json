@@ -45,6 +45,7 @@
     "test:attach-unmatched": "tsx scripts/test-attach-unmatched.ts",
     "test:tn-patients": "tsx scripts/test-tn-patient-matching.ts",
     "test:patient-identity": "tsx scripts/test-patient-identity.ts",
+    "test:portal-crm": "tsx --tsconfig tsconfig.test.json scripts/test-portal-crm.ts",
     "test:attach-strikes-db": "tsx --tsconfig tsconfig.test.json scripts/test-attach-strikes-db.ts",
     "test:short-name": "tsx scripts/test-provider-short-name.ts",
     "test:survey-aggregate": "tsx scripts/test-survey-aggregate.ts",

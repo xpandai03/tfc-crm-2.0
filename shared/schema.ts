@@ -97,6 +97,11 @@ export const contactSnapshotSchema = z.object({
   // TN V2 scheduled appointment (CRM-owned; Add to Schedule in TN Beta)
   scheduledAppointmentDate: z.string().nullable().optional(), // ISO 'YYYY-MM-DD'
   scheduledAppointmentTime: z.string().nullable().optional(), // 'h:mm am/pm'
+  // Patient-portal step outcome, set by the TN agent's portal phase
+  portalStatus: z.string().nullable().optional(),    // done | dry_run | failed | skipped
+  portalDocuments: z.string().nullable().optional(), // JSON array of document names
+  portalSentAt: z.string().nullable().optional(),
+  portalDetail: z.string().nullable().optional(),    // JSON: step, reason, missing, welcomeEmail
 
   // Status fields
   statusCode: z.number(),

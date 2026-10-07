@@ -191,6 +191,11 @@ export interface SyncContact {
   // TN V2 scheduled appointment (CRM-owned)
   scheduledAppointmentDate: string | null;
   scheduledAppointmentTime: string | null;
+  /** Patient-portal step outcome (server/therapy-notes/portal.ts). */
+  portalStatus?: string | null;
+  portalDocuments?: string | null;
+  portalSentAt?: string | null;
+  portalDetail?: string | null;
 
   // Sync metadata
   syncedAt: string;
@@ -1499,6 +1504,10 @@ export async function getSyncContactById(contactId: number): Promise<SyncContact
       language AS "language",
       scheduled_appointment_date AS "scheduledAppointmentDate",
       scheduled_appointment_time AS "scheduledAppointmentTime",
+      portal_status AS "portalStatus",
+      portal_documents AS "portalDocuments",
+      portal_sent_at AS "portalSentAt",
+      portal_detail AS "portalDetail",
       synced_at AS "syncedAt",
       sync_hash AS "syncHash"
     FROM sync_contacts

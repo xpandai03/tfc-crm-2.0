@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CalendarClock, Loader2, Check } from "lucide-react";
-import { saveScheduledAppointment } from "@/lib/api";
+import { saveScheduledAppointment, type PortalState } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
 // h:mm am/pm (case-insensitive), e.g. "2:00 pm", "11:30 AM"
@@ -25,6 +25,41 @@ interface ScheduleAppointmentWidgetProps {
   initialTime: string | null;
   /** Called after a successful save so the parent can refetch state. */
   onSaved?: () => void;
+  /** Patient-portal outcome of the last Add to Schedule run, if any. */
+  portal?: PortalState | null;
+}
+
+const PORTAL_LABEL: Record<PortalState["status"], string> = {
+  done: "done",
+  dry_run: "dry run",
+  failed: "failed",
+  skipped: "skipped",
+};
+
+/** "Portal: done · 6 documents" — names in the tooltip, never a patient value. */
+function PortalLine({ portal }: { portal: PortalState }) {
+  const n = portal.documents.length;
+  const docs = `${n} document${n === 1 ? "" : "s"}`;
+  const detail =
+    portal.status === "done" ? docs :
+    portal.status === "dry_run" ? `would share ${docs}` :
+    portal.status === "failed" ? `at ${portal.step ?? "an unknown step"}${portal.reason ? ` (${portal.reason})` : ""}` :
+    portal.reason ?? "";
+  const tone =
+    portal.status === "done" ? "text-green-700" :
+    portal.status === "failed" ? "text-red-700" : "text-muted-foreground";
+  const title = [
+    portal.documents.length ? `Documents: ${portal.documents.join(", ")}` : "",
+    portal.missing.length ? `Not found in TherapyNotes: ${portal.missing.join(", ")}` : "",
+    portal.welcomeEmail ? `Welcome email: ${portal.welcomeEmail.replace(/_/g, " ")}` : "",
+    portal.sentAt ? `Sent ${new Date(portal.sentAt).toLocaleString()}` : "",
+  ].filter(Boolean).join("\n");
+  return (
+    <p className={`text-xs ${tone}`} title={title} data-testid="text-portal-status">
+      Portal: {PORTAL_LABEL[portal.status]}{detail ? ` · ${detail}` : ""}
+      {portal.missing.length > 0 && ` · ${portal.missing.length} not in TN`}
+    </p>
+  );
 }
 
 export function ScheduleAppointmentWidget({
@@ -32,6 +67,7 @@ export function ScheduleAppointmentWidget({
   initialDate,
   initialTime,
   onSaved,
+  portal,
 }: ScheduleAppointmentWidgetProps) {
   const { toast } = useToast();
   const [date, setDate] = useState(initialDate || "");
@@ -82,6 +118,7 @@ export function ScheduleAppointmentWidget({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
+        {portal && <PortalLine portal={portal} />}
         <div className="space-y-1.5">
           <Label htmlFor="appt-date" className="text-xs text-muted-foreground">
             Date <span className="text-muted-foreground/70">(m/d/yyyy)</span>
