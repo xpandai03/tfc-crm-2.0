@@ -25,6 +25,8 @@ import { initSurveyAttachTable } from "./survey/attach-db";
 import { initActiveCountsTable } from "./therapy-notes/active-counts-db";
 import { initActiveCountOverridesTable } from "./survey/active-count-overrides-db";
 import { initTnPatientsTable } from "./therapy-notes/tn-patients-db";
+import { initNotificationTables } from "./notifications/db";
+import { startNotificationWorker } from "./notifications/worker";
 
 const app = express();
 const httpServer = createServer(app);
@@ -392,6 +394,8 @@ function resolveBuildInfo(): { commit: string; source: string } {
     await initActiveCountOverridesTable();
     await initTnPatientsTable();
     await initContactDocumentsTable();
+    await initNotificationTables();
+    startNotificationWorker();
     startReminderCron();
     // Monthly management report. Schedule + timezone are logged on the line
     // below at boot, so the deployed cadence is readable from the startup log

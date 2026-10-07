@@ -394,6 +394,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     "/api/submissions",
     "/api/test-email",
     "/api/provider-availability",
+    "/api/internal/notifications/test", // deploy smoke: X-Sync-Key, developer address only
   ];
 
   if (req.method === "POST" && publicPostPaths.includes(req.path)) {
