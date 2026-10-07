@@ -95,6 +95,8 @@ import { PAPERWORK_STATUSES, isValidPaperworkStatus } from "@shared/paperwork-st
 import { CUSTODY_DOC_STATUSES, isValidCustodyDocStatus } from "@shared/custody-doc-status";
 import { putContactOnHold, takeContactOffHold } from "./contacts/account-hold";
 import { registerContactDocumentRoutes } from "./documents/routes";
+import { registerNotificationRoutes } from "./notifications/routes";
+import { emitNotificationEvent } from "./notifications/emit";
 import { buildTnDocumentList, documentIdsToStamp, TN_DOCUMENT_NAME_MAX } from "./documents/tn";
 import { listContactDocuments, stampDocumentsUploadedToTn } from "./documents/db";
 import {
@@ -948,6 +950,9 @@ export async function registerRoutes(
     }
     next();
   });
+
+  // Teams notifications: own mute, management log + test (server/notifications/routes.ts)
+  registerNotificationRoutes(app, SYNC_API_KEY);
 
   // Get contact snapshot by contactId (ONLY)
   // Strategy:
@@ -2454,6 +2459,14 @@ export async function registerRoutes(
         try {
           await updateSyncContactStatus(contactId, statusCode, getStatusLabel(statusCode));
           console.log(`[update-status] Sync cache updated for contactId ${contactId}`);
+          // After the write; returns at once. Rules ignore a re-save at the same code.
+          emitNotificationEvent({
+            type: "contact.status_changed",
+            contactId,
+            before: { statusCode: prev?.statusCode ?? null },
+            after: { statusCode },
+            actor: (req as any).user?.email || "system",
+          });
         } catch (e) {
           // Cache failure is non-fatal — n8n sync will reconcile.
           console.warn(`[update-status] Failed to update sync cache:`, e);
@@ -3131,6 +3144,13 @@ export async function registerRoutes(
           const contact = await getSyncContactById(contactId);
           await updateSyncContactAssignment(contactId, assignedTo);
           console.log(`[assign-contact] Sync cache updated for contactId ${contactId}`);
+          emitNotificationEvent({
+            type: "contact.assigned",
+            contactId,
+            before: { assignedTo: contact?.assignedTo ?? null },
+            after: { assignedTo },
+            actor: (req as any).user?.email || "system",
+          });
 
           await logActivity({
             type: "contact_assigned",
@@ -4162,8 +4182,9 @@ export async function registerRoutes(
       // Audit mirror to form_submissions — best-effort, sequential. If this
       // fails AFTER a successful upsert, log loudly server-side and STILL
       // return 200 — the form must not retry a write that already landed.
+      let availabilitySubmissionId: number | null = null;
       try {
-        await insertSubmission({
+        availabilitySubmissionId = await insertSubmission({
           formType: "provider_availability",
           source: "provider_availability_form",
           submittedAt,
@@ -4203,6 +4224,17 @@ export async function registerRoutes(
         `[provider-availability] Upserted ${providerEntry.name} <${providerEntry.email}> ` +
           `(clients=${body.acceptingClients})`
       );
+
+      emitNotificationEvent({
+        type: "provider_availability.submitted",
+        submissionId: availabilitySubmissionId,
+        actor: "provider_form",
+        extras: {
+          providerName: providerEntry.name,
+          acceptingClients: body.acceptingClients,
+          entityKey: providerEntry.email,
+        },
+      });
 
       return res.json({
         success: true,
@@ -5251,6 +5283,14 @@ export async function registerRoutes(
       });
 
       boardCache = null;
+
+      emitNotificationEvent({
+        type: "rfs.submitted",
+        contactId,
+        submissionId,
+        actor: req.user?.email || "system",
+        extras: { source: isUploadedReferral ? "uploaded referral" : "website form" },
+      });
 
       if (isUploadedReferral) {
         await logActivity({

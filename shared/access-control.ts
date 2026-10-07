@@ -243,3 +243,24 @@ export function canAccessDashboard(email: string | null | undefined): boolean {
   if (DASHBOARD_OPEN_TO_MANAGEMENT) return DASHBOARD_MANAGEMENT_EMAILS.includes(e);
   return DASHBOARD_BETA_EMAILS.includes(e);
 }
+
+// ============================================================================
+// Teams notifications admin (log, per-person mute, test button)
+//
+// Its OWN list, same convention as the gates above — do not alias another. The
+// same management set as DASHBOARD_MANAGEMENT_EMAILS today. Server-side
+// (server/notifications/routes.ts requireManager) is the real boundary.
+// ============================================================================
+export const NOTIFICATIONS_ADMIN_EMAILS = [
+  "lsego@tfc.health",      // Lane — ops lead
+  "chantel@tfc.health",    // Chantelle
+  "amanda@tfc.health",     // Amanda
+  "sandra@tfc.health",     // Sandra
+  "ebenavidez@tfc.health", // Erica Benavidez
+  "raunek@tfc.health",     // developer
+];
+
+export function canManageNotifications(email: string | null | undefined): boolean {
+  if (!email) return false;
+  return NOTIFICATIONS_ADMIN_EMAILS.includes(email.toLowerCase().trim());
+}

@@ -459,6 +459,33 @@ function computeRowHash(contact: Record<string, unknown>): string {
  * Upsert all contacts from n8n sync payload.
  * Returns counts of synced, skipped (unchanged), and deleted rows.
  */
+/**
+ * Teams notifications for status changes the sync REALLY made. Since v178 the
+ * sync COALESCEs status_code, so the only transition it can make is filling a
+ * NULL; the value compared is what the upsert RETURNED, not what the Sheet
+ * sent. Called after COMMIT. New rows are creations and are not reported.
+ *
+ * Lazy import: notifications/messages imports this module, so a static import
+ * here would be a cycle.
+ */
+type SyncStatusTransition = { contactId: number; from: number | null; to: number };
+function emitSyncStatusTransitions(transitions: SyncStatusTransition[], actor: string): void {
+  if (transitions.length === 0) return;
+  void import("../notifications/emit")
+    .then((m) => {
+      for (const t of transitions) {
+        m.emitNotificationEvent({
+          type: "contact.status_changed",
+          contactId: t.contactId,
+          before: { statusCode: t.from },
+          after: { statusCode: t.to },
+          actor,
+        });
+      }
+    })
+    .catch((e) => console.error(`[sync-db] notification emit failed: ${e instanceof Error ? e.message : "unknown"}`));
+}
+
 export async function syncContacts(contacts: SyncPayloadContact[]): Promise<{
   synced: number;
   skipped: number;
@@ -554,7 +581,9 @@ export async function syncContacts(contacts: SyncPayloadContact[]): Promise<{
         synced_at = NOW(),
         sync_hash = EXCLUDED.sync_hash
       WHERE EXCLUDED.sync_hash != sync_contacts.sync_hash OR sync_contacts.sync_hash IS NULL
+      RETURNING status_code
     `;
+    const statusTransitions: SyncStatusTransition[] = [];
 
     for (const raw of contacts) {
       if (raw.contactId === undefined || raw.contactId === null) continue;
@@ -566,9 +595,9 @@ export async function syncContacts(contacts: SyncPayloadContact[]): Promise<{
 
       // Check if hash matches — skip if unchanged
       const existingResult = await client.query(
-        `SELECT sync_hash FROM sync_contacts WHERE contact_id = $1`, [id]
+        `SELECT sync_hash, status_code FROM sync_contacts WHERE contact_id = $1`, [id]
       );
-      const existing = existingResult.rows[0] as { sync_hash: string | null } | undefined;
+      const existing = existingResult.rows[0] as { sync_hash: string | null; status_code: number | null } | undefined;
       if (existing && existing.sync_hash === hash) {
         skipped++;
         continue;
@@ -585,7 +614,7 @@ export async function syncContacts(contacts: SyncPayloadContact[]): Promise<{
       const normalizedDateAdded =
         normalizeDateValue(raw.dateAdded) ?? deriveDateFromDays(raw.daysOnWaitlist);
 
-      await client.query(upsertSql, [
+      const upserted = await client.query<{ status_code: number | null }>(upsertSql, [
         id,
         str(raw.name) || "Unknown",
         str(raw.email),
@@ -630,6 +659,10 @@ export async function syncContacts(contacts: SyncPayloadContact[]): Promise<{
         hash,
       ]);
       synced++;
+      const written = upserted.rows[0]?.status_code ?? null;
+      if (existing && written !== null && written !== existing.status_code) {
+        statusTransitions.push({ contactId: id, from: existing.status_code, to: written });
+      }
     }
 
     // Delete contacts no longer in Excel (only n8n-sourced IDs < 900k)
@@ -645,6 +678,7 @@ export async function syncContacts(contacts: SyncPayloadContact[]): Promise<{
     }
 
     await client.query('COMMIT');
+    emitSyncStatusTransitions(statusTransitions, "n8n_sync");
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -2096,8 +2130,9 @@ export async function upsertSingleContact(
   );
   const priorStatusCode = prior.rows[0]?.status_code ?? null;
   const priorName = prior.rows[0]?.name ?? null;
+  const priorExists = prior.rows.length > 0;
 
-  await pool.query(`
+  const upserted = await pool.query<{ status_code: number | null }>(`
     INSERT INTO sync_contacts (
       contact_id, name, email, phone, status, status_code,
       service_requested, days_on_waitlist, date_added, assigned_to,
@@ -2170,6 +2205,7 @@ export async function upsertSingleContact(
       last_note = CASE WHEN sync_contacts.last_note IS NOT NULL AND sync_contacts.last_note != '' THEN sync_contacts.last_note ELSE EXCLUDED.last_note END,
       synced_at = NOW(),
       sync_hash = EXCLUDED.sync_hash
+    RETURNING status_code
   `, [
     id,
     str(contact.name) || "Unknown",
@@ -2216,6 +2252,11 @@ export async function upsertSingleContact(
   ]);
 
   console.log(`[sync-db] Upserted single contact ${id} (no delete of other rows)`);
+
+  const written = upserted.rows[0]?.status_code ?? null;
+  if (priorExists && written !== null && written !== priorStatusCode) {
+    emitSyncStatusTransitions([{ contactId: id, from: priorStatusCode, to: written }], options.actorEmail || "system");
+  }
 
   // Log status_changed only when an existing contact's code actually moved.
   // Hardened: errors propagate to the caller (matches the UI write path).
@@ -2803,7 +2844,9 @@ export async function fullSyncMigrationContacts(
       last_note = CASE WHEN sync_contacts.last_note IS NOT NULL AND sync_contacts.last_note != '' THEN sync_contacts.last_note ELSE EXCLUDED.last_note END,
       synced_at = NOW(),
       sync_hash = EXCLUDED.sync_hash
+    RETURNING status_code
   `;
+  const statusTransitions: SyncStatusTransition[] = [];
 
   try {
     await client.query('BEGIN');
@@ -2842,6 +2885,11 @@ export async function fullSyncMigrationContacts(
           unchanged++;
         }
 
+        const written = (result.rows[0] as { status_code: number | null } | undefined)?.status_code ?? null;
+        if (existing && written !== null && written !== priorStatusCode) {
+          statusTransitions.push({ contactId: c.contactId, from: priorStatusCode, to: written });
+        }
+
         // status_changed log: only on real transitions for existing contacts.
         // New rows are creations (priorStatusCode null) — not logged.
         const newStatusCode =
@@ -2871,6 +2919,7 @@ export async function fullSyncMigrationContacts(
     }
 
     await client.query('COMMIT');
+    emitSyncStatusTransitions(statusTransitions, "migration");
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;

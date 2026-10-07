@@ -9,12 +9,25 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { LogOut, Upload } from "lucide-react";
+import { Bell, BellOff, LogOut, Upload } from "lucide-react";
 import { useLocation } from "wouter";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+
+interface NotificationSettings { muted: boolean; enabled: boolean; canManage: boolean }
 
 export function UserMenu() {
   const { user, logout } = useAuth();
   const [, setLocation] = useLocation();
+  const { data: notify } = useQuery<NotificationSettings>({
+    queryKey: ["/api/notifications/me"],
+    enabled: !!user,
+  });
+  const toggleMute = useMutation({
+    mutationFn: async (muted: boolean) =>
+      (await apiRequest("PUT", "/api/notifications/me", { muted })).json(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/notifications/me"] }),
+  });
 
   if (!user) {
     return null;
@@ -53,6 +66,25 @@ export function UserMenu() {
             </p>
           </div>
         </DropdownMenuLabel>
+        {notify && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={(e) => { e.preventDefault(); toggleMute.mutate(!notify.muted); }}
+              disabled={toggleMute.isPending}
+              className="cursor-pointer"
+            >
+              {notify.muted ? <BellOff className="mr-2 h-4 w-4" /> : <Bell className="mr-2 h-4 w-4" />}
+              <span>Teams notifications: {notify.muted ? "Off" : "On"}</span>
+            </DropdownMenuItem>
+            {notify.canManage && (
+              <DropdownMenuItem onClick={() => setLocation("/admin/notifications")} className="cursor-pointer">
+                <Bell className="mr-2 h-4 w-4" />
+                <span>Notification log</span>
+              </DropdownMenuItem>
+            )}
+          </>
+        )}
         {isAdmin && (
           <>
             <DropdownMenuSeparator />

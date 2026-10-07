@@ -42,7 +42,8 @@ import {
   variantFromPath,
   type SurveyVariant,
 } from "@shared/survey-questions";
-import { insertSubmission } from "../sync/db";
+import { getSubmissionById, insertSubmission } from "../sync/db";
+import { emitNotificationEvent } from "../notifications/emit";
 import { logActivity } from "../activity/db";
 import { getPublicProviderRoster } from "./roster";
 import {
@@ -339,11 +340,26 @@ export function registerSurveyPublicRoutes(app: Express): void {
       // read and nothing here can roll it back. Failing to MATCH is not an error
       // — the row goes to review, which is what review is for. Failing to RUN is,
       // and is logged as one.
+      //
+      // The Teams notification waits for the match so it can name the contact
+      // (or say "unmatched"). It fires whether the match ran or failed: a
+      // survey arrived either way.
       setImmediate(() => {
         void import("./match-runner")
           .then((m) => m.matchOneSubmission(id))
           .catch((e) => console.error(
             `[survey] arrival match FAILED for id=${id}:`,
+            e instanceof Error ? e.message : "unknown",
+          ))
+          .then(() => getSubmissionById(id))
+          .then((sub) => emitNotificationEvent({
+            type: "survey.submitted",
+            submissionId: id,
+            contactId: sub?.contactId ?? null,
+            actor: "system",
+          }))
+          .catch((e) => console.error(
+            `[survey] notification FAILED for id=${id}:`,
             e instanceof Error ? e.message : "unknown",
           ));
       });
