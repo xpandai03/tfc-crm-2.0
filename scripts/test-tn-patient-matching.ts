@@ -121,10 +121,21 @@ console.log("\n[4] A person in both systems is ONE candidate");
 
   // Without the link there is nothing to collapse on, and two identities that
   // agree on everything are correctly ambiguous.
+  // Since 2026-10-07 the chart id is not the only link: it changes between
+  // page loads, so a contact linked last week no longer meets tonight's row.
+  // The ONE contact with the same legal name + date of birth is the person.
   const unlinked = collapseIdentities([crm(43, "Casimir Underhill", "1975-11-02")], [patient]);
-  eq("an unlinked contact and patient stay two identities", unlinked.length, 2);
-  eq("...and go to review rather than guessing",
-    matchSubmission(survey("Casimir Underhill", "1975-11-02"), unlinked).status, "review");
+  eq("an unlinked contact and patient with one name + DOB fold into one identity", unlinked.length, 1);
+  const unlinkedOut = matchSubmission(survey("Casimir Underhill", "1975-11-02"), unlinked);
+  eq("...and match the contact rather than reading as ambiguous",
+    [unlinkedOut.status, unlinkedOut.contactId, unlinkedOut.chartId], ["matched", 43, "77010"]);
+  // Two contacts with that name + DOB: neither is folded (the CRM holds a
+  // duplicate, or a couple's records), and the chart never makes a tie.
+  const twoContacts = collapseIdentities(
+    [crm(44, "Casimir Underhill", "1975-11-02"), crm(45, "Casimir Underhill", "1975-11-02")], [patient]);
+  eq("two same-key contacts: the chart is folded into neither", twoContacts.length, 3);
+  eq("...and with no therapist named it is a choice between the two contacts",
+    matchSubmission(survey("Casimir Underhill", "1975-11-02"), twoContacts).candidateIds, [44, 45]);
 }
 
 // ===========================================================================

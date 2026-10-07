@@ -7252,6 +7252,26 @@ export async function registerRoutes(
     }
   });
 
+  // The same run, for operations without a staff session (X-Sync-Key), e.g.
+  // re-evaluating review rows right after a matcher change ships. Counts only.
+  app.post("/api/internal/survey/matching/run", async (req: any, res) => {
+    try {
+      if (!SYNC_API_KEY || req.headers["x-sync-key"] !== SYNC_API_KEY) {
+        return res.status(401).json({ error: "unauthorized" });
+      }
+      const { runSurveyMatching } = await import("./survey/match-runner");
+      const summary = await runSurveyMatching();
+      console.log(
+        `[survey-match] internal run: considered=${summary.considered} matched=${summary.matched} ` +
+          `review=${summary.review} skipped(human-resolved)=${summary.skippedHumanResolved}`,
+      );
+      return res.json({ success: true, summary });
+    } catch (error) {
+      console.error("[survey-match] internal run failed:", error instanceof Error ? error.message : "unknown");
+      return res.status(500).json({ error: "Matching run failed" });
+    }
+  });
+
   /** Match state for every survey submission, plus counts for the filter chips. */
   app.get("/api/survey/matching/states", async (_req, res) => {
     try {

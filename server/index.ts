@@ -390,6 +390,10 @@ function resolveBuildInfo(): { commit: string; source: string } {
     // and it is what makes a double-attach impossible: one row per submission,
     // claimed atomically. Additive CREATE TABLE IF NOT EXISTS, no ALTER.
     await initSurveyAttachTable();
+    // Three strikes applies at once to surveys already refused nightly
+    // (server/survey/attach-strikes.ts). Never fatal to boot.
+    void import("./survey/attach-strikes").then((m) => m.sweepStrikes()).catch((e) =>
+      console.error(`[survey-attach] boot strike sweep failed: ${e instanceof Error ? e.message : "unknown"}`));
     await initActiveCountsTable();
     await initActiveCountOverridesTable();
     await initTnPatientsTable();

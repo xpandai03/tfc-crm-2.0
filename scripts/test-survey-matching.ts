@@ -210,10 +210,13 @@ ok("a single candidate never reports a provider tiebreak",
 console.log("\n[6] Two candidates the provider cannot separate go to review");
 expect("no therapist named -> multiple_candidates",
   submit(jeffBase), COUPLES, { status: "review", reason: "multiple_candidates", contactId: null });
-expect("both assigned to the same therapist -> provider_ambiguous",
+// Same legal name + date of birth on both contacts, so not "two different
+// patients": since 2026-10-07 that is duplicate_contact (provider_ambiguous is
+// kept for different people who both carry the therapist).
+expect("both assigned to the same therapist -> duplicate_contact",
   submit({ ...jeffBase, provider: "Anna Aldridge (ABQ)" }),
   [JEFF_INDIVIDUAL, contact({ ...JEFF_COUPLE, assignedProvider: "Anna Aldridge" })],
-  { status: "review", reason: "provider_ambiguous", contactId: null });
+  { status: "review", reason: "duplicate_contact", contactId: null });
 expect("neither has an assignment -> provider_no_match",
   submit({ ...jeffBase, provider: "Anna Aldridge (ABQ)" }),
   [contact({ ...JEFF_INDIVIDUAL, assignedProvider: null }), contact({ ...JEFF_COUPLE, assignedProvider: null })],

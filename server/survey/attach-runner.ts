@@ -26,6 +26,7 @@ import { SURVEY_FORM_TYPE } from "@shared/survey-questions";
 import { logActivity } from "../activity/db";
 import { getMatchState, markAttachRefusalForReview } from "./match-db";
 import { reviewReasonForAttachRefusal } from "@shared/survey-match-reasons";
+import { applyStrikeRule, isStrikeCode, sweepStrikes } from "./attach-strikes";
 import {
   claimAttach,
   getAttachRow,
@@ -464,6 +465,17 @@ export async function attachOne(params: {
     },
   }).catch((e) => console.error("[survey-attach] activity write failed:", e instanceof Error ? e.message : "unknown"));
 
+  // THREE STRIKES. A nightly refusal on an ambiguous code is transient — until
+  // it is the third night in a row with that code (./attach-strikes.ts). Read
+  // after the activity row above, so tonight's attempt is in the count.
+  if (status === "failed" && trigger === "scheduled" && !sentToReview && isStrikeCode(reason)) {
+    try {
+      if (await applyStrikeRule(submissionId)) sentToReview = true;
+    } catch (e) {
+      console.error(`[survey-attach] strike check failed id=${submissionId}: ${e instanceof Error ? e.message : "unknown"}`);
+    }
+  }
+
   console.log(
     `[survey-attach] ${status.toUpperCase()} id=${submissionId} ` +
     `${reason ? `reason=${reason} ` : ""}ms=${durationMs}` +
@@ -525,6 +537,10 @@ export async function runScheduledAttach(cap: number = ATTACH_BATCH_CAP): Promis
     considered: 0, eligible: 0, attempted: 0, attached: 0, failed: 0, deferred: 0, toReview: 0,
     byReason: {},
   };
+
+  // Rows already at three strikes leave the queue before it is built.
+  await sweepStrikes().catch((e) =>
+    console.error(`[survey-attach] strike sweep failed: ${e instanceof Error ? e.message : "unknown"}`));
 
   const { ready, totalEligible } = await findAttachable(cap);
   summary.eligible = totalEligible;

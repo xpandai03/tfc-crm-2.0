@@ -10,6 +10,7 @@
  * Pure: no database. NO PHI — every patient identity here is invented; the
  * clinician names are staff names.
  */
+import { groupTnPatients } from "../server/therapy-notes/tn-patient-groups";
 import { readFileSync } from "fs";
 import { join } from "path";
 import {
@@ -18,7 +19,7 @@ import {
   surveyTherapistToTnClinician,
   toTherapyNotesClinicianName,
 } from "../server/providers/tn-clinician-name";
-import { matchSubmission, type ContactIdentity, type SubmittedIdentity } from "../server/survey/matching";
+import { collapseIdentities, matchSubmission, type ContactIdentity, type SubmittedIdentity } from "../server/survey/matching";
 import { buildAttachBody } from "../server/survey/attach-runner";
 
 let pass = 0, fail = 0;
@@ -96,8 +97,19 @@ r = matchSubmission(survey("Tyra Jones (ABQ)"), [crm(7001, "Tyra Jones, LMHC"), 
 eq("...with a credential on the assignment", [r.status, r.contactId], ["matched", 7001]);
 r = matchSubmission(survey("Danya Estrada (RR)"), [tn(0, "ZZCHART3", ["Danya Estrada-Rivera"]), tn(0, "ZZCHART4", ["Ty Jones"])]);
 eq("Danya Estrada finds her hyphenated chart name", [r.status, r.chartId], ["matched", "ZZCHART3"]);
-r = matchSubmission(survey("Tyra Jones (ABQ)"), [tn(0, "ZZCHART1", ["Ty Jones"]), tn(0, "ZZCHART2", ["Ty Jones"])]);
-eq("two candidates under the same clinician: still refused", [r.status, r.reason], ["review", "provider_ambiguous"]);
+// Two charts of ONE person under the same clinician, built as production builds
+// them (rows grouped by legal name + DOB): a true duplicate chart (2026-10-07).
+{
+  const g = groupTnPatients([
+    { chartId: "ZZCHART1", name: "Zzsame Zzperson", dob: "1990-01-02", phone: "", clinicians: ["Ty Jones"] },
+    { chartId: "ZZCHART2", name: "Zzsame Zzperson", dob: "1990-01-02", phone: "", clinicians: ["Ty Jones"] },
+  ]).map((x): ContactIdentity => ({
+    contactId: null, name: x.name, email: null, phone: null, patientDob: x.dob, chartId: x.chartIds[0],
+    chartIds: x.chartIds, clinicians: x.clinicians, duplicateClinicians: x.duplicateClinicians, patientKey: x.patientKey,
+  }));
+  r = matchSubmission(survey("Tyra Jones (ABQ)"), collapseIdentities([], g));
+}
+eq("two charts under the same clinician: still refused, as a duplicate chart", [r.status, r.reason], ["review", "duplicate_chart"]);
 r = matchSubmission(survey("Tyra Jones (ABQ)"), [crm(7001, "Tyra"), crm(7002, "Liz Lopez")]);
 eq("a bare-first-name assignment does not break the tie", [r.status, r.reason], ["review", "provider_no_match"]);
 r = matchSubmission(survey("Zzunknown Clinician (ABQ)"), [tn(0, "ZZCHART1", ["Ty Jones"]), tn(0, "ZZCHART2", ["Liz Lopez"])]);

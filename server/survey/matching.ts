@@ -108,6 +108,18 @@ export interface ContactIdentity {
   clinicians?: string[];
   /** Where this identity came from. Reported so a match can say which. */
   source?: "crm" | "therapynotes";
+  /**
+   * THE PERSON: legal name + date of birth (patientKey). Identities sharing it
+   * are one person however many rows or records carry them. Computed from
+   * name + patientDob when absent.
+   */
+  patientKey?: string | null;
+  /** Every chart id seen for this person. ADVISORY — ids change between page loads. */
+  chartIds?: string[];
+  /** Clinicians this person is listed under on more than one chart: a true duplicate. */
+  duplicateClinicians?: string[];
+  /** Further phones on the person's TherapyNotes rows, for corroboration only. */
+  altPhones?: string[];
 }
 
 /** The identity a client typed into the survey. */
@@ -316,6 +328,56 @@ export function nameKeys(raw: string | null | undefined): string[] {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// The person: legal name + date of birth (2026-10-07)
+// ---------------------------------------------------------------------------
+
+/**
+ * The LEGAL reading of a name.
+ *
+ * TherapyNotes renders a patient with a preferred name as "Preferred (Legal)
+ * Last" (recon, 2026-09-21: 186 of 1,043 rows, every one of that shape; the
+ * practice uses "Minor" as the preferred name on children's records). So a
+ * parenthesised group that has words AFTER it holds the legal given name, and
+ * the legal reading is that group plus the words after it. A trailing group
+ * annotates and is ignored; a name with no group is its own legal reading.
+ *
+ * This is the reading people are GROUPED on — not the matching rule. Matching
+ * still compares every reading (nameKeys). Grouping on a preferred-name
+ * reading would fold two children both rendered "Minor (…) <Last>" with one
+ * birthday — twins — into one person.
+ *
+ *   "Minor (Rowan) Thistlewood" -> "rowan thistlewood"
+ *   "Rosalind Ashgrove (dad)"    -> "ashgrove rosalind"
+ *   "Ashgrove, Rosalind"         -> "ashgrove rosalind"
+ */
+export function legalNameKey(raw: string | null | undefined): string {
+  const s = String(raw ?? "");
+  const segments: { group: boolean; toks: string[] }[] = [];
+  const re = /\(([^)]*)\)/g;
+  let pos = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) !== null) {
+    if (m.index > pos) segments.push({ group: false, toks: nameTokens(s.slice(pos, m.index)) });
+    segments.push({ group: true, toks: nameTokens(m[1]) });
+    pos = m.index + m[0].length;
+  }
+  if (pos < s.length) segments.push({ group: false, toks: nameTokens(s.slice(pos)) });
+  for (let i = 0; i < segments.length; i++) {
+    if (!segments[i].group || segments[i].toks.length === 0) continue;
+    const after = segments.slice(i + 1).filter((x) => !x.group).flatMap((x) => x.toks);
+    if (after.length > 0) return [...segments[i].toks, ...after].sort().join(" ");
+  }
+  return nameKey(s);
+}
+
+/** legal name + date of birth, or null when either is missing or unreadable. */
+export function patientKey(name: string | null | undefined, dob: string | null | undefined): string | null {
+  const n = legalNameKey(name);
+  const d = canonicalDob(dob);
+  return n && d ? `${n}|${d}` : null;
+}
+
 /**
  * Two names agree when their reading sets INTERSECT.
  *
@@ -404,12 +466,12 @@ export function providerKey(raw: string | null | undefined): string {
  * A family uses one number and one address, so "this value belongs to someone
  * else" is only true when it belongs to nobody among the candidates.
  */
-function ownersOf<T>(
+function ownersOf(
   contacts: ContactIdentity[],
-  key: T,
-  keyOf: (c: ContactIdentity) => T | null,
+  key: string,
+  keysOf: (c: ContactIdentity) => (string | null)[],
 ): ContactIdentity[] {
-  return contacts.filter((c) => keyOf(c) === key);
+  return contacts.filter((c) => keysOf(c).includes(key));
 }
 
 /**
@@ -436,17 +498,24 @@ function ownersOf<T>(
  * without widening the key.
  */
 function identityKey(c: ContactIdentity): string {
-  return c.contactId !== null ? `c:${c.contactId}` : `t:${c.chartId ?? ""}`;
+  // A TherapyNotes-only identity is one PERSON (see patientOf), whose chart ids
+  // are advisory; the person key is the stable one.
+  return c.contactId !== null ? `c:${c.contactId}` : `t:${c.patientKey ?? c.chartId ?? ""}`;
+}
+
+/** The person an identity is: its patientKey, computed when not carried. */
+function patientOf(c: ContactIdentity): string {
+  return c.patientKey ?? patientKey(c.name, c.patientDob) ?? identityKey(c);
 }
 
 function corroboration(
   candidates: ContactIdentity[],
   contacts: ContactIdentity[],
   submittedKey: string | null,
-  keyOf: (c: ContactIdentity) => string | null,
+  keysOf: (c: ContactIdentity) => (string | null)[],
 ): { verdict: "unknown" | "corroborates" | "contradicts"; owners: ContactIdentity[] } {
   if (!submittedKey) return { verdict: "unknown", owners: [] };
-  const owners = ownersOf(contacts, submittedKey, keyOf);
+  const owners = ownersOf(contacts, submittedKey, keysOf);
   if (owners.length === 0) return { verdict: "unknown", owners: [] };
   const ids = new Set(owners.map(identityKey));
   const corroborates = candidates.some((c) => ids.has(identityKey(c)));
@@ -456,10 +525,13 @@ function corroboration(
 /**
  * One identity per person, across both populations.
  *
- * THE LINK IS THE CHART ID, AND IT IS THE ONLY LINK. A CRM contact that carries
- * one is the same person as the TherapyNotes patient with that chart; a contact
- * without one cannot be linked and stays separate. There is no name-based
- * merging here — that would be a second, fuzzier matcher hiding inside this one.
+ * TWO LINKS (2026-10-07). A contact carrying one of the person's chart ids is
+ * that person; so is the ONE contact with the same legal name + date of birth
+ * (patientKey) — the matcher's own bar, exact after normalisation, not a fuzzier
+ * one. Chart ids alone stopped being enough when they turned out to change
+ * between page loads: a contact linked last week no longer met tonight's row,
+ * and one person arrived as two candidates. Two contacts with one key are a CRM
+ * duplicate; neither is folded, and the matcher says so.
  *
  * The CRM row WINS the merge and absorbs the TherapyNotes fields. That order is
  * deliberate: the contact id is what the review queue, the attach flow and every
@@ -475,30 +547,46 @@ export function collapseIdentities(
   crm: ContactIdentity[],
   tn: ContactIdentity[],
 ): ContactIdentity[] {
+  const out: ContactIdentity[] = crm.map((c) => ({
+    ...c, source: "crm" as const, patientKey: c.patientKey ?? patientKey(c.name, c.patientDob),
+  }));
   const byChart = new Map<string, ContactIdentity>();
-  crm.forEach((c) => {
+  const byPerson = new Map<string, ContactIdentity[]>();
+  out.forEach((c) => {
     const id = (c.chartId ?? "").trim();
     if (id) byChart.set(id, c);
+    if (c.patientKey) byPerson.set(c.patientKey, [...(byPerson.get(c.patientKey) ?? []), c]);
   });
+  const folded = new Set<ContactIdentity>();
 
-  const out: ContactIdentity[] = crm.map((c) => ({ ...c, source: "crm" as const }));
   for (const t of tn) {
-    const id = (t.chartId ?? "").trim();
-    const linked = id ? byChart.get(id) : undefined;
+    const chartIds = t.chartIds && t.chartIds.length > 0 ? t.chartIds : [t.chartId ?? ""].filter(Boolean);
+    // 1. A contact linked to ANY of this person's charts. The link is advisory
+    //    (ids move between page loads), so it is one way in, not the only one.
+    let linked = chartIds.map((id) => byChart.get(id.trim())).find((c) => c && !folded.has(c));
+    // 2. Otherwise THE contact for this person: exactly one CRM contact with the
+    //    same legal name + date of birth. Two such contacts are a duplicate in
+    //    the CRM and are left alone — the matcher reports duplicate_contact.
+    const tKey = t.patientKey ?? patientKey(t.name, t.patientDob);
+    if (!linked && tKey) {
+      const same = byPerson.get(tKey) ?? [];
+      if (same.length === 1 && !folded.has(same[0])) linked = same[0];
+    }
     if (linked) {
-      // Same person. Fold the TherapyNotes fields onto the CRM row rather than
-      // adding a second candidate. The contact's own name, date of birth and
-      // phone are left alone: they are what staff maintain, and the EHR copy is
-      // here to make the person FINDABLE, not to overwrite them.
-      const merged = out.find((c) => c.contactId === linked.contactId);
-      if (merged) {
-        merged.chartId = id;
-        merged.clinicians = t.clinicians ?? [];
-        merged.source = "crm";
-      }
+      // Same person. The CRM row wins and absorbs the TherapyNotes fields; the
+      // contact's own name, date of birth and phone are left alone.
+      folded.add(linked);
+      const ownChart = (linked.chartId ?? "").trim();
+      linked.chartId = ownChart && chartIds.includes(ownChart) ? ownChart : (chartIds[0] ?? ownChart) || null;
+      linked.chartIds = chartIds;
+      linked.clinicians = t.clinicians ?? [];
+      linked.duplicateClinicians = t.duplicateClinicians ?? [];
+      linked.altPhones = [t.phone ?? "", ...(t.altPhones ?? [])].filter(Boolean);
+      linked.patientKey = linked.patientKey ?? tKey ?? null;
+      linked.source = "crm";
       continue;
     }
-    out.push({ ...t, source: "therapynotes" as const });
+    out.push({ ...t, chartIds, patientKey: tKey, source: "therapynotes" as const });
   }
   return out;
 }
@@ -546,8 +634,12 @@ function providerMatches(c: ContactIdentity, wanted: string): boolean {
  *      those contacts
  *   4. the typed email, if it is on record at all, belongs to at least one of
  *      those contacts
- *   5. EXACTLY ONE contact survives — or, where several do, exactly one of them
- *      is assigned to the therapist the survey named
+ *   5. EXACTLY ONE PERSON survives — each CRM contact is one, a TherapyNotes
+ *      patient is one however many per-clinician rows it came from, and a
+ *      TherapyNotes patient with the same legal name + date of birth as a CRM
+ *      candidate is that contact's chart — or, where several people survive,
+ *      exactly one of them is assigned to the therapist the survey named. A
+ *      person listed twice under one clinician in TherapyNotes goes to review
  *
  * Anything else returns "review", with a reason naming the criterion that
  * decided it.
@@ -612,7 +704,8 @@ export function matchSubmission(
   }
 
   // --- 2. Phone. Corroborates or contradicts; never narrows.
-  const phone = corroboration(candidates, contacts, phoneKey(submitted.phone), (c) => phoneKey(c.phone));
+  const phone = corroboration(candidates, contacts, phoneKey(submitted.phone),
+    (c) => [phoneKey(c.phone), ...(c.altPhones ?? []).map(phoneKey)]);
   if (phone.verdict === "contradicts") {
     // Name + date of birth point one way, the number points at someone else.
     // Resolving that by precedence would be choosing which evidence to ignore.
@@ -626,7 +719,7 @@ export function matchSubmission(
   }
 
   // --- 3. Email. Identical treatment.
-  const email = corroboration(candidates, contacts, emailKey(submitted.email), (c) => emailKey(c.email));
+  const email = corroboration(candidates, contacts, emailKey(submitted.email), (c) => [emailKey(c.email)]);
   if (email.verdict === "contradicts") {
     return {
       status: "review",
@@ -637,49 +730,80 @@ export function matchSubmission(
     };
   }
 
-  // --- 4. One survivor, or the provider separates them.
-  if (candidates.length === 1) {
-    return {
-      status: "matched",
-      reason: matchedReasonFor(phone.verdict === "corroborates", email.verdict === "corroborates"),
-      contactId: candidates[0].contactId,
-      chartId: candidates[0].chartId ?? null,
-      candidateIds: dedupeIds([candidates[0]]),
-    };
+  // --- 4. One PERSON, or the provider separates people.
+  //
+  // WHO COUNTS AS A PERSON HERE (2026-10-07). Every CRM contact is one — two
+  // contacts with one name and date of birth can be different records on
+  // purpose (the couples case: a partner's individual record and the couple's
+  // record share every identity field). A TherapyNotes patient is one person
+  // however many per-clinician rows it came from (grouped upstream), and when a
+  // CRM candidate carries the same legal name + date of birth it is that
+  // contact's chart, not another person — so it never makes a tie. Ambiguity
+  // between rows of one patient is gone; the provider breaks a tie only
+  // between different people.
+  const wanted = surveyTherapistToTnClinician(submitted.provider);
+  const crmPeople = candidates.filter((c) => c.contactId !== null);
+  const crmKeys = new Set(crmPeople.map(patientOf));
+  const tnPeople = candidates.filter((c) => c.contactId === null && !crmKeys.has(patientOf(c)));
+  const people = [...crmPeople, ...tnPeople];
+  const chartsFor = (person: ContactIdentity) =>
+    candidates.filter((c) => c.contactId === null && patientOf(c) === patientOf(person));
+
+  if (people.length === 1) {
+    return resolvePerson(people[0], chartsFor(people[0]), wanted,
+      matchedReasonFor(phone.verdict === "corroborates", email.verdict === "corroborates"));
   }
 
-  // More than one contact agrees on everything checkable. 126 contacts share
-  // both a name and a date of birth with another contact — largely duplicate
-  // records — and a couple recorded under one TherapyNotes account shares every
-  // field above as well. This is the ONE place a tie is broken, and only the
-  // provider breaks it.
-  const wanted = surveyTherapistToTnClinician(submitted.provider);
   const allIds = dedupeIds(candidates);
-
   if (!wanted) {
     return { status: "review", reason: "multiple_candidates", contactId: null, chartId: null, candidateIds: allIds };
   }
 
-  const withProvider = candidates.filter((c) => providerMatches(c, wanted));
-
+  // A contact's own assignment, plus its chart's clinicians when the chart is
+  // unambiguously its own (folded upstream, so already on the contact).
+  const withProvider = people.filter((c) => providerMatches(c, wanted));
   if (withProvider.length === 1) {
-    return {
-      status: "matched",
-      reason: "name_dob_provider",
-      contactId: withProvider[0].contactId,
-      chartId: withProvider[0].chartId ?? null,
-      candidateIds: dedupeIds([withProvider[0]]),
-    };
+    return resolvePerson(withProvider[0], chartsFor(withProvider[0]), wanted, "name_dob_provider");
   }
 
-  // Named a therapist none of them sees, or one that several of them see.
-  // Either way the tie stands, and a tie that stands is a human's to settle.
+  // Several people carry the therapist. When they are all CRM contacts for ONE
+  // legal name + date of birth, that is a CRM duplicate (or a couple's records
+  // under one therapist) — say so rather than "ambiguous".
+  const sameKeyContacts = withProvider.length > 1 && withProvider.every((c) => c.contactId !== null) &&
+    new Set(withProvider.map(patientOf)).size === 1;
   return {
     status: "review",
-    reason: withProvider.length === 0 ? "provider_no_match" : "provider_ambiguous",
+    reason: withProvider.length === 0 ? "provider_no_match" : sameKeyContacts ? "duplicate_contact" : "provider_ambiguous",
     contactId: null,
     chartId: null,
     candidateIds: allIds,
+  };
+}
+
+/**
+ * One person. Matched — unless TherapyNotes lists them twice under the same
+ * clinician (a true duplicate chart), which goes to a human.
+ */
+function resolvePerson(
+  person: ContactIdentity,
+  charts: ContactIdentity[],
+  _wanted: string,
+  reason: MatchReason,
+): MatchOutcome {
+  const all = [person, ...charts];
+  if (all.some((c) => (c.duplicateClinicians ?? []).length > 0)) {
+    return { status: "review", reason: "duplicate_chart", contactId: null, chartId: null, candidateIds: dedupeIds([person]) };
+  }
+  // The chart id is ADVISORY: ids change between page loads, the CRM no longer
+  // sends one to the agent (fb1ffc4) and the agent selects by name + date of
+  // birth. It is recorded for reference, nothing more.
+  const chart = person.chartId ?? all.find((c) => c.chartId)?.chartId ?? null;
+  return {
+    status: "matched",
+    reason,
+    contactId: person.contactId,
+    chartId: chart,
+    candidateIds: dedupeIds([person]),
   };
 }
 
