@@ -101,6 +101,15 @@ async function main() {
   eq("applyStrikeRule after tonight's refusal moves it", (await strikes.applyStrikeRule(TWO))?.reason, "attach_repeated_patient_not_found");
   eq("…and it is in review", await state(TWO), ["review", "attach_repeated_patient_not_found"]);
 
+  console.log("\n[5] Clearing a stale review row, with a note");
+  await matchDb.markAttachRefusalForReview({ submissionId: RESET, reason: "attach_chart_not_in_search" });
+  await matchDb.recordHumanResolution({ submissionId: RESET, contactId: null, actorEmail: "ops (sync key)", note: "filed Oct 1; review cleared" });
+  const cleared = await matchDb.getMatchState(RESET);
+  eq("out of review, as no contact, with the note", [cleared?.status, cleared?.reason],
+    ["no_contact", "Confirmed by staff: no matching contact; filed Oct 1; review cleared"]);
+  await matched(RESET);
+  eq("the 03:00 re-match leaves a human resolution alone", (await matchDb.getMatchState(RESET))?.status, "no_contact");
+
   await pool.query(`DELETE FROM survey_match_reviews WHERE submission_id = ANY($1)`, [IDS]);
   await pool.query(`DELETE FROM survey_attach_attempts WHERE submission_id = ANY($1)`, [IDS]);
   await pool.query(`DELETE FROM activity_log WHERE entity_type = 'submission' AND entity_id = ANY($1)`, [IDS.map(String)]);
