@@ -167,8 +167,13 @@ eq("strips a trailing office", providerNameFromLabel("Amanda Davison (Corp)"), "
 eq("tolerates a label with no office", providerNameFromLabel("Blank Office"), "Blank Office");
 eq("tolerates an empty label", providerNameFromLabel(""), "");
 // Submission 3's label says (Corp); the roster says ABQ. The name matched.
-eq("Amanda resolves despite a stale office in the label", provider("Amanda Davison").surveyCount, 1);
-eq("...and takes her office from the roster, not the label", provider("Amanda Davison").office, "ABQ");
+// Since 2026-10 the STORED label wins: a survey stores no other location, and
+// the practice asked that moving a provider never move their old surveys. So
+// the office is the label's code, and she has a Corp bucket of her own.
+const amandaRows = r.providers.filter((p) => p.name === "Amanda Davison");
+eq("Amanda resolves despite the roster saying another office", amandaRows.reduce((n, p) => n + p.surveyCount, 0), 1);
+eq("...and counts under the office in her stored label, not the roster",
+  amandaRows.filter((p) => p.surveyCount > 0).map((p) => p.office), ["CORP"]);
 
 // ===========================================================================
 console.log("\n[5] A departed provider counts but gets no tab");
@@ -309,7 +314,9 @@ check("...nor does it reach the telehealth breakdown",
 console.log("\n[12] Offices are derived from the data, in template order");
 eq("offices present, unknown last", r.offices, ["ABQ", "LL", "RR", UNKNOWN_OFFICE]);
 check("no Corp bucket is invented", r.offices.indexOf("Corp") === -1);
-eq("every active provider appears", r.providers.length, 8);
+eq("every active provider appears", new Set(r.providers.map((p) => p.providerId)).size, 8);
+// Amanda D has a second row: her stored (Corp) label puts that survey under Corp.
+eq("...with one extra row for a survey stored under another office", r.providers.length, 9);
 
 // ===========================================================================
 console.log("\n[13] The shape the 32 stored submissions actually have");

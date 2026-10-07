@@ -33,6 +33,7 @@ import {
   defaultDocumentName,
   sniffDocumentType,
   tooLargeMessage,
+  validateDocumentName,
   type DocumentMimeType,
 } from "@shared/contact-documents";
 import { getSyncContactById, type SyncContact } from "../sync/db";
@@ -42,6 +43,7 @@ import {
   getContactDocumentContent,
   insertContactDocument,
   listContactDocuments,
+  renameContactDocument,
   sha256Hex,
   softDeleteContactDocument,
 } from "./db";
@@ -334,6 +336,43 @@ export function registerContactDocumentRoutes(app: Express): void {
     } catch (error) {
       console.error("[contact-documents] serve failed:", error instanceof Error ? error.message : "unknown");
       return res.status(500).json({ error: "Failed to load the document" });
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // Rename — the name only; the file, its source and its audit fields stay
+  // --------------------------------------------------------------------------
+  app.patch("/api/contact/:contactId/documents/:documentId", async (req, res) => {
+    try {
+      const contact = await canViewContactDocuments(req, res);
+      if (!contact) return;
+      const documentId = documentIdOf(req, res);
+      if (!documentId) return;
+      const checked = validateDocumentName(req.body?.name);
+      if (!checked.ok) return res.status(400).json({ error: "invalid_name", message: checked.message });
+      const user = userOf(req)!;
+      const result = await renameContactDocument(contact.contactId, documentId, checked.name);
+      if (!result) return res.status(404).json({ error: "Document not found" });
+      if (result.previousName !== checked.name) {
+        await logActivity({
+          type: "document_renamed",
+          actorEmail: user.email!,
+          entityType: "contact",
+          entityId: String(contact.contactId),
+          entityName: contact.name,
+          metadata: {
+            documentId: result.document.id,
+            from: result.previousName,
+            name: result.document.displayName,
+            source: result.document.source,
+          },
+        });
+        console.log(`[contact-documents] renamed id=${result.document.id} contact=${contact.contactId}`);
+      }
+      return res.json({ document: result.document, renamed: result.previousName !== checked.name });
+    } catch (error) {
+      console.error("[contact-documents] rename failed:", error instanceof Error ? error.message : "unknown");
+      return res.status(500).json({ error: "Failed to rename the document" });
     }
   });
 

@@ -1,5 +1,5 @@
 /**
- * Documents on a contact — upload, view, download, remove.
+ * Documents on a contact — upload, view, download, rename, remove.
  *
  * Sits in the contact page's right column just above the Intake Summary (which
  * holds the intake PDF download). Collapsed by default with a count, because
@@ -9,7 +9,7 @@
  */
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Download, Eye, FolderOpen, Loader2, Trash2, Upload } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Download, Eye, FolderOpen, Loader2, Pencil, Trash2, Upload, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,12 +33,14 @@ import {
   defaultDocumentName,
   formatDocumentSize,
   tooLargeMessage,
+  validateDocumentName,
   type ContactDocument,
 } from "@shared/contact-documents";
 import {
   documentContentUrl,
   listContactDocuments,
   removeContactDocument,
+  renameContactDocument,
   uploadContactDocument,
 } from "@/lib/api";
 
@@ -63,6 +65,8 @@ export function ContactDocumentsCard({ contactId }: { contactId: number }) {
   const [name, setName] = useState("");
   const [fileError, setFileError] = useState<string | null>(null);
   const [toRemove, setToRemove] = useState<ContactDocument | null>(null);
+  // Rename: one row at a time, edited in place.
+  const [renaming, setRenaming] = useState<{ id: number; name: string } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const queryKey = ["/api/contact", contactId, "documents"];
@@ -107,6 +111,28 @@ export function ContactDocumentsCard({ contactId }: { contactId: number }) {
       toast({ title: "Could not remove the document", description: err.message, variant: "destructive" });
     },
   });
+
+  const renameMutation = useMutation({
+    mutationFn: (v: { id: number; name: string }) => renameContactDocument(contactId, v.id, v.name),
+    onSuccess: (res) => {
+      if (res.renamed) toast({ title: "Document renamed", description: res.document.displayName });
+      setRenaming(null);
+      refresh();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Could not rename the document", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const saveRename = () => {
+    if (!renaming) return;
+    const checked = validateDocumentName(renaming.name);
+    if (!checked.ok) {
+      toast({ title: "Could not rename the document", description: checked.message, variant: "destructive" });
+      return;
+    }
+    renameMutation.mutate({ id: renaming.id, name: checked.name });
+  };
 
   const onPick = (picked: File | null) => {
     setFileError(null);
@@ -163,7 +189,33 @@ export function ContactDocumentsCard({ contactId }: { contactId: number }) {
               {documents.map((d) => (
                 <li key={d.id} className="rounded-md border border-border p-2 text-xs space-y-1" data-testid={`document-${d.id}`}>
                   <div className="flex items-start justify-between gap-2">
-                    <span className="font-medium text-foreground break-words min-w-0">{d.displayName}</span>
+                    {renaming?.id === d.id ? (
+                      <form
+                        className="flex items-center gap-1 min-w-0 flex-1"
+                        onSubmit={(e) => { e.preventDefault(); saveRename(); }}
+                      >
+                        <Input
+                          autoFocus
+                          value={renaming.name}
+                          maxLength={DOCUMENT_NAME_MAX}
+                          onChange={(e) => setRenaming({ id: d.id, name: e.target.value })}
+                          onKeyDown={(e) => { if (e.key === "Escape") setRenaming(null); }}
+                          className="h-7 text-xs"
+                          aria-label="Document name"
+                          data-testid={`input-rename-document-${d.id}`}
+                        />
+                        <Button type="submit" variant="ghost" size="sm" className="h-7 px-1.5" disabled={renameMutation.isPending}
+                          aria-label="Save name" data-testid={`button-save-rename-${d.id}`}>
+                          {renameMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                        </Button>
+                        <Button type="button" variant="ghost" size="sm" className="h-7 px-1.5" onClick={() => setRenaming(null)}
+                          aria-label="Cancel rename">
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </form>
+                    ) : (
+                      <span className="font-medium text-foreground break-words min-w-0">{d.displayName}</span>
+                    )}
                     <span className="shrink-0 text-muted-foreground">
                       {DOCUMENT_TYPE_LABEL[d.mimeType] ?? d.mimeType} · {formatDocumentSize(d.sizeBytes)}
                     </span>
@@ -198,6 +250,14 @@ export function ContactDocumentsCard({ contactId }: { contactId: number }) {
                       <a href={documentContentUrl(contactId, d.id, "attachment")} data-testid={`link-download-document-${d.id}`}>
                         <Download className="h-3 w-3 mr-1" /> Download
                       </a>
+                    </Button>
+                    <Button
+                      variant="ghost" size="sm" className="h-7 px-2 text-xs"
+                      onClick={() => setRenaming({ id: d.id, name: d.displayName })}
+                      disabled={renaming?.id === d.id}
+                      data-testid={`button-rename-document-${d.id}`}
+                    >
+                      <Pencil className="h-3 w-3 mr-1" /> Rename
                     </Button>
                     <Button
                       variant="ghost" size="sm"

@@ -1268,7 +1268,7 @@ export default function ContactDetail() {
       // Merge activity_log events (emails, TN, etc.) into timeline.
       // Preserve `email_sent` type so the violet Mail icon + Download Snapshot button render.
       const activityEvents: TimelineEvent[] = contactActivities
-        .filter(a => ["email_sent", "therapy_notes_started", "therapy_notes_created", "therapy_notes_failed", "contact_updated", "contact_hold_set", "contact_hold_cleared", "document_uploaded", "document_removed"].includes(a.type))
+        .filter(a => ["email_sent", "therapy_notes_started", "therapy_notes_created", "therapy_notes_failed", "contact_updated", "contact_hold_set", "contact_hold_cleared", "document_uploaded", "document_removed", "document_renamed"].includes(a.type))
         .map((a): TimelineEvent => {
           const isEmail = a.type === "email_sent";
           const templateId = isEmail ? (a.metadata?.template as string | undefined) ?? null : null;

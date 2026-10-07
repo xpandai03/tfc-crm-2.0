@@ -169,6 +169,16 @@ export async function initRemindersTable(): Promise<void> {
 
   await seedProviderShortNames();
 
+  // Survey offices (shared/survey-locations.ts): where a provider appears on the
+  // client survey and its reports, separate from `location`, which provider
+  // matching reads. NULL = same as location. Additive + idempotent, on boot.
+  try {
+    await pool.query(`ALTER TABLE crm_providers ADD COLUMN IF NOT EXISTS survey_locations TEXT[]`);
+  } catch (e) {
+    console.error("[reminders-db] crm_providers.survey_locations column migration FAILED:", e);
+  }
+  await seedSurveyLocations();
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS provider_overrides (
       id SERIAL PRIMARY KEY,
@@ -539,6 +549,8 @@ export interface CrmProvider {
   email: string | null;    // Phase 1: universal join key (UNIQUE on lower(email)). NULL = not captured yet.
   /** Survey-workbook tab name. NULL = none set; read via providerShortName(). */
   shortName: string | null;
+  /** Survey offices. NULL or [] = same as location; read via surveyOfficesFor(). */
+  surveyLocations: string[] | null;
   specialties: string[];   // stored as JSON array
   ageGroups: string[];     // stored as JSON array
   insurances: string[];    // stored as JSON array
@@ -552,6 +564,8 @@ export interface CreateCrmProviderParams {
   name: string;
   credentials?: string;
   location?: string;
+  /** Survey offices; [] clears back to "same as location". Validated by the route. */
+  surveyLocations?: string[];
   email?: string;
   specialties?: string[];
   ageGroups?: string[];
@@ -588,6 +602,55 @@ function normalizeEmailForStorage(email: string | undefined | null): string | nu
  * Failure is logged and swallowed, like the migrations above it: a seed that
  * cannot run must not stop the server from booting.
  */
+/**
+ * Survey offices the practice asked for on 2026-10-06. Data, not logic: every
+ * reader goes through surveyOfficesFor(), and these values are editable on the
+ * provider's edit dialog afterwards.
+ *   Amanda Plotner — Los Lunas and now Albuquerque too (LL keeps her caseload)
+ *   Sandra Rivera, Amanda Davison — Corp
+ * Applied ONCE: skipped as soon as any provider has survey_locations set
+ * (clearing in the UI stores [], never NULL, so a cleared row stays cleared).
+ */
+const SURVEY_LOCATION_SEED: Record<string, string[]> = {
+  "Amanda Plotner": ["LL", "ABQ"],
+  "Sandra Rivera": ["CORP"],
+  "Amanda Davison": ["CORP"],
+};
+
+async function seedSurveyLocations(): Promise<void> {
+  const pool = getPool();
+  try {
+    const { rows } = await pool.query(
+      `SELECT EXISTS (SELECT 1 FROM crm_providers WHERE survey_locations IS NOT NULL) AS seeded`,
+    );
+    if (rows[0]?.seeded) return;
+    let applied = 0;
+    const skipped: string[] = [];
+    for (const [name, codes] of Object.entries(SURVEY_LOCATION_SEED)) {
+      const { rows: countRows } = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM crm_providers WHERE name = $1`,
+        [name],
+      );
+      const n = countRows[0]?.n ?? 0;
+      if (n !== 1) {
+        skipped.push(`${name} (matched ${n} rows)`);
+        continue;
+      }
+      const res = await pool.query(
+        `UPDATE crm_providers SET survey_locations = $1, updated_at = NOW() WHERE name = $2 AND survey_locations IS NULL`,
+        [codes, name],
+      );
+      applied += res.rowCount ?? 0;
+    }
+    console.log(`[crm-providers] Seeded survey_locations for ${applied}/${Object.keys(SURVEY_LOCATION_SEED).length} providers`);
+    if (skipped.length > 0) {
+      console.warn(`[crm-providers] survey_locations seed skipped: ${skipped.join("; ")}`);
+    }
+  } catch (e) {
+    console.error("[crm-providers] survey_locations seed FAILED:", e);
+  }
+}
+
 async function seedProviderShortNames(): Promise<void> {
   const pool = getPool();
   try {
@@ -635,7 +698,7 @@ async function seedProviderShortNames(): Promise<void> {
 export async function getAllCrmProviders(): Promise<CrmProvider[]> {
   const pool = getPool();
   const result = await pool.query(`
-    SELECT id, name, credentials, location, email, short_name, specialties, age_groups, insurances, notes,
+    SELECT id, name, credentials, location, email, short_name, survey_locations, specialties, age_groups, insurances, notes,
            is_active, created_at, updated_at
     FROM crm_providers
     WHERE is_active = true
@@ -649,6 +712,7 @@ export async function getAllCrmProviders(): Promise<CrmProvider[]> {
     location: row.location,
     email: row.email ?? null,
     shortName: row.short_name ?? null,
+    surveyLocations: row.survey_locations ?? null,
     specialties: JSON.parse(row.specialties || "[]"),
     ageGroups: JSON.parse(row.age_groups || "[]"),
     insurances: JSON.parse(row.insurances || "[]"),
@@ -680,7 +744,7 @@ export async function getCrmProviderById(id: number): Promise<CrmProvider | null
   const pool = getPool();
   const result = await pool.query(
     `
-    SELECT id, name, credentials, location, email, short_name, specialties, age_groups, insurances, notes,
+    SELECT id, name, credentials, location, email, short_name, survey_locations, specialties, age_groups, insurances, notes,
            is_active, created_at, updated_at
     FROM crm_providers WHERE id = $1
   `,
@@ -696,6 +760,7 @@ export async function getCrmProviderById(id: number): Promise<CrmProvider | null
     location: row.location,
     email: row.email ?? null,
     shortName: row.short_name ?? null,
+    surveyLocations: row.survey_locations ?? null,
     specialties: JSON.parse(row.specialties || "[]"),
     ageGroups: JSON.parse(row.age_groups || "[]"),
     insurances: JSON.parse(row.insurances || "[]"),
@@ -739,6 +804,7 @@ export async function updateCrmProvider(id: number, updates: Partial<CreateCrmPr
   if (updates.name !== undefined) { setClauses.push(`name = $${paramIndex++}`); values.push(updates.name.trim()); }
   if (updates.credentials !== undefined) { setClauses.push(`credentials = $${paramIndex++}`); values.push(updates.credentials.trim()); }
   if (updates.location !== undefined) { setClauses.push(`location = $${paramIndex++}`); values.push(updates.location.trim()); }
+  if (updates.surveyLocations !== undefined) { setClauses.push(`survey_locations = $${paramIndex++}`); values.push(updates.surveyLocations); }
   if (updates.email !== undefined) { setClauses.push(`email = $${paramIndex++}`); values.push(normalizeEmailForStorage(updates.email)); }
   if (updates.specialties !== undefined) { setClauses.push(`specialties = $${paramIndex++}`); values.push(JSON.stringify(updates.specialties)); }
   if (updates.ageGroups !== undefined) { setClauses.push(`age_groups = $${paramIndex++}`); values.push(JSON.stringify(updates.ageGroups)); }
@@ -798,7 +864,7 @@ export async function reactivateCrmProvider(id: number): Promise<boolean> {
 export async function getInactiveCrmProviders(): Promise<CrmProvider[]> {
   const pool = getPool();
   const result = await pool.query(`
-    SELECT id, name, credentials, location, email, short_name, specialties, age_groups, insurances, notes,
+    SELECT id, name, credentials, location, email, short_name, survey_locations, specialties, age_groups, insurances, notes,
            is_active, created_at, updated_at
     FROM crm_providers
     WHERE is_active = false
@@ -811,6 +877,7 @@ export async function getInactiveCrmProviders(): Promise<CrmProvider[]> {
     location: row.location,
     email: row.email ?? null,
     shortName: row.short_name ?? null,
+    surveyLocations: row.survey_locations ?? null,
     specialties: JSON.parse(row.specialties || "[]"),
     ageGroups: JSON.parse(row.age_groups || "[]"),
     insurances: JSON.parse(row.insurances || "[]"),

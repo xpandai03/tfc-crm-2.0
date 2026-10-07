@@ -28,11 +28,14 @@
  * answers to the same word, and the wrong one for a report about which office a
  * therapist sits in.
  *
- * THREE OFFICES, NOT FOUR. The live roster carries ABQ, LL and RR. The
- * template shows a Corp row with two providers; both are stored as ABQ, and
- * Corp cannot be entered in the CRM at all. Offices are therefore derived from
- * the roster rather than declared here, so if Corp ever comes back this layer
- * needs no edit.
+ * OFFICES COME FROM THE STORED LABEL. A survey stores its therapist as
+ * "Name (CODE)" and nothing else about place, so the office a survey counts
+ * under is that code (shared/survey-locations.ts officeFromLabel) — falling
+ * back to the provider's primary survey office only when the label carries no
+ * known code. Moving a provider (Sandra and Amanda D to CORP, 2026-10) never
+ * moves their old surveys, and a therapist offered at two offices (Amanda P,
+ * ABQ and LL) gets one bucket per office. Office order is the template's:
+ * Corp, ABQ, LL, RR.
  *
  * ONE DEFINITION OF THE INSTRUMENT
  * --------------------------------
@@ -47,6 +50,12 @@
  * MODALITY_SLOT_MIN/MAX.
  */
 
+import {
+  officeFromLabel,
+  primarySurveyOffice,
+  surveyOfficeRank,
+  surveyOfficesFor,
+} from "@shared/survey-locations";
 import {
   SATISFACTION_OPTIONS,
   YES_NO_NA_OPTIONS,
@@ -93,8 +102,6 @@ export const TELEHEALTH_BUCKET = "TH";
  */
 export const UNKNOWN_OFFICE = "";
 
-/** Office display order, matching the template. Anything else sorts after. */
-const OFFICE_ORDER = ["ABQ", "LL", "RR"];
 
 /** The five modality-specific choice questions for a variant, in slot order. */
 export function modalityQuestionsFor(variant: SurveyVariant): ChoiceQuestion[] {
@@ -102,6 +109,15 @@ export function modalityQuestionsFor(variant: SurveyVariant): ChoiceQuestion[] {
     (q): q is ChoiceQuestion =>
       q.kind === "choice" && q.slot >= MODALITY_SLOT_MIN && q.slot <= MODALITY_SLOT_MAX,
   );
+}
+
+/**
+ * The provider id whose TherapyNotes active-client count belongs on this row,
+ * or null. Every reader of activeCounts.byProviderId goes through this, so a
+ * provider at two offices is counted once.
+ */
+export function activeCountProviderId(p: Pick<ProviderAggregate, "providerId" | "ownsActiveCount">): number | null {
+  return p.ownsActiveCount ? p.providerId : null;
 }
 
 /** The four 0–10 rating questions. Identical across variants. */
@@ -158,6 +174,8 @@ export interface RosterEntry {
   shortName: string;
   /** crm_providers.location. "" when unset. */
   office: string;
+  /** crm_providers.survey_locations. NULL/[] = same as office. */
+  surveyLocations?: string[] | null;
   isActive: boolean;
 }
 
@@ -204,6 +222,12 @@ export interface ProviderAggregate {
   isActive: boolean;
   /** True when this provider exists only in submissions, not on the roster. */
   isUnresolved: boolean;
+  /**
+   * True on the ONE bucket per provider that carries their TherapyNotes
+   * active-client count. A therapist at two offices has one caseload; putting
+   * it on both rows would count it twice in the totals. Use activeCountProviderId().
+   */
+  ownsActiveCount: boolean;
   surveyCount: number;
   /**
    * Keyed by rating question key. NULL means "no answers to average", which is
@@ -260,8 +284,31 @@ export interface AggregateWarning {
   detail: string;
 }
 
+/**
+ * One survey as stored, for the workbook's Data sheet: the same rows, the same
+ * period filter and the same provider/office resolution as every other sheet,
+ * so the raw data can never disagree with the figures built from it.
+ */
+export interface SurveyDataRow {
+  submissionId: number;
+  /** The YYYY-MM-DD the period filter used. */
+  date: string;
+  form: SurveyModality;
+  variant: SurveyVariant;
+  /** The resolved provider's full name; the raw answer when unresolved. */
+  provider: string;
+  /** The office this survey counts under ("" when unknown). */
+  office: string;
+  /** "en" | "es"; surveys from before the Spanish form carry none and are English. */
+  language: string;
+  answers: Record<string, unknown>;
+  comments: Record<string, unknown>;
+}
+
 export interface SurveyAggregate {
   period: { from: string; to: string };
+  /** Every counted survey, oldest first. Feeds the Data sheet. */
+  dataRows: SurveyDataRow[];
   /** Rows that fell inside the period and carried a usable variant. */
   submissionsInPeriod: number;
   /** Office buckets present, in template order, unknown last. */
@@ -369,18 +416,28 @@ export function aggregateSurveys(input: AggregateInput): SurveyAggregate {
   // Every ACTIVE provider appears in the output whether or not they have a
   // submission — the client asked for this explicitly, and the template ships
   // 25 of its 26 tabs empty.
+  const bucketKey = (p: RosterEntry, office: string) => `id:${p.id}|${office}`;
+  const ownsCount = (p: RosterEntry, office: string) =>
+    office === primarySurveyOffice(p.office, p.surveyLocations);
+
+  // One bucket per survey office, so a provider offered at two offices shows
+  // two rows (and two tabs) even in a period where one of them has nothing.
   input.roster.filter((p) => p.isActive).forEach((p) => {
-    ensureProvider(`id:${p.id}`, {
-      providerId: p.id,
-      name: p.name,
-      shortName: p.shortName,
-      office: p.office,
-      isActive: true,
-      isUnresolved: false,
-      surveyCount: 0,
-      averages: emptyAverages(),
-      totalActiveClients: null,
-      listingRows: [],
+    const offices = surveyOfficesFor(p.office, p.surveyLocations);
+    (offices.length > 0 ? offices : [UNKNOWN_OFFICE]).forEach((office) => {
+      ensureProvider(bucketKey(p, office), {
+        providerId: p.id,
+        name: p.name,
+        shortName: p.shortName,
+        office,
+        isActive: true,
+        isUnresolved: false,
+        ownsActiveCount: ownsCount(p, office),
+        surveyCount: 0,
+        averages: emptyAverages(),
+        totalActiveClients: null,
+        listingRows: [],
+      });
     });
   });
 
@@ -424,6 +481,7 @@ export function aggregateSurveys(input: AggregateInput): SurveyAggregate {
 
   // ---- walk the submissions -------------------------------------------
   const officesSeen: Record<string, true> = {};
+  const dataRows: SurveyDataRow[] = [];
   let counted = 0;
 
   input.submissions.forEach((sub) => {
@@ -451,6 +509,7 @@ export function aggregateSurveys(input: AggregateInput): SurveyAggregate {
     // -- resolve the provider -------------------------------------------
     const rawLabel = typeof answers.therapist === "string" ? answers.therapist : "";
     const bareName = providerNameFromLabel(rawLabel);
+    const labelOffice = officeFromLabel(rawLabel);
     const matches = bareName === "" ? [] : (byName[normalizeName(bareName)] ?? []);
 
     let key: string;
@@ -460,8 +519,9 @@ export function aggregateSurveys(input: AggregateInput): SurveyAggregate {
 
     if (matches.length === 1) {
       const p = matches[0];
-      key = `id:${p.id}`;
-      office = p.office || UNKNOWN_OFFICE;
+      // The office the client saw them at, as stored on THIS survey.
+      office = labelOffice ?? (primarySurveyOffice(p.office, p.surveyLocations) || UNKNOWN_OFFICE);
+      key = bucketKey(p, office);
       providerName = p.name;
       shortName = p.shortName;
       ensureProvider(key, {
@@ -471,6 +531,7 @@ export function aggregateSurveys(input: AggregateInput): SurveyAggregate {
         office,
         isActive: p.isActive,
         isUnresolved: false,
+        ownsActiveCount: ownsCount(p, office),
         surveyCount: 0,
         averages: emptyAverages(),
         totalActiveClients: null,
@@ -503,6 +564,7 @@ export function aggregateSurveys(input: AggregateInput): SurveyAggregate {
         office,
         isActive: false,
         isUnresolved: true,
+        ownsActiveCount: false,
         surveyCount: 0,
         averages: emptyAverages(),
         totalActiveClients: null,
@@ -512,6 +574,18 @@ export function aggregateSurveys(input: AggregateInput): SurveyAggregate {
 
     const agg = providerAcc[key];
     agg.surveyCount++;
+
+    dataRows.push({
+      submissionId: sub.id,
+      date,
+      form: modality,
+      variant,
+      provider: providerName,
+      office,
+      language: typeof payload.language === "string" && payload.language ? payload.language : "en",
+      answers,
+      comments,
+    });
 
     // Telehealth is one bucket; in-person splits by the PROVIDER's office.
     const bucket = variant === "telehealth" ? TELEHEALTH_BUCKET : office;
@@ -606,20 +680,31 @@ export function aggregateSurveys(input: AggregateInput): SurveyAggregate {
   });
 
   const all = Object.keys(providerAcc).map((k) => providerAcc[k]);
-  const byNameAsc = (a: ProviderAggregate, b: ProviderAggregate) =>
-    a.name.localeCompare(b.name);
 
-  const offices = Object.keys(officesSeen).sort((a, b) => {
-    const ia = OFFICE_ORDER.indexOf(a);
-    const ib = OFFICE_ORDER.indexOf(b);
-    if (ia !== -1 && ib !== -1) return ia - ib;
-    if (ia !== -1) return -1;
-    if (ib !== -1) return 1;
-    return a.localeCompare(b);
+  // A provider with more than one bucket in this report is told apart by office
+  // everywhere a short name is shown: "Amanda P (ABQ)" / "Amanda P (LL)" — the
+  // workbook's tab names and rows, and the snapshot.
+  const bucketsPerProvider: Record<number, number> = {};
+  all.forEach((p) => {
+    if (p.providerId !== null) bucketsPerProvider[p.providerId] = (bucketsPerProvider[p.providerId] ?? 0) + 1;
   });
+  all.forEach((p) => {
+    if (p.providerId !== null && bucketsPerProvider[p.providerId] > 1 && p.office) {
+      p.shortName = `${p.shortName} (${p.office})`;
+    }
+  });
+
+  const byNameAsc = (a: ProviderAggregate, b: ProviderAggregate) =>
+    a.name.localeCompare(b.name) || surveyOfficeRank(a.office) - surveyOfficeRank(b.office);
+
+  const offices = Object.keys(officesSeen).sort((a, b) =>
+    surveyOfficeRank(a) - surveyOfficeRank(b) || a.localeCompare(b));
+
+  dataRows.sort((a, b) => a.date.localeCompare(b.date) || a.submissionId - b.submissionId);
 
   return {
     period: { from, to },
+    dataRows,
     submissionsInPeriod: counted,
     offices,
     providers: all.filter((p) => p.isActive).sort(byNameAsc),

@@ -156,6 +156,35 @@ export async function softDeleteContactDocument(
   return (rows[0] as ContactDocument | undefined) ?? null;
 }
 
+/**
+ * Rename. The NAME only: file, type, size, hash, source, uploader and both
+ * timestamps are untouched. Returns the document after the change and the name
+ * it had before, or null when there is no active document with that id on that
+ * contact.
+ */
+export async function renameContactDocument(
+  contactId: number,
+  documentId: number,
+  displayName: string,
+): Promise<{ document: ContactDocument; previousName: string } | null> {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `UPDATE contact_documents d
+        SET display_name = $3
+       FROM (SELECT id, display_name AS previous_name
+               FROM contact_documents
+              WHERE id = $1 AND contact_id = $2 AND deleted_at IS NULL
+              FOR UPDATE) old
+      WHERE d.id = old.id
+      RETURNING ${META_COLUMNS.replace(/\bid,/, "d.id,")}, old.previous_name AS "previousName"`,
+    [documentId, contactId, displayName],
+  );
+  const row = rows[0] as (ContactDocument & { previousName: string }) | undefined;
+  if (!row) return null;
+  const { previousName, ...document } = row;
+  return { document, previousName };
+}
+
 /** An active document on this contact with these exact bytes from this source, if any. */
 export async function findActiveDocumentByHash(
   contactId: number,

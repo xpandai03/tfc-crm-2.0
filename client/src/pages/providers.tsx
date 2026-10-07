@@ -59,6 +59,8 @@ import { PatientMatchingModal } from "@/components/ui/patient-matching-modal";
 import { useAuth } from "@/lib/auth-context";
 import { isRestrictedUser } from "@shared/access-control";
 import { Redirect } from "wouter";
+import { Checkbox } from "@/components/ui/checkbox";
+import { SURVEY_OFFICE_LABELS, SURVEY_OFFICE_ORDER } from "@shared/survey-locations";
 
 /**
  * Provider data structure from the spreadsheet
@@ -88,6 +90,8 @@ interface Provider {
   // CRM-managed provider fields
   _crmManaged?: boolean;
   crmId?: number;
+  /** CRM providers only: survey offices (shared/survey-locations.ts). [] = same as location. */
+  surveyLocations?: string[];
   email?: string | null;
   specialties?: string[];
   crmAgeGroups?: string[];
@@ -733,6 +737,8 @@ interface EditFormState {
   name: string;
   credentials: string;
   location: string;
+  /** Survey offices; [] = same as location. CRM providers only. */
+  surveyLocations: string[];
   email: string;
   // Age-group capabilities: { "Adults (18+)": { "Anxiety": "x", "Trauma": "x - Slow" }, ... }
   ageGroupCaps: Record<string, Record<string, CapState>>;
@@ -750,7 +756,7 @@ function buildInitialState(provider: Provider | null): EditFormState {
       ageGroupCaps[group] = {};
       for (const s of specs) ageGroupCaps[group][s] = "";
     }
-    return { name: "", credentials: "", location: "", email: "", ageGroupCaps, selectedInsurances: new Set(), notes: "" };
+    return { name: "", credentials: "", location: "", surveyLocations: [], email: "", ageGroupCaps, selectedInsurances: new Set(), notes: "" };
   }
 
   // Build caps from provider's existing ageGroups data. The API now returns
@@ -789,6 +795,7 @@ function buildInitialState(provider: Provider | null): EditFormState {
     name: provider.name,
     credentials: provider.credentials || "",
     location: provider.location || "",
+    surveyLocations: provider.surveyLocations ?? [],
     email: provider.email || "",
     ageGroupCaps,
     selectedInsurances: insuranceSet,
@@ -923,6 +930,7 @@ function ProviderFormModal({
             name: state.name.trim(),
             credentials: state.credentials.trim(),
             location: state.location.trim(),
+            surveyLocations: state.surveyLocations,
             email: state.email.trim(),
             specialties: uniqueSpecs,
             // Send the real per-skill matrix (x / x-Slow), mirroring the roster
@@ -1109,6 +1117,36 @@ function ProviderFormModal({
                   </SelectContent>
                 </Select>
                 <p className="text-[11px] text-muted-foreground mt-1">Office location used for provider matching.</p>
+              </div>
+            )}
+
+            {/* Survey locations — where this provider is offered on the client
+                survey and counted in its reports. Separate from Location, which
+                provider matching reads: Corp and a second office live here only.
+                None ticked = same as Location. */}
+            {isCrmManaged && isEditing && (
+              <div>
+                <Label className="text-xs">Survey locations</Label>
+                <div className="flex flex-wrap gap-3 mt-1">
+                  {SURVEY_OFFICE_ORDER.map((code) => (
+                    <label key={code} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                      <Checkbox
+                        checked={state.surveyLocations.includes(code)}
+                        onCheckedChange={(on) => setState(p => ({
+                          ...p,
+                          surveyLocations: on
+                            ? [...p.surveyLocations.filter(c => c !== code), code]
+                            : p.surveyLocations.filter(c => c !== code),
+                        }))}
+                        data-testid={`survey-location-${code}`}
+                      />
+                      {SURVEY_OFFICE_LABELS[code]} ({code})
+                    </label>
+                  ))}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Offered on the client survey once per office ticked. None ticked = same as Location.
+                </p>
               </div>
             )}
 

@@ -123,6 +123,7 @@ export async function loadSurveyPeriodData(
     name: p.name,
     shortName: providerShortName({ name: p.name, shortName: p.shortName }),
     office: p.location ?? "",
+    surveyLocations: p.surveyLocations ?? null,
     isActive: p.isActive,
   }));
 

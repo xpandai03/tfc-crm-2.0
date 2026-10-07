@@ -43,8 +43,9 @@
  * PHI: none. Provider names are staff names; everything else is a count.
  */
 
-import { UNKNOWN_OFFICE } from "./aggregate";
-import { loadSurveyPeriodData, type SurveyExportRange } from "./export";
+import { UNKNOWN_OFFICE, activeCountProviderId } from "./aggregate";
+import { surveyOfficeRank } from "@shared/survey-locations";
+import { loadSurveyPeriodData, type SurveyExportRange, type SurveyPeriodData } from "./export";
 import { tnPullHealth, type TnPullHealth } from "../therapy-notes/tn-patients-db";
 
 /** One provider's line in the snapshot. */
@@ -60,6 +61,12 @@ export interface SnapshotProviderRow {
   percent: number | null;
   /** Set when a person typed this figure for this period. */
   override: { pulled: number | null; setBy: string; setAt: string } | null;
+  /**
+   * Set when this therapist's caseload is counted on their row at ANOTHER
+   * office (one TherapyNotes caseload, two survey offices). Such a row never
+   * holds an office total back.
+   */
+  countedAt: string | null;
 }
 
 /** One office's line. Figures are sums of the providers above. */
@@ -105,12 +112,25 @@ export function percent(surveys: number, active: number | null): number | null {
 }
 
 export async function buildSurveySnapshot(range: SurveyExportRange): Promise<SurveySnapshot> {
-  const { aggregate, activeCounts, overrideCount } = await loadSurveyPeriodData(range);
+  const data = await loadSurveyPeriodData(range);
   // Its own read, and never fatal: the snapshot's figures do not depend on it.
   const patientPull = await tnPullHealth().catch(() => null);
+  return renderSurveySnapshot(range, data, patientPull);
+}
+
+/** The pure half: one period's data rendered as the snapshot. No I/O. */
+export function renderSurveySnapshot(
+  range: SurveyExportRange,
+  { aggregate, activeCounts, overrideCount }: SurveyPeriodData,
+  patientPull: TnPullHealth | null,
+): SurveySnapshot {
 
   const providers: SnapshotProviderRow[] = aggregate.providers.map((p) => {
-    const cell = p.providerId === null ? undefined : activeCounts.byProviderId[p.providerId];
+    const countId = activeCountProviderId(p);
+    const cell = countId === null ? undefined : activeCounts.byProviderId[countId];
+    const home = countId === null && p.providerId !== null
+      ? aggregate.providers.find((q) => q.providerId === p.providerId && q.ownsActiveCount)
+      : undefined;
     const activeClients = cell?.count ?? null;
     return {
       providerId: p.providerId,
@@ -123,6 +143,7 @@ export async function buildSurveySnapshot(range: SurveyExportRange): Promise<Sur
       override: cell?.override
         ? { pulled: cell.override.pulled, setBy: cell.override.setBy, setAt: cell.override.setAt }
         : null,
+      countedAt: home ? home.office : null,
     };
   });
 
@@ -161,7 +182,7 @@ export async function buildSurveySnapshot(range: SurveyExportRange): Promise<Sur
 
 function rollup(office: string, rows: SnapshotProviderRow[]): SnapshotOfficeRow {
   const surveys = rows.reduce((n, r) => n + r.surveys, 0);
-  const missingCounts = rows.filter((r) => r.activeClients === null).length;
+  const missingCounts = rows.filter((r) => r.activeClients === null && r.countedAt === null).length;
   // THE WORKBOOK'S RULE. Complete, or blank. Summing only the counts that exist
   // and dividing ALL the surveys by that sum inflates the percentage — every
   // survey counts, only some of the clients do.
@@ -179,9 +200,4 @@ function rollup(office: string, rows: SnapshotProviderRow[]): SnapshotOfficeRow 
   };
 }
 
-const OFFICE_ORDER = ["ABQ", "LL", "RR"];
-function officeRank(office: string): number {
-  const i = OFFICE_ORDER.indexOf(office);
-  if (i !== -1) return i;
-  return office === UNKNOWN_OFFICE ? OFFICE_ORDER.length + 1 : OFFICE_ORDER.length;
-}
+const officeRank = surveyOfficeRank;

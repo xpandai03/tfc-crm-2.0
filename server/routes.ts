@@ -91,6 +91,7 @@ import { previewMonthlyReport, sendMonthlyReport } from "./reports/send";
 import { previousPeriod } from "./reports/monthly";
 import { ACCEPTED_INSURANCES } from "@shared/insurance-utils";
 import { SERVICE_TYPES } from "@shared/service-types";
+import { SURVEY_OFFICE_ORDER, isSurveyOffice } from "@shared/survey-locations";
 import { PAPERWORK_STATUSES, isValidPaperworkStatus } from "@shared/paperwork-status";
 import { CUSTODY_DOC_STATUSES, isValidCustodyDocStatus } from "@shared/custody-doc-status";
 import { putContactOnHold, takeContactOffHold } from "./contacts/account-hold";
@@ -3627,6 +3628,7 @@ export async function registerRoutes(
             name: cp.name,
             credentials: cp.credentials,
             location: cp.location,
+            surveyLocations: cp.surveyLocations ?? [],
             email: cp.email,
             ageGroups: crmAgeGroups,
             notes: cp.notes,
@@ -3833,8 +3835,19 @@ export async function registerRoutes(
 
       const { name, credentials, location, email, specialties, ageGroups, insurances, notes } = req.body;
 
+      // Survey offices: a list of known codes; [] clears back to "same as location".
+      let surveyLocations: string[] | undefined;
+      if (req.body.surveyLocations !== undefined) {
+        const raw = req.body.surveyLocations;
+        if (!Array.isArray(raw) || !raw.every((c: unknown) => typeof c === "string" && isSurveyOffice(c))) {
+          return res.status(400).json({ error: `surveyLocations must be a list of: ${SURVEY_OFFICE_ORDER.join(", ")}` });
+        }
+        surveyLocations = Array.from(new Set(raw.map((c: string) => c.trim().toUpperCase())));
+      }
+
       // Diff fields to know what changed
       const fieldsUpdated: string[] = [];
+      if (surveyLocations !== undefined && JSON.stringify(surveyLocations) !== JSON.stringify(existing.surveyLocations ?? [])) fieldsUpdated.push("survey locations");
       if (name !== undefined && name.trim() !== existing.name) fieldsUpdated.push("name");
       if (credentials !== undefined && credentials.trim() !== existing.credentials) fieldsUpdated.push("credentials");
       if (location !== undefined && location.trim() !== existing.location) fieldsUpdated.push("location");
@@ -3848,6 +3861,7 @@ export async function registerRoutes(
         name,
         credentials,
         location,
+        surveyLocations,
         email,
         specialties,
         ageGroups,

@@ -18,7 +18,8 @@
 import { unzipSync, strFromU8 } from "fflate";
 import { writeFileSync } from "fs";
 import { aggregateSurveys, type RosterEntry, type SubmissionInput } from "../server/survey/aggregate";
-import { buildSurveyWorkbook, sheetNameFor } from "../server/survey/workbook";
+import { DATA_FIXED_HEADERS, dataColumns, buildSurveyWorkbook, sheetNameFor } from "../server/survey/workbook";
+import { questionsFor } from "../shared/survey-questions";
 
 // ===========================================================================
 // Reading the emitted file
@@ -473,15 +474,35 @@ console.log("\n[9] Structure, wording and the trailing space");
   check("Survey Analysis keeps its trailing space",
     sheetNames[1] === "Survey Analysis " && wb.sheets["Survey Analysis"] === undefined);
   eq("...and the reader sees the same name", wb.names[1], "Survey Analysis ");
-  // The Data sheet carries ONE explanatory sentence and nothing else. A blank
-  // sheet named "Data" reads as a broken export; inventing columns would be
-  // worse. See server/survey/workbook.ts in buildSurveyWorkbook.
+  // The Data sheet: the raw surveys (client spec, 2026-10-06). One row per
+  // counted survey, one column per question (plus its comment column), after
+  // Submission ID, Date, Form, Provider, Location, Language.
   const data = wb.sheets["Data"];
-  eq("the Data sheet holds exactly one cell", Object.keys(data), ["A1"]);
-  check("...which is prose, not a column header",
-    String(data["A1"].v).indexOf("intentionally empty") !== -1);
-  check("...and no invented columns anywhere on it",
-    Object.keys(data).every((k) => k === "A1"));
+  const cols = dataColumns();
+  const colName = (i: number) => {
+    let n = i + 1, out = "";
+    while (n > 0) { const m = (n - 1) % 26; out = String.fromCharCode(65 + m) + out; n = Math.floor((n - 1) / 26); }
+    return out;
+  };
+  eq("Data: the six fixed headers come first",
+    DATA_FIXED_HEADERS.map((_, i) => String(data[`${colName(i)}1`]?.v)), DATA_FIXED_HEADERS);
+  eq("Data: one header per column, nothing past the last",
+    [String(data[`${colName(DATA_FIXED_HEADERS.length + cols.length - 1)}1`]?.v ?? ""), data[`${colName(DATA_FIXED_HEADERS.length + cols.length)}1`]],
+    [cols[cols.length - 1].header, undefined]);
+  check("Data: every question of both forms has exactly one answer column",
+    (() => {
+      const keys = cols.filter((c) => c.kind === "answer").map((c) => c.key);
+      const all = new Set([...questionsFor("in-person"), ...questionsFor("telehealth")].map((q) => q.key));
+      return keys.length === all.size && keys.every((k) => all.has(k));
+    })());
+  eq("Data: one row per counted survey", Object.keys(data).filter((k) => /^A\d+$/.test(k)).length - 1, a.dataRows.length);
+  eq("Data: rows are in submission order by date, ids in column A",
+    a.dataRows.map((_, i) => data[`A${i + 2}`]?.v), a.dataRows.map((r) => r.submissionId));
+  check("Data: provider, location and form are filled on every row",
+    a.dataRows.every((_, i) => !!data[`D${i + 2}`] && data[`C${i + 2}`] !== undefined));
+  const overallCol = DATA_FIXED_HEADERS.length + cols.findIndex((c) => c.kind === "answer" && c.key === "overallRating");
+  eq("Data: a 0-10 rating lands as a number under its own question",
+    a.dataRows.map((_, i) => typeof data[`${colName(overallCol)}${i + 2}`]?.v).every((t) => t === "number"), true);
 
   // The template's telehealth headings are wrong in two places; the instrument's
   // real wording must appear instead.

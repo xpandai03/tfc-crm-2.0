@@ -27,6 +27,7 @@ export type ActivityType =
   // Metadata: documentId, the staff-given name, source. Never the bytes.
   | "document_uploaded"
   | "document_removed"
+  | "document_renamed"
   | "contact_deleted"
   | "contact_assigned"
   | "assignment_deleted"
@@ -506,6 +507,10 @@ function formatActivitySummary(
 
     case "document_removed": {
       return `Removed ${String(metadata.name || "a document")} from ${name}'s documents`;
+    }
+
+    case "document_renamed": {
+      return `Renamed ${String(metadata.from || "a document")} to ${String(metadata.name || "")} in ${name}'s documents`;
     }
 
     case "contact_deleted": {

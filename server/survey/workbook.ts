@@ -25,9 +25,10 @@
  * synthetic 27th provider and asserts every rollup still covers its own block
  * and no other — that test is the safeguard.
  *
- * THREE OFFICES, NOT FOUR. The template shows a Corp row holding two providers
- * who are both stored as ABQ, and Corp cannot be entered in the CRM at all.
- * Offices come from the aggregate, so this builds whatever the data carries.
+ * OFFICES COME FROM THE AGGREGATE, in the template's order: Corp, ABQ, LL, RR
+ * (shared/survey-locations.ts). A provider at two offices has a row and a tab
+ * per office; only one of them carries their active-client count
+ * (activeCountProviderId), the other says where it is counted.
  *
  * NO FILL COLOURS. SheetJS (community) writes formulas and merges but silently
  * drops every fill — verified. On a provider tab the office was conveyed ONLY
@@ -47,8 +48,11 @@ import {
   MAX_SHEET_NAME_LENGTH,
   FORBIDDEN_SHEET_NAME_CHARS,
 } from "@shared/provider-short-name";
+import { surveyOfficeRank } from "@shared/survey-locations";
+import { fullPromptText, isCommentable, questionsFor } from "@shared/survey-questions";
 import {
   SCALE_KEYS,
+  activeCountProviderId,
   TELEHEALTH_BUCKET,
   UNKNOWN_OFFICE,
   scaleQuestionsFor,
@@ -99,8 +103,6 @@ export const INCLUDE_NA_COLUMN = false;
  */
 const NARROW_TABLE_MAX = 4;
 
-/** Office row order. Anything the data carries beyond these sorts after. */
-const OFFICE_ORDER = ["ABQ", "LL", "RR"];
 
 /** Label for the bucket holding rows whose office could not be determined. */
 const UNKNOWN_OFFICE_LABEL = "No office";
@@ -412,15 +414,7 @@ function orderedOffices(agg: SurveyAggregate): string[] {
   const present: string[] = [];
   agg.providers.forEach((p) => { if (present.indexOf(p.office) === -1) present.push(p.office); });
   agg.offices.forEach((o) => { if (present.indexOf(o) === -1) present.push(o); });
-  return present.sort((a, b) => {
-    const ia = OFFICE_ORDER.indexOf(a), ib = OFFICE_ORDER.indexOf(b);
-    if (ia !== -1 && ib !== -1) return ia - ib;
-    if (ia !== -1) return -1;
-    if (ib !== -1) return 1;
-    if (a === UNKNOWN_OFFICE) return 1;
-    if (b === UNKNOWN_OFFICE) return -1;
-    return a.localeCompare(b);
-  });
+  return present.sort((a, b) => surveyOfficeRank(a) - surveyOfficeRank(b) || a.localeCompare(b));
 }
 
 function buildSurveyAnalysis(agg: SurveyAggregate, counts: ActiveClientCounts): BuiltSheet {
@@ -449,7 +443,13 @@ function buildSurveyAnalysis(agg: SurveyAggregate, counts: ActiveClientCounts): 
       // NEITHER: a formula written against a blank denominator is #DIV/0! on
       // every row, which is worse than an empty cell and is exactly what the
       // client's own template leaves blank on 25 of its 26 tabs.
-      const known = p.providerId === null ? undefined : counts.byProviderId[p.providerId];
+      const countId = activeCountProviderId(p);
+      const known = countId === null ? undefined : counts.byProviderId[countId];
+      if (countId === null && p.providerId !== null) {
+        // The same therapist's other office row carries the caseload.
+        const home = agg.providers.find((q) => q.providerId === p.providerId && q.ownsActiveCount);
+        if (home) s.comment(0, row, `Active clients are counted on the ${home.office} row (one TherapyNotes caseload).`);
+      }
       if (known) {
         s.num(C_ACTIVE, row, known.count);
         // THE FORMULA IS UNCHANGED. It divides by the cell, and the cell now
@@ -466,10 +466,15 @@ function buildSurveyAnalysis(agg: SurveyAggregate, counts: ActiveClientCounts): 
       SCALE_KEYS.forEach((k, i) => s.num(C_FIRST_RATING + i, row, p.averages[k], RATING_FORMAT));
       row++;
     });
+    // A row whose caseload is counted on another office's row does not need a
+    // count of its own, so it never holds this office's total back.
+    const needsCount = inOffice.filter((p) => p.providerId === null || p.ownsActiveCount);
     blocks.push({
-      office, first, last: row - 1, count: inOffice.length,
-      withCount: inOffice.filter((p) =>
-        p.providerId !== null && counts.byProviderId[p.providerId] !== undefined).length,
+      office, first, last: row - 1, count: needsCount.length,
+      withCount: needsCount.filter((p) => {
+        const id = activeCountProviderId(p);
+        return id !== null && counts.byProviderId[id] !== undefined;
+      }).length,
     });
   });
 
@@ -833,6 +838,80 @@ function buildProviderSheet(p: ProviderAggregate, known: ActiveCountCell | undef
  * was — a substituted number with nothing to compare it against is the version
  * of this feature that quietly damages trust in the report.
  */
+// ============================================================================
+// Data — the raw surveys
+// ============================================================================
+
+export const DATA_FIXED_HEADERS = ["Submission ID", "Date", "Form", "Provider", "Location", "Language"];
+
+const LANGUAGE_LABEL: Record<string, string> = { en: "English", es: "Spanish" };
+
+export interface DataColumn {
+  key: string;
+  kind: "answer" | "comment";
+  header: string;
+  /** Set when the telehealth form words this question differently. */
+  telehealthWording?: string;
+}
+
+/**
+ * Every question either form asks, once, in slot order, each followed by its
+ * comment column where the form has a comment box. In-person wording heads a
+ * column both forms share; where telehealth words it differently that wording
+ * is attached to the header cell as a note. The therapist question has had no
+ * comment box since 2026-09, so it has no comment column.
+ */
+export function dataColumns(): DataColumn[] {
+  const cols: DataColumn[] = [];
+  const seen = new Set<string>();
+  const ip = questionsFor("in-person");
+  const th = questionsFor("telehealth");
+  const slots = Array.from(new Set([...ip, ...th].map((q) => q.slot))).sort((a, b) => a - b);
+  for (const slot of slots) {
+    for (const q of [...ip, ...th].filter((x) => x.slot === slot)) {
+      if (seen.has(q.key)) continue;
+      seen.add(q.key);
+      const header = fullPromptText(q);
+      const thQ = th.find((x) => x.key === q.key);
+      const thText = thQ ? fullPromptText(thQ) : header;
+      const col: DataColumn = { key: q.key, kind: "answer", header };
+      if (ip.includes(q) && thQ && thText !== header) col.telehealthWording = thText;
+      cols.push(col);
+      if (isCommentable(q) && q.kind !== "therapist") {
+        cols.push({ key: q.key, kind: "comment", header: `Comment: ${header}` });
+      }
+    }
+  }
+  return cols;
+}
+
+function buildDataSheet(agg: SurveyAggregate): BuiltSheet {
+  const s = new SheetWriter();
+  const cols = dataColumns();
+  DATA_FIXED_HEADERS.forEach((h, i) => s.header(i, 0, h));
+  cols.forEach((c, i) => {
+    const col = DATA_FIXED_HEADERS.length + i;
+    s.header(col, 0, c.header);
+    if (c.telehealthWording) s.comment(col, 0, `Telehealth form wording: ${c.telehealthWording}`);
+  });
+  agg.dataRows.forEach((r, i) => {
+    const row = i + 1;
+    s.num(0, row, r.submissionId);
+    s.text(1, row, r.date);
+    s.text(2, row, r.form);
+    s.text(3, row, r.provider);
+    s.text(4, row, r.office);
+    s.text(5, row, LANGUAGE_LABEL[r.language] ?? r.language);
+    cols.forEach((c, j) => {
+      const col = DATA_FIXED_HEADERS.length + j;
+      const v = c.kind === "answer" ? r.answers[c.key] : r.comments[c.key];
+      if (typeof v === "number") s.num(col, row, v);
+      else if (typeof v === "string" && v !== "") s.text(col, row, v);
+    });
+  });
+  return { ws: s.finish(), headers: s.headers() };
+}
+
 export interface ActiveCountCell {
   /** The number to write. The override when there is one, else the pulled count. */
   count: number;
@@ -882,16 +961,11 @@ export function buildSurveyWorkbook(
     if (headers.length > 0) headerRefs.push({ sheetIndex: names.length, refs: headers });
   }
 
-  // The client left this sheet empty with only a note about what belongs on it,
-  // and specified no columns. It carries ONE sentence saying so and no headers:
-  // anyone opening a sheet called "Data" and finding it blank will assume the
-  // export broke, and inventing columns to avoid that would be worse. The
-  // sentence is plainly prose, not a header row.
-  const dataSheet = new SheetWriter();
-  dataSheet.banner(0, 0,
-    "This sheet is intentionally empty. It is meant to hold the raw survey data, " +
-    "but the columns for it have not been specified yet.", 6);
-  add(dataSheet.finish(), "Data");
+  // Raw data, as the client specified on 2026-10-06: one row per survey, one
+  // column per question, plus date, form, provider, location, language and
+  // submission id. Same rows as every other sheet (agg.dataRows).
+  const data = buildDataSheet(agg);
+  add(data.ws, "Data", data.headers);
 
   // The trailing space is the client's. A cross-sheet reference written against
   // "Survey Analysis" without it would not resolve.
@@ -906,11 +980,7 @@ export function buildSurveyWorkbook(
   // analysis sheet uses, alphabetical within an office. The aggregate sorts by
   // name alone, which put the tabs in an order that contradicted the analysis
   // sheet sitting two tabs to the left. Ordering is layout, so it belongs here.
-  const officeRank = (office: string): number => {
-    const i = OFFICE_ORDER.indexOf(office);
-    if (i !== -1) return i;
-    return office === UNKNOWN_OFFICE ? OFFICE_ORDER.length + 1 : OFFICE_ORDER.length;
-  };
+  const officeRank = surveyOfficeRank;
   const tabOrder = agg.providers.slice().sort((a, b) => {
     const d = officeRank(a.office) - officeRank(b.office);
     return d !== 0 ? d : a.shortName.localeCompare(b.shortName);
@@ -919,7 +989,8 @@ export function buildSurveyWorkbook(
   tabOrder.forEach((p) => {
     const name = sheetNameFor(p.shortName, names);
     if (name !== p.shortName) renamed[p.shortName] = name;
-    const known = p.providerId === null ? undefined : counts.byProviderId[p.providerId];
+    const countId = activeCountProviderId(p);
+    const known = countId === null ? undefined : counts.byProviderId[countId];
     const tab = buildProviderSheet(p, known);
     add(tab.ws, name, tab.headers);
   });

@@ -27,6 +27,7 @@
  *
  * NO PHI. Provider names are staff names; everything else is a count.
  */
+import { SURVEY_OFFICE_LABELS } from "@shared/survey-locations";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,6 +52,8 @@ interface ProviderRow {
   surveys: number;
   percent: number | null;
   override: { pulled: number | null; setBy: string; setAt: string } | null;
+  /** Office whose row carries this therapist's caseload, when it is another one. */
+  countedAt?: string | null;
 }
 interface OfficeRow {
   office: string;
@@ -114,9 +117,7 @@ function PatientPullLine({ pull }: { pull: PatientPull | null }) {
   );
 }
 
-const OFFICE_LABEL: Record<string, string> = {
-  ABQ: "Albuquerque", LL: "Los Lunas", RR: "Rio Rancho", "": "No office",
-};
+const OFFICE_LABEL: Record<string, string> = { ...SURVEY_OFFICE_LABELS, "": "No office" };
 const officeLabel = (o: string) => OFFICE_LABEL[o] ?? o;
 
 /** A withheld figure, with the reason a reader would otherwise have to guess. */
@@ -238,13 +239,15 @@ export function SurveySnapshot() {
                     </thead>
                     <tbody className="divide-y">
                       {data.providers.map((r) => (
-                        <tr key={r.providerId ?? r.name} className="hover:bg-muted/30">
+                        <tr key={`${r.providerId ?? r.name}|${r.office}`} className="hover:bg-muted/30">
                           <td className="px-2 py-1 truncate max-w-[14rem]" title={r.name}>
                             {r.shortName}
                           </td>
                           <td className="px-2 py-1 text-right tabular-nums">
                             {r.activeClients === null
-                              ? <Dash title="No TherapyNotes reading for this period, and no figure was set by hand." />
+                              ? <Dash title={r.countedAt
+                                  ? `Counted on the ${r.countedAt} row: one TherapyNotes caseload, offered at two offices.`
+                                  : "No TherapyNotes reading for this period, and no figure was set by hand."} />
                               : (
                                 <span className="inline-flex items-center gap-1 justify-end">
                                   {r.activeClients}
