@@ -190,10 +190,10 @@ console.log("\n[5] The workbook names its own period, and explains what is blank
     wb.text.indexOf("Active client counts are read from TherapyNotes") !== -1);
   check("...naming the reason as none-taken-yet rather than not-built",
     wb.text.indexOf("none had been taken on or before this period ended") !== -1);
-  check("the empty Data sheet says why it is empty",
-    wb.text.indexOf("This sheet is intentionally empty") !== -1);
-  check("...and still has no invented column headers",
-    wb.text.indexOf("intentionally empty") !== -1);
+  check("the Data sheet carries the raw-data headers",
+    wb.text.indexOf("Submission ID") !== -1 && wb.text.indexOf("Language") !== -1);
+  check("...and no placeholder sentence any more",
+    wb.text.indexOf("intentionally empty") === -1);
 }
 
 // ===========================================================================

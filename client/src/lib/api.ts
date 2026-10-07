@@ -301,6 +301,21 @@ export async function removeContactDocument(contactId: number, documentId: numbe
   return res.json();
 }
 
+export async function renameContactDocument(
+  contactId: number,
+  documentId: number,
+  name: string,
+): Promise<{ document: ContactDocument; renamed: boolean }> {
+  const res = await fetch(`/api/contact/${contactId}/documents/${documentId}`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw await documentError(res, "Failed to rename the document");
+  return res.json();
+}
+
 /** Same-origin, session-checked on every request. Never a signed or public URL. */
 export function documentContentUrl(contactId: number, documentId: number, disposition: "inline" | "attachment"): string {
   return `/api/contact/${contactId}/documents/${documentId}/content?disposition=${disposition}`;

@@ -32,6 +32,8 @@ function getEventIcon(type: string) {
       return <FileText className="h-4 w-4 text-sky-600" />;
     case "document_removed":
       return <Trash2 className="h-4 w-4 text-muted-foreground" />;
+    case "document_renamed":
+      return <Pencil className="h-4 w-4 text-sky-600" />;
     case "contact_hold_set":
       return <AlertTriangle className="h-4 w-4 text-red-600" />;
     case "contact_hold_cleared":

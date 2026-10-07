@@ -106,6 +106,7 @@ async function main() {
     next();
   });
   app.use(authMiddleware);
+  app.use(express.json()); // as the real app does (server/index.ts), for the rename PATCH
   registerContactDocumentRoutes(app);
   const server = app.listen(0);
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -280,6 +281,49 @@ async function main() {
     eq("referral contact: the fax referral first", refDocs[0]?.source, "fax_referral");
     ok("  its bytes are the uploaded PDF", refDocs[0]?.content.equals(fax));
     eq("a contact with none -> empty", (await docsDb.getActiveContactDocumentsWithContent(B)).length, 0);
+
+    // ---------------------------------------------------------------------
+    console.log("\n[7b] Rename: the name only, on the timeline");
+    const rename = (contactId: number, id: number, body: unknown, email: string | null = STAFF) =>
+      fetch(`${base}/api/contact/${contactId}/documents/${id}`, {
+        method: "PATCH", headers: { ...as(email), "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+    const rowOf = async (id: number) => (await pool.query(
+      `SELECT display_name, original_filename, mime_type, size_bytes, sha256, source, uploaded_by_email,
+              uploaded_at, tn_uploaded_at, deleted_at, md5(content) AS content_md5
+         FROM contact_documents WHERE id = $1`, [id])).rows[0];
+    const before = await rowOf(custody.id);
+    r = await rename(A, custody.id, { name: "  Custody order  (signed) " });
+    eq("rename -> 200", r.status, 200);
+    const renamed = await r.json();
+    eq("  whitespace tidied, the new name returned", [renamed.renamed, renamed.document.displayName], [true, "Custody order (signed)"]);
+    const after = await rowOf(custody.id);
+    eq("  the new name persists", after.display_name, "Custody order (signed)");
+    const { display_name: _b, ...restBefore } = before;
+    const { display_name: _a, ...restAfter } = after;
+    eq("  file, type, size, hash, source, uploader and timestamps unchanged", restAfter, restBefore);
+    eq("  the list shows it", (await (await list(A)).json()).documents.find((d: any) => d.id === custody.id)?.displayName, "Custody order (signed)");
+    const renameLog = (await acts(A)).filter((a) => a.type === "document_renamed");
+    eq("  one timeline entry", renameLog.length, 1);
+    eq("  …naming both names and the person", [renameLog[0]?.metadata.from, renameLog[0]?.metadata.name, renameLog[0]?.actorEmail],
+      [before.display_name, "Custody order (signed)", STAFF]);
+    ok("  …and reading as a rename", String(renameLog[0]?.summary).startsWith(`Renamed ${before.display_name} to Custody order (signed)`));
+    r = await rename(A, custody.id, { name: "Custody order (signed)" });
+    eq("the same name again -> 200, renamed=false", [r.status, (await r.json()).renamed], [200, false]);
+    eq("  …and no second timeline entry", (await acts(A)).filter((a) => a.type === "document_renamed").length, 1);
+    eq("an empty name -> 400", (await rename(A, custody.id, { name: "   " })).status, 400);
+    eq("a name over the limit -> 400", (await rename(A, custody.id, { name: "x".repeat(201) })).status, 400);
+    eq("no name at all -> 400", (await rename(A, custody.id, {})).status, 400);
+    eq("no session -> 401", (await rename(A, custody.id, { name: "x" }, null)).status, 401);
+    eq("through another contact -> 404", (await rename(B, custody.id, { name: "x" })).status, 404);
+    eq("a removed document -> 404", (await rename(A, png.id, { name: "x" })).status, 404);
+    const faxBefore = await rowOf(faxDoc.id);
+    r = await rename(referralId, faxDoc.id, { name: "VA referral (fax)" });
+    eq("an auto-named fax referral can be renamed -> 200", r.status, 200);
+    const faxAfter = await rowOf(faxDoc.id);
+    eq("  it is still a fax referral, same file", [faxAfter.source, faxAfter.content_md5, faxAfter.sha256],
+      [faxBefore.source, faxBefore.content_md5, faxBefore.sha256]);
+    eq("  named as typed", faxAfter.display_name, "VA referral (fax)");
   } finally {
     server.close();
   }
@@ -307,8 +351,9 @@ async function main() {
   const page = read("client", "src", "pages", "contact-detail.tsx");
   ok("the Documents card sits just above the Intake Summary",
     page.indexOf("<ContactDocumentsCard") > 0 && page.indexOf("<ContactDocumentsCard") < page.indexOf("{/* Intake Summary - Editable"));
-  ok("document entries appear on the contact timeline", page.includes('"document_uploaded", "document_removed"'));
+  ok("document entries appear on the contact timeline", page.includes('"document_uploaded", "document_removed", "document_renamed"'));
   const card = read("client", "src", "components", "contact-documents-card.tsx");
+  ok("every Documents row has a rename control", card.includes("button-rename-document-${d.id}"));
   ok("the card checks size before uploading", card.includes("picked.size > DOCUMENT_MAX_BYTES"));
 
   await pool.end();

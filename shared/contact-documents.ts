@@ -47,6 +47,15 @@ export type DocumentSource = typeof DOCUMENT_SOURCES[number];
 
 export const DOCUMENT_NAME_MAX = 200;
 
+/** A new name for a document, or the reason it is refused. Trimmed; whitespace collapsed. */
+export function validateDocumentName(raw: unknown): { ok: true; name: string } | { ok: false; message: string } {
+  if (typeof raw !== "string") return { ok: false, message: "A name is required." };
+  const name = raw.replace(/\s+/g, " ").trim();
+  if (!name) return { ok: false, message: "A name is required." };
+  if (name.length > DOCUMENT_NAME_MAX) return { ok: false, message: `Names are limited to ${DOCUMENT_NAME_MAX} characters.` };
+  return { ok: true, name };
+}
+
 /** Metadata only — what the list and the card carry. Never the bytes. */
 export interface ContactDocument {
   id: number;
