@@ -7351,7 +7351,11 @@ export async function registerRoutes(
    * no contact for this submission" — both are explicit choices, and both are
    * recorded with who made them and when.
    */
-  app.post("/api/survey/matching/resolve", async (req: any, res) => {
+  // One resolution path for the review queue, shared by the staff route and the
+  // key-authed operations route below: same validation, same writes, same
+  // activity entry. `note` (optional, <= 200 chars) is stored after "Confirmed
+  // by staff: " so the queue says why a row was cleared.
+  async function resolveSurveyMatch(req: any, res: any, actor: string) {
     const submissionId = typeof req.body?.submissionId === "number" ? req.body.submissionId : NaN;
     try {
       if (isNaN(submissionId)) {
@@ -7365,6 +7369,8 @@ export async function registerRoutes(
         });
       }
       const contactId: number | null = raw;
+      const note = typeof req.body?.note === "string" ? req.body.note.replace(/\s+/g, " ").trim() : "";
+      if (note.length > 200) return res.status(400).json({ error: "note must be 200 characters or fewer" });
 
       const submission = await getSubmissionById(submissionId);
       if (!submission || submission.formType !== SURVEY_FORM_TYPE) {
@@ -7380,9 +7386,8 @@ export async function registerRoutes(
         }
       }
 
-      const actor = req.user?.email || "unknown";
       const { recordHumanResolution, setSubmissionContactId } = await import("./survey/match-db");
-      await recordHumanResolution({ submissionId, contactId, actorEmail: actor });
+      await recordHumanResolution({ submissionId, contactId, actorEmail: actor, note: note || null });
       await setSubmissionContactId(submissionId, contactId);
 
       await logActivity({
@@ -7392,7 +7397,7 @@ export async function registerRoutes(
         entityId: String(submissionId),
         // No client name — the same reasoning as the survey ingest path.
         entityName: contactId === null ? "Survey marked as no contact" : "Survey matched to contact",
-        metadata: { submissionId, contactId },
+        metadata: { submissionId, contactId, ...(note ? { note } : {}) },
       });
 
       console.log(
@@ -7407,6 +7412,19 @@ export async function registerRoutes(
       );
       return res.status(500).json({ error: "Failed to record the resolution" });
     }
+  }
+
+  app.post("/api/survey/matching/resolve", async (req: any, res) =>
+    resolveSurveyMatch(req, res, req.user?.email || "unknown"));
+
+  // The same resolution for operations without a staff session (X-Sync-Key),
+  // e.g. clearing review rows whose surveys were filed by hand. Recorded as
+  // "ops (sync key)" so it is never mistaken for a staff member's decision.
+  app.post("/api/internal/survey/matching/resolve", async (req: any, res) => {
+    if (!SYNC_API_KEY || req.headers["x-sync-key"] !== SYNC_API_KEY) {
+      return res.status(401).json({ error: "unauthorized" });
+    }
+    return resolveSurveyMatch(req, res, "ops (sync key)");
   });
 
   // Insights PDF report

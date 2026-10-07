@@ -262,11 +262,14 @@ export async function recordHumanResolution(params: {
   submissionId: number;
   contactId: number | null;
   actorEmail: string;
+  /** Why it was cleared, stored after "Confirmed by staff: ". */
+  note?: string | null;
 }): Promise<void> {
   const status: MatchStatus = params.contactId === null ? "no_contact" : "matched";
-  const reason = params.contactId === null
+  const base = params.contactId === null
     ? "Confirmed by staff: no matching contact"
     : "Confirmed by staff";
+  const reason = params.note ? `${base}; ${params.note}` : base;
   await getPool().query(
     `INSERT INTO survey_match_reviews
        (submission_id, status, reason, matched_contact_id, candidate_ids,
