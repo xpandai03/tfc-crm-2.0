@@ -65,6 +65,16 @@ export interface TnV2AgentPayload {
     mime_type: "application/pdf" | "image/jpeg" | "image/png";
     url: string;
   }>;
+  // Patient-portal step after booking (2026-10-07). An agent that predates
+  // these fields ignores them. See shared/portal-service-type.ts.
+  /** Row of the client's portal-documents table, or null to skip the step. */
+  service_type?: "Minor" | "Adolescent" | "Individual" | "My Partner & Myself" | "My Family" | null;
+  /** Why the portal step is skipped when service_type is null. */
+  portal_skip_reason?: string | null;
+  /** Payer normalises to VACCN (the notifications' normaliser): no Client Insurance Form. */
+  payer_vaccn?: boolean;
+  /** True unless the Fly secret PORTAL_LIVE=true: do everything short of sending. */
+  portal_dry_run?: boolean;
 }
 
 // Matches the TN agent's response schema

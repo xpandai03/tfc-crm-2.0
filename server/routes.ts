@@ -92,6 +92,9 @@ import { previousPeriod } from "./reports/monthly";
 import { ACCEPTED_INSURANCES } from "@shared/insurance-utils";
 import { SERVICE_TYPES } from "@shared/service-types";
 import { SURVEY_OFFICE_ORDER, isSurveyOffice } from "@shared/survey-locations";
+import { portalServiceType } from "@shared/portal-service-type";
+import { isVaccnPayer } from "@shared/notification-rules";
+import { portalDryRun, portalOutcomeFromMeta, portalStateOf, storePortalOutcome } from "./therapy-notes/portal";
 import { PAPERWORK_STATUSES, isValidPaperworkStatus } from "@shared/paperwork-status";
 import { CUSTODY_DOC_STATUSES, isValidCustodyDocStatus } from "@shared/custody-doc-status";
 import { putContactOnHold, takeContactOffHold } from "./contacts/account-hold";
@@ -6099,6 +6102,7 @@ export async function registerRoutes(
         // The snapshot PDF is generatable iff an appointment-confirmation snapshot
         // exists — which is exactly what `emailSent` checks (hasSnapshotForTemplate).
         canGenerateSnapshotPdf: emailSent,
+        portal: portalStateOf(contact),
       });
     } catch (error) {
       console.error("[tn-v2] Error getting state:", error);
@@ -6240,11 +6244,21 @@ export async function registerRoutes(
         // Contact documents not yet in TherapyNotes, filed after the booking.
         // Fetched by the agent from /api/internal/contact-document with its key.
         documents: buildTnDocumentList(await listContactDocuments(contactId), contactId, baseUrl),
+        // Portal step: which documents row, VACCN, and dry run unless PORTAL_LIVE.
+        ...(() => {
+          const decision = portalServiceType(contact.requestingFor, contact.patientDob);
+          return {
+            service_type: decision.serviceType,
+            portal_skip_reason: decision.skip,
+            payer_vaccn: isVaccnPayer(contact.insurancePayer),
+            portal_dry_run: portalDryRun(),
+          };
+        })(),
       };
 
       // Definitive payload log for the next test (X-API-Key is sent as a header,
       // not in the body, so nothing to mask here).
-      console.log(`[tn-v2 trigger] Sending payload to V2: contact=${contactId} run=${runId} fields=${Object.keys(payload).length} documents=${payload.documents?.length ?? 0}`);
+      console.log(`[tn-v2 trigger] Sending payload to V2: contact=${contactId} run=${runId} fields=${Object.keys(payload).length} documents=${payload.documents?.length ?? 0} portal=${payload.service_type ?? `skip:${payload.portal_skip_reason}`} vaccn=${payload.payer_vaccn} dry_run=${payload.portal_dry_run}`);
 
       // Pre-validate the WHOLE payload against the agent's schema, not just the
       // three fields this used to check. Every constrained field is verified
@@ -6354,6 +6368,9 @@ export async function registerRoutes(
     // Contact documents, after the booking. Always reported "ok" by the agent,
     // with per-document results in metadata; a partial result is not a failure.
     "upload_documents",
+    // Patient portal (welcome email + intake documents). Always "ok"; the real
+    // outcome is metadata.portalStatus (server/therapy-notes/portal.ts).
+    "portal",
     "workflow_complete",
   ];
   const TN_PHASE_STATUSES = ["started", "ok", "failed"];
@@ -6420,6 +6437,22 @@ export async function registerRoutes(
             console.log(`[tn-progress] run ${body.runId}: documents on chart ${ids.length}, newly stamped ${stamped.length}`);
           } catch (e) {
             console.error(`[tn-progress] run ${body.runId}: could not stamp documents:`, e instanceof Error ? e.message : "unknown");
+          }
+        }
+      }
+
+      // The portal outcome, from the portal phase or the final callback. Never
+      // turns a run into a failure, and a storing error never 500s the callback.
+      if (body.status === "ok" && (body.phase === "portal" || body.phase === "workflow_complete")) {
+        const outcome = portalOutcomeFromMeta(meta, body.runId);
+        if (outcome) {
+          try {
+            await storePortalOutcome(pathContactId, outcome);
+            console.log(`[tn-progress] run ${body.runId}: portal ${outcome.status}` +
+              `${outcome.detail.step ? ` at ${outcome.detail.step}` : ""}${outcome.detail.reason ? ` (${outcome.detail.reason})` : ""} ` +
+              `documents=${outcome.documents.length} missing=${outcome.detail.missing.length}`);
+          } catch (e) {
+            console.error(`[tn-progress] run ${body.runId}: could not store portal outcome:`, e instanceof Error ? e.message : "unknown");
           }
         }
       }
