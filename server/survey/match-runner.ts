@@ -21,6 +21,7 @@ import {
 } from "./match-db";
 import { collapseIdentities, matchSubmission, type ContactIdentity, type SubmittedIdentity } from "./matching";
 import { getTnPatientIdentities, linkContactToChart } from "../therapy-notes/tn-patients-db";
+import { groupTnPatients } from "../therapy-notes/tn-patient-groups";
 
 export interface MatchRunSummary {
   considered: number;
@@ -191,10 +192,14 @@ async function loadIdentities(): Promise<{
   // and must arrive as ONE candidate — two would agree on name and date of
   // birth and be correctly called ambiguous, turning a well-known patient into
   // a review item.
-  const tnIdentities: ContactIdentity[] = tnPatients.map((p) => ({
-    contactId: null, name: p.name, email: null, phone: p.phone || null,
-    patientDob: p.dob, chartId: p.chartId, clinicians: p.clinicians,
-    source: "therapynotes" as const,
+  // ONE IDENTITY PER PERSON, not per row: the pull's rows are per clinician
+  // and their chart ids are not stable, so rows are grouped on legal name +
+  // date of birth first (server/therapy-notes/tn-patient-groups.ts).
+  const tnIdentities: ContactIdentity[] = groupTnPatients(tnPatients).map((g) => ({
+    contactId: null, name: g.name, email: null, phone: g.phones[0] ?? null,
+    altPhones: g.phones.slice(1), patientDob: g.dob, chartId: g.chartIds[0] ?? null,
+    chartIds: g.chartIds, clinicians: g.clinicians, duplicateClinicians: g.duplicateClinicians,
+    patientKey: g.patientKey, source: "therapynotes" as const,
   }));
   return {
     identities: collapseIdentities(contacts, tnIdentities),

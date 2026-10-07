@@ -64,8 +64,19 @@ export const REVIEW_REASONS = [
   "multiple_candidates",
   /** Several matched; none of them is assigned to the therapist named. */
   "provider_no_match",
-  /** Several matched; more than one is assigned to the therapist named. */
+  /** Several DIFFERENT patients matched; more than one carries the therapist named. */
   "provider_ambiguous",
+  /**
+   * Two or more CRM contacts with the same legal name + date of birth both
+   * carry the therapist named: a CRM duplicate, or a couple's records under one
+   * therapist. A person has to decide which (2026-10-07).
+   */
+  "duplicate_contact",
+  /**
+   * TherapyNotes lists this person twice under the SAME clinician — a true
+   * duplicate chart. One person under two clinicians is not this (2026-10-07).
+   */
+  "duplicate_chart",
 
   // --- Sent back by FILING, not by matching (2026-09-25) --------------------
   //
@@ -99,6 +110,17 @@ export const REVIEW_REASONS = [
   // review instead of re-matching it on the wrong date.
   /** The year of birth on the survey is not a plausible one. */
   "attach_dob_implausible",
+  // --- Three strikes (2026-10-07) --------------------------------------------
+  //
+  // Refusals that are AMBIGUOUS — a search miss or a real absence, a render
+  // race or a blank field — stay transient for two nights. The third
+  // consecutive nightly refusal with the same code moves the row here. Outage
+  // codes (login, unreachable, timeout, busy) never count. See
+  // server/survey/attach-strikes.ts.
+  "attach_repeated_patient_not_found",
+  "attach_repeated_result_set_possibly_truncated",
+  "attach_repeated_field_unreadable",
+  "attach_repeated_agent_rejected_request",
 ] as const;
 
 export type MatchedReason = typeof MATCHED_REASONS[number];
@@ -182,6 +204,8 @@ export const REASON_FIELD: Record<MatchReason, MatchField | null> = {
   multiple_candidates: "provider",
   provider_no_match: "provider",
   provider_ambiguous: "provider",
+  duplicate_contact: "name",
+  duplicate_chart: "name",
 
   attach_clinician_mismatch: "provider",
   attach_clinician_unassigned: "provider",
@@ -194,6 +218,10 @@ export const REASON_FIELD: Record<MatchReason, MatchField | null> = {
   attach_chart_not_in_search: "name",
   attach_multiple_charts: "name",
   attach_dob_implausible: "dateOfBirth",
+  attach_repeated_patient_not_found: "name",
+  attach_repeated_result_set_possibly_truncated: "name",
+  attach_repeated_field_unreadable: "name",
+  attach_repeated_agent_rejected_request: "name",
 };
 
 export function failedFieldFor(reason: string): MatchField | null {
@@ -220,7 +248,9 @@ export const REASON_LABEL: Record<MatchReason, string> = {
   email_contradiction: "Email — this address belongs to a different contact",
   multiple_candidates: "Several contacts match, and the survey named no therapist to tell them apart",
   provider_no_match: "Several contacts match, and none is assigned to the therapist named",
-  provider_ambiguous: "Several contacts match, and more than one is assigned to the therapist named",
+  provider_ambiguous: "Several different patients match, and more than one is assigned to the therapist named",
+  duplicate_contact: "More than one CRM contact has this name, date of birth and therapist; merge them if they are duplicates, or confirm the right one",
+  duplicate_chart: "TherapyNotes lists this person twice under the same clinician; resolve the duplicate chart, then confirm",
 
   attach_clinician_mismatch: "Clinician on survey does not match the chart's assigned clinician",
   attach_clinician_unassigned: "The chart has no assigned clinician, so the therapist on the survey could not be confirmed",
@@ -230,6 +260,10 @@ export const REASON_LABEL: Record<MatchReason, string> = {
   attach_chart_not_in_search: "The chart this survey matched did not appear in the TherapyNotes search — there may be a duplicate or renamed chart",
   attach_multiple_charts: "More than one TherapyNotes chart has this name and date of birth",
   attach_dob_implausible: "Date of birth appears wrong (the year is not plausible); confirm with the client",
+  attach_repeated_patient_not_found: "No TherapyNotes patient was found with this name and date of birth (3 nights in a row); file by hand or check the record",
+  attach_repeated_result_set_possibly_truncated: "The TherapyNotes search returned too many results to check (3 nights in a row); file by hand or check the record",
+  attach_repeated_field_unreadable: "A field on the TherapyNotes chart could not be read (3 nights in a row); file by hand or check the record",
+  attach_repeated_agent_rejected_request: "The TherapyNotes automation would not accept this survey's details (3 nights in a row); file by hand or check the record",
 };
 
 /** Short chip text for a dense list row. Full sentence lives in REASON_LABEL. */
@@ -249,6 +283,8 @@ export const REASON_SHORT: Record<MatchReason, string> = {
   multiple_candidates: "Several matches, no therapist given",
   provider_no_match: "Several matches, therapist matched none",
   provider_ambiguous: "Several matches, therapist matched more than one",
+  duplicate_contact: "Duplicate CRM contacts",
+  duplicate_chart: "Duplicate TN chart",
 
   attach_clinician_mismatch: "Chart clinician differs",
   attach_clinician_unassigned: "Chart has no clinician",
@@ -258,6 +294,10 @@ export const REASON_SHORT: Record<MatchReason, string> = {
   attach_chart_not_in_search: "Matched chart not found in search",
   attach_multiple_charts: "Several charts share name + DOB",
   attach_dob_implausible: "Year of birth looks wrong",
+  attach_repeated_patient_not_found: "Not found in TN, 3 nights",
+  attach_repeated_result_set_possibly_truncated: "TN search too broad, 3 nights",
+  attach_repeated_field_unreadable: "Chart field unreadable, 3 nights",
+  attach_repeated_agent_rejected_request: "Automation refused, 3 nights",
 };
 
 /** Label for any stored reason, including a human resolution's own sentence. */
