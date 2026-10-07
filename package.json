@@ -57,6 +57,7 @@
     "test:snapshot": "tsx scripts/test-survey-snapshot.ts",
     "test:attach-review": "tsx scripts/test-attach-review-and-pull-health.ts",
     "test:intake": "tsx scripts/test-intake-rfs.ts",
+    "test:referral-agreement": "tsx --tsconfig tsconfig.test.json scripts/test-referral-count-agreement.ts",
     "fixture:survey-export": "tsx scripts/fixture-survey-export.ts"
   },
   "dependencies": {
