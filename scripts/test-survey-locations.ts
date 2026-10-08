@@ -21,6 +21,7 @@ import { aggregateSurveys, type RosterEntry, type SubmissionInput } from "../ser
 import { buildSurveyWorkbook, type ActiveClientCounts } from "../server/survey/workbook";
 import { renderSurveySnapshot } from "../server/survey/snapshot";
 import { surveyTherapistToTnClinician } from "../server/providers/tn-clinician-name";
+import { corpOnlyLabel, isCorpOnly, type CorpRuleProviderRow } from "../server/survey/corp-labels";
 
 let pass = 0, fail = 0;
 const failures: string[] = [];
@@ -71,6 +72,35 @@ eq("a Corp label maps to the same clinician as before",
   surveyTherapistToTnClinician("Sandra Rivera (CORP)"), surveyTherapistToTnClinician("Sandra Rivera (ABQ)"));
 
 // ---------------------------------------------------------------------------
+console.log("\nCorp-only rule (write time)");
+const ruleRows: CorpRuleProviderRow[] = [
+  { name: "Amanda Davison", location: "ABQ", survey_locations: ["CORP"], is_active: true },
+  { name: "Sandra Rivera", location: "ABQ", survey_locations: ["CORP"], is_active: true },
+  { name: "Amanda Plotner", location: "LL", survey_locations: ["LL", "ABQ"], is_active: true },
+  { name: "Kennedy Example", location: "ABQ", survey_locations: null, is_active: true },
+  { name: "Ginger Twice", location: "ABQ", survey_locations: ["CORP"], is_active: true },
+  { name: "Ginger Twice", location: "ABQ", survey_locations: null, is_active: false },
+  { name: "Pat Twin", location: "ABQ", survey_locations: ["CORP"], is_active: true },
+  { name: "Pat Twin", location: "LL", survey_locations: null, is_active: true },
+];
+ok("{CORP} is Corp-only", isCorpOnly("ABQ", ["CORP"]));
+ok("{CORP, ABQ} is not", !isCorpOnly("ABQ", ["CORP", "ABQ"]));
+ok("no survey_locations is not", !isCorpOnly("ABQ", null));
+eq("an old (ABQ) entry for Sandra is stored CORP", corpOnlyLabel("Sandra Rivera (ABQ)", ruleRows), "Sandra Rivera (CORP)");
+eq("…and for Amanda D", corpOnlyLabel("Amanda Davison (ABQ)", ruleRows), "Amanda Davison (CORP)");
+eq("a bare name is stored CORP", corpOnlyLabel("Sandra Rivera", ruleRows), "Sandra Rivera (CORP)");
+eq("name case and spacing do not matter; the stored name is the provider's", corpOnlyLabel("  sandra   rivera (abq)", ruleRows), "Sandra Rivera (CORP)");
+eq("an unknown office code is stored CORP", corpOnlyLabel("Sandra Rivera (ZZ)", ruleRows), "Sandra Rivera (CORP)");
+eq("a CORP label is unchanged", corpOnlyLabel("Sandra Rivera (CORP)", ruleRows), "Sandra Rivera (CORP)");
+eq("Plotner (ABQ) stays ABQ", corpOnlyLabel("Amanda Plotner (ABQ)", ruleRows), "Amanda Plotner (ABQ)");
+eq("Plotner (LL) stays LL", corpOnlyLabel("Amanda Plotner (LL)", ruleRows), "Amanda Plotner (LL)");
+eq("a provider who did not move is unchanged", corpOnlyLabel("Kennedy Example (ABQ)", ruleRows), "Kennedy Example (ABQ)");
+eq("an unknown name is unchanged", corpOnlyLabel("Nobody Here (ABQ)", ruleRows), "Nobody Here (ABQ)");
+eq("an empty answer is unchanged", corpOnlyLabel("", ruleRows), "");
+eq("an inactive duplicate does not make the active provider ambiguous", corpOnlyLabel("Ginger Twice (ABQ)", ruleRows), "Ginger Twice (CORP)");
+eq("two active providers of one name: unchanged", corpOnlyLabel("Pat Twin (ABQ)", ruleRows), "Pat Twin (ABQ)");
+
+// ---------------------------------------------------------------------------
 console.log("\naggregate");
 const roster: RosterEntry[] = [
   { id: 5, name: "Amanda Davison", shortName: "Amanda D", office: "ABQ", surveyLocations: ["CORP"], isActive: true },
@@ -92,13 +122,19 @@ function sub(label: string, date = "2026-10-03", ratings = [9, 9, 9, 9]): Submis
     payload: { formVariant: "in-person", modality: "In Person", language: "en", client: { name: `ZZTEST ${nextId}` }, answers },
   };
 }
+// Every label as the backfill and the write-time rule leave it: Sandra's
+// pre-move "(ABQ)" survey is stored CORP like the rest of hers.
 const subs = [
   sub("Amanda Plotner (ABQ)"), sub("Amanda Plotner (ABQ)"), sub("Amanda Plotner (LL)"),
-  sub("Sandra Rivera (ABQ)", "2026-09-15"),   // before the move: stays ABQ
+  sub("Sandra Rivera (ABQ)", "2026-09-15"),   // before the move: now Corp too
   sub("Sandra Rivera (CORP)"),
+  sub("Amanda Davison (ABQ)", "2026-09-20"),
   sub("Amanda Davison (CORP)"),
   sub("Kennedy Example (ABQ)"), sub("Jill Example (LL)"),
-];
+].map((s) => {
+  const a = s.payload.answers as Record<string, unknown>;
+  return { ...s, payload: { ...s.payload, answers: { ...a, therapist: corpOnlyLabel(String(a.therapist), ruleRows) } } };
+});
 const agg = aggregateSurveys({ roster, submissions: subs, period: { from: "2026-09-01", to: "2026-10-31" } });
 const rows = (name: string) => agg.providers.filter((p) => p.name === name)
   .map((p) => ({ office: p.office, short: p.shortName, n: p.surveyCount, owns: p.ownsActiveCount }));
@@ -106,10 +142,12 @@ const rows = (name: string) => agg.providers.filter((p) => p.name === name)
 eq("Plotner: one row per office, ABQ 2 and LL 1, the caseload on LL",
   rows("Amanda Plotner"),
   [{ office: "ABQ", short: "Amanda P (ABQ)", n: 2, owns: false }, { office: "LL", short: "Amanda P (LL)", n: 1, owns: true }]);
-eq("Sandra: her pre-move ABQ survey stays ABQ; the new one is Corp; caseload on Corp",
-  rows("Sandra Rivera"),
-  [{ office: "CORP", short: "Sandra (CORP)", n: 1, owns: true }, { office: "ABQ", short: "Sandra (ABQ)", n: 1, owns: false }]);
-eq("Amanda D: Corp only", rows("Amanda Davison"), [{ office: "CORP", short: "Amanda D", n: 1, owns: true }]);
+eq("Sandra: one row, Corp, both surveys (the pre-move one included)",
+  rows("Sandra Rivera"), [{ office: "CORP", short: "Sandra", n: 2, owns: true }]);
+eq("Amanda D: one row, Corp, both surveys", rows("Amanda Davison"), [{ office: "CORP", short: "Amanda D", n: 2, owns: true }]);
+ok("no ABQ row for either", !agg.providers.some((p) => ["Sandra Rivera", "Amanda Davison"].includes(p.name) && p.office !== "CORP"));
+eq("their Data rows all say CORP",
+  agg.dataRows.filter((r) => ["Sandra Rivera", "Amanda Davison"].includes(r.provider)).map((r) => r.office), ["CORP", "CORP", "CORP", "CORP"]);
 eq("a provider who did not move is untouched", rows("Kennedy Example"), [{ office: "ABQ", short: "Kennedy", n: 1, owns: true }]);
 eq("Corp is its own office, listed first", agg.offices, ["CORP", "ABQ", "LL"]);
 eq("nothing unresolved", agg.unresolved.length, 0);
@@ -127,9 +165,10 @@ const counts: ActiveClientCounts = {
 };
 const { buffer, sheetNames } = buildSurveyWorkbook(agg, counts);
 ok("Plotner has a tab per office", sheetNames.includes("Amanda P (ABQ)") && sheetNames.includes("Amanda P (LL)"));
-ok("Sandra and Amanda D have Corp tabs", sheetNames.includes("Sandra (CORP)") && sheetNames.includes("Amanda D"));
+ok("Sandra and Amanda D have one tab each", sheetNames.includes("Sandra") && sheetNames.includes("Amanda D"));
+ok("…and no ABQ tab", !sheetNames.some((n) => /^(Sandra|Amanda D) \(/.test(n)), JSON.stringify(sheetNames));
 const firstProviderTab = sheetNames[4];
-eq("provider tabs start with the Corp office, as the template does", ["Amanda D", "Sandra (CORP)"].includes(firstProviderTab), true);
+eq("provider tabs start with the Corp office, as the template does", ["Amanda D", "Sandra"].includes(firstProviderTab), true);
 
 const zip = unzipSync(new Uint8Array(buffer));
 const shared = (() => {
@@ -151,7 +190,9 @@ ok("Plotner's two rows are on the analysis sheet", !!pAbq && !!pLl);
 eq("LL row carries her 20 active clients", cells[`C${pLl}`]?.v, "20");
 eq("ABQ row carries none, so the caseload is not counted twice", cells[`C${pAbq}`], undefined);
 eq("…and her rows sit under their own offices", [cells[`B${pAbq}`]?.v, cells[`B${pLl}`]?.v], ["ABQ", "LL"]);
-const corpRows = ["Amanda D", "Sandra (CORP)"].map(rowOf).map(Number);
+const corpRows = ["Amanda D", "Sandra"].map(rowOf).map(Number);
+eq("one analysis row each for Sandra and Amanda D, under CORP", corpRows.map((r) => cells[`B${r}`]?.v), ["CORP", "CORP"]);
+ok("no other analysis row for them", !Object.keys(cells).some((k) => /^A\d+$/.test(k) && /^(Sandra|Amanda D) \(/.test(cells[k].v)));
 const abqRow = Number(rowOf("Kennedy"));
 ok("Corp rows come before ABQ rows on the analysis sheet", corpRows.every((r) => r < abqRow), JSON.stringify({ corpRows, abqRow }));
 const comments = Object.keys(zip).filter((k) => /comments\d*\.xml$/.test(k)).map((k) => strFromU8(zip[k])).join("");
@@ -174,9 +215,12 @@ eq("Plotner split: ABQ 2 surveys, no count, counted at LL",
 eq("Plotner split: LL 1 survey, 20 clients", [snapRow("Amanda P (LL)")?.surveys, snapRow("Amanda P (LL)")?.activeClients], [1, 20]);
 const office = (o: string) => snap.offices.find((x) => x.office === o);
 eq("offices in template order", snap.offices.map((o) => o.office), ["CORP", "ABQ", "LL"]);
-eq("Corp: Sandra + Amanda D, 2 surveys, 14 clients", [office("CORP")?.surveys, office("CORP")?.activeClients], [2, 14]);
-eq("ABQ total is complete (Plotner's ABQ row and Sandra's old ABQ row do not hold it back)",
-  [office("ABQ")?.missingCounts, office("ABQ")?.activeClients, office("ABQ")?.surveys], [0, 9, 4]);
+eq("snapshot: one row each for Sandra and Amanda D, CORP",
+  snap.providers.filter((p) => ["Sandra Rivera", "Amanda Davison"].includes(p.name)).map((p) => [p.shortName, p.office, p.surveys]),
+  [["Amanda D", "CORP", 2], ["Sandra", "CORP", 2]]);
+eq("Corp: Sandra + Amanda D, 4 surveys, 14 clients", [office("CORP")?.surveys, office("CORP")?.activeClients], [4, 14]);
+eq("ABQ total drops their surveys: Plotner 2 + Kennedy 1",
+  [office("ABQ")?.missingCounts, office("ABQ")?.activeClients, office("ABQ")?.surveys], [0, 9, 3]);
 eq("LL: Plotner 20 + Jill 9", office("LL")?.activeClients, 29);
 eq("practice total counts each caseload once", snap.total.activeClients, 6 + 8 + 20 + 9 + 9);
 

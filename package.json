@@ -58,6 +58,7 @@
     "test:survey-delete-db": "tsx --tsconfig tsconfig.test.json scripts/test-survey-delete-db.ts",
     "test:count-overrides": "tsx scripts/test-active-count-overrides.ts",
     "test:snapshot": "tsx scripts/test-survey-snapshot.ts",
+    "test:survey-corp-labels-db": "tsx --tsconfig tsconfig.test.json scripts/test-survey-corp-labels-db.ts",
     "test:survey-locations": "tsx --tsconfig tsconfig.test.json scripts/test-survey-locations.ts",
     "test:attach-review": "tsx scripts/test-attach-review-and-pull-health.ts",
     "test:intake": "tsx scripts/test-intake-rfs.ts",
