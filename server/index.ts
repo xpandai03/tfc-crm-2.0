@@ -390,6 +390,9 @@ function resolveBuildInfo(): { commit: string; source: string } {
     // and it is what makes a double-attach impossible: one row per submission,
     // claimed atomically. Additive CREATE TABLE IF NOT EXISTS, no ALTER.
     await initSurveyAttachTable();
+    // Corp-only providers' past surveys relabelled CORP (server/survey/corp-labels.ts,
+    // migrations/backfill-corp-survey-labels.sql). Idempotent; never fatal to boot.
+    await (await import("./survey/corp-labels")).applyCorpSurveyLabelBackfill();
     // Three strikes applies at once to surveys already refused nightly
     // (server/survey/attach-strikes.ts). Never fatal to boot.
     void import("./survey/attach-strikes").then((m) => m.sweepStrikes()).catch((e) =>

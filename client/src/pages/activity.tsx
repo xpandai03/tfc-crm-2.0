@@ -27,6 +27,7 @@ function getEventIcon(type: string) {
     case "survey_deleted":
       return <Trash2 className="h-4 w-4 text-red-500" />;
     case "contact_updated":
+    case "survey_relabelled":
       return <Pencil className="h-4 w-4 text-purple-500" />;
     case "document_uploaded":
       return <FileText className="h-4 w-4 text-sky-600" />;

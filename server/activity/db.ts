@@ -64,7 +64,10 @@ export type ActivityType =
   | "tn_schedule_failed"
   | "survey_attach_completed"
   | "survey_attach_failed"
-  | "survey_deleted";
+  | "survey_deleted"
+  // A survey's stored therapist label moved to another office (the Corp-only
+  // backfill). Metadata: submissionId, provider, from, to. Never the client.
+  | "survey_relabelled";
 
 export interface LogActivityParams {
   type: ActivityType;
@@ -636,6 +639,11 @@ function formatActivitySummary(
     case "survey_deleted":
       return `Client survey #${String(metadata.submissionId ?? "?")} deleted from Submissions ` +
         `(kept on record; nothing removed from TherapyNotes)`;
+
+    // entityName is the FIXED string "Client survey", as for attach above.
+    case "survey_relabelled":
+      return `Client survey #${String(metadata.submissionId ?? "?")} for ${String(metadata.provider || "a provider")} ` +
+        `moved from ${String(metadata.from || "no office")} to ${String(metadata.to || "?")}`;
 
     case "report_exported": {
       // Referral report builder — PHI-identified export audit entry. No PHI in

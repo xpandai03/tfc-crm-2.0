@@ -17,6 +17,11 @@
  * a past survey counts under is read back from that label (officeFromLabel), not
  * from where the provider sits today — moving a provider never moves their old
  * surveys.
+ *
+ * ONE EXCEPTION, at the practice's request (2026-10-07): a provider whose survey
+ * offices are exactly {CORP} has every survey stored "Name (CORP)", whatever the
+ * form offered, and Sandra Rivera's and Amanda Davison's earlier surveys were
+ * relabelled to match. See server/survey/corp-labels.ts.
  */
 
 /** Display and sort order. Matches the client's template: Corp first. */

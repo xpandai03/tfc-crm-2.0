@@ -13,6 +13,8 @@
 import crypto from "crypto";
 import { getPool } from "../db/pool";
 import { logStatusChange } from "../activity/db";
+import { applyCorpOnlyRule } from "../survey/corp-labels";
+import { SURVEY_FORM_TYPE } from "@shared/survey-questions";
 import {
   getStatusLabel,
   isActiveStatusCode,
@@ -2351,6 +2353,9 @@ export async function insertSubmission(fields: {
   data: Record<string, unknown>;
 }): Promise<number> {
   const pool = getPool();
+  // Every survey, from any route: a Corp-only provider's label is stored as
+  // "Name (CORP)" whatever office the form offered. See server/survey/corp-labels.ts.
+  const data = fields.formType === SURVEY_FORM_TYPE ? await applyCorpOnlyRule(fields.data) : fields.data;
   const result = await pool.query(`
     INSERT INTO form_submissions (form_type, source, submitted_at, contact_id, name, payload)
     VALUES ($1, $2, $3, $4, $5, $6)
@@ -2361,7 +2366,7 @@ export async function insertSubmission(fields: {
     fields.submittedAt || null,
     fields.contactId ?? null,
     fields.name || "",
-    JSON.stringify(fields.data),
+    JSON.stringify(data),
   ]);
   return result.rows[0].id as number;
 }
