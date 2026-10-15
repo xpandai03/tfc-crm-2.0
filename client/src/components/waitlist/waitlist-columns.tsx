@@ -77,7 +77,20 @@ function compactText(value: unknown): ReactNode {
   );
 }
 
-export type SortField = "daysOnWaitlist" | "dateAdded" | "name";
+export type SortField = "daysOnWaitlist" | "dateAdded" | "initialAppointment" | "name";
+
+/**
+ * Sort two YYYY-MM-DD dates (the scheduled initial appointment). A contact with
+ * none sorts LAST in either direction — "no appointment yet" is not "earliest".
+ */
+export function compareOptionalIsoDate(a: string | null | undefined, b: string | null | undefined, direction: "asc" | "desc"): number {
+  const x = (a ?? "").slice(0, 10), y = (b ?? "").slice(0, 10);
+  if (!x && !y) return 0;
+  if (!x) return 1;
+  if (!y) return -1;
+  const c = x < y ? -1 : x > y ? 1 : 0;
+  return direction === "asc" ? c : -c;
+}
 export type SortDirection = "asc" | "desc";
 
 export const umbrellaColors: Record<UmbrellaId, string> = {
@@ -457,7 +470,31 @@ export const WAITLIST_COLUMNS: WaitlistColumnDef[] = [
     cellClass: "px-2 text-xs text-muted-foreground",
     // dateAdded remains the default SORT field even while this column is
     // hidden — the two are independent.
+    header: ({ toggleSort, sortField, sortDirection }) => (
+      <Button variant="ghost" size="sm" className="-ml-2 h-8 px-1" onClick={() => toggleSort("dateAdded")}>
+        Date Added
+        <SortIcon field="dateAdded" sortField={sortField} sortDirection={sortDirection} />
+      </Button>
+    ),
     render: (contact) => formatListDate(contact.dateAdded),
+  },
+  // The scheduled initial appointment — the date the contact's scheduling card
+  // shows (sync_contacts.scheduled_appointment_date, set by Add to Schedule in
+  // TN). Directly after Date Added in the default order; blank when none.
+  {
+    id: "initialAppointment",
+    label: "Initial appointment date",
+    order: 11.5,
+    defaultVisible: false,
+    widthClass: "w-[120px] px-2",
+    cellClass: "px-2 text-xs text-muted-foreground",
+    header: ({ toggleSort, sortField, sortDirection }) => (
+      <Button variant="ghost" size="sm" className="-ml-2 h-8 px-1" onClick={() => toggleSort("initialAppointment")}>
+        Initial appointment date
+        <SortIcon field="initialAppointment" sortField={sortField} sortDirection={sortDirection} />
+      </Button>
+    ),
+    render: (contact) => (contact.scheduledAppointmentDate ? formatListDate(contact.scheduledAppointmentDate) : ""),
   },
   {
     id: "language",

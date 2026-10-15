@@ -33,6 +33,7 @@ import {
 import {
   SURVEY_MAX_BODY_BYTES,
   SURVEY_MIN_COMPLETION_MS,
+  SURVEY_TOO_FAST_MESSAGE,
   buildSurveyPayload,
   completionTimingProblem,
   honeypotTripped,
@@ -341,6 +342,19 @@ console.log("\n[6] Protections still hold, with more free text than before");
   eq("a clock ahead is refused", completionTimingProblem(t + 10_000, t), "too-fast");
   eq("a plausible fill is accepted", completionTimingProblem(t, t + 60_000), null);
   eq("a stale load is refused", completionTimingProblem(t, t + 13 * 60 * 60 * 1000), "stale");
+  // 2026-10-15: the floor is 20s (was 5s) and the message asks for a review.
+  eq("the floor is 20 seconds", SURVEY_MIN_COMPLETION_MS, 20_000);
+  eq("19.9s is refused", completionTimingProblem(t, t + 19_900), "too-fast");
+  eq("20s is accepted", completionTimingProblem(t, t + 20_000), null);
+  eq("the client-facing message", SURVEY_TOO_FAST_MESSAGE, "Please review your answers and submit again.");
+  ok("the route sends that message on too-fast",
+    readFileSync(join(process.cwd(), "server", "survey", "routes.ts"), "utf8")
+      .includes(`.status(429)\n          .json({ error: "${SURVEY_TOO_FAST_MESSAGE}" });`));
+  ok("the old bot-sounding wording is gone everywhere",
+    !/submitted too quickly/.test(readFileSync(join(process.cwd(), "server", "survey", "routes.ts"), "utf8")) &&
+    !/submitted too quickly/.test(readFileSync(join(process.cwd(), "shared", "survey-copy.es.ts"), "utf8")));
+  ok("the message has a Spanish translation",
+    /"Please review your answers and submit again\.":\s*\n\s*"Por favor/.test(readFileSync(join(process.cwd(), "shared", "survey-copy.es.ts"), "utf8")));
 
   // Rate limit untouched.
   const rl = readFileSync(join(process.cwd(), "server", "survey", "rate-limit.ts"), "utf8");

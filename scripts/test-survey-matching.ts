@@ -288,8 +288,12 @@ const runnerReads = codeOnly(readFileSync(join(process.cwd(), "server", "survey"
   .match(/answers\??\.[A-Za-z_$][\w$]*/g) ?? [];
 ok("  the runner reads only the therapist answer",
   runnerReads.every((r) => r.endsWith(".therapist")), runnerReads.join(", "));
-ok("  the list row's reason note reads only a fixed label",
-  subsSrc.includes("REASON_SHORT[state.reason]") && !/MatchReasonNote[\s\S]{0,600}payload/.test(subsSrc));
+// 2026-10-15: the reason rides in the row's state chip ("Needs review: <reason>"),
+// built by shared/survey-row-state.ts from the same fixed REASON_SHORT labels.
+const rowStateSrc = readFileSync(join(process.cwd(), "shared", "survey-row-state.ts"), "utf8");
+ok("  the list row's reason reads only a fixed label",
+  rowStateSrc.includes("REASON_SHORT[match.reason]") && !/payload|answers|client/.test(codeOnly(rowStateSrc)) &&
+  subsSrc.includes("surveyRowState(state, attach)") && !/SurveyStateBadge[\s\S]{0,1400}payload/.test(subsSrc));
 ok("  confirm stays disabled until a contact is chosen",
   /disabled=\{busy \|\| chosen === null\}/.test(reviewSrc));
 ok("  resolutions still record who and when",

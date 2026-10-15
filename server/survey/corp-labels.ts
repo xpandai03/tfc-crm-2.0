@@ -7,11 +7,12 @@
  * {CORP} the practice wants no exception to that: not a survey from before the
  * move, not one posted by a form still showing an old "(ABQ)" entry. So:
  *
- *   1. AT WRITE TIME, corpOnlyLabel() rewrites the label of a survey for a
- *      CORP-only provider to "Name (CORP)" whatever office it arrived with.
- *      insertSubmission() applies it to every survey row, from any route.
- *      A provider at more than one office (Amanda Plotner, LL and ABQ) is left
- *      alone: the label is the only record of which office the client saw.
+ *   1. AT WRITE TIME, singleOfficeLabel() rewrites the label of a survey for a
+ *      provider with exactly one survey office to "Name (THAT OFFICE)" whatever
+ *      office it arrived with (CORP-only since 2026-10-07; general since
+ *      2026-10-15, for Amanda Plotner {LL}). insertSubmission() applies it to
+ *      every survey row, from any route. A provider at more than one office is
+ *      left alone: the label is the only record of which office the client saw.
  *   2. ONCE, AT BOOT, applyCorpSurveyLabelBackfill() relabels the existing
  *      surveys of Sandra Rivera and Amanda Davison, the two providers the
  *      practice moved. migrations/backfill-corp-survey-labels.sql is the same
@@ -39,19 +40,39 @@ export interface CorpRuleProviderRow {
 
 const normalizeName = (name: string) => name.trim().toLowerCase().replace(/\s+/g, " ");
 
+/**
+ * The one office every survey for this provider is stored under, or null.
+ *
+ * GENERAL since 2026-10-15 (it was "exactly {CORP}"): a provider whose survey
+ * office set was deliberately narrowed to exactly ONE office has every survey
+ * stored "Name (THAT OFFICE)", whatever the form offered — Sandra Rivera and
+ * Amanda Davison {CORP}, Amanda Plotner {LL} "for now". Adding a second office
+ * back to the set restores the label-as-submitted behaviour without code.
+ *
+ * "Deliberately" = survey_locations names exactly one known office. A provider
+ * with no survey_locations (the default: "same as location") is left alone,
+ * as before — except a location of CORP itself, which the CORP rule covered.
+ */
+export function singleSurveyOffice(location: string | null | undefined, surveyLocations: readonly string[] | null | undefined): string | null {
+  const offices = surveyOfficesFor(location, surveyLocations);
+  if (offices.length !== 1) return null;
+  const explicit = (surveyLocations ?? []).some((c) => (c ?? "").trim() !== "");
+  if (explicit || offices[0] === "CORP") return offices[0];
+  return null;
+}
+
 /** True when the provider's survey office set is exactly {CORP}. */
 export function isCorpOnly(location: string | null | undefined, surveyLocations: readonly string[] | null | undefined): boolean {
-  const offices = surveyOfficesFor(location, surveyLocations);
-  return offices.length === 1 && offices[0] === "CORP";
+  return singleSurveyOffice(location, surveyLocations) === "CORP";
 }
 
 /**
- * The label to store for a survey's therapist answer. "Name (CORP)" when the
- * name resolves to exactly one CORP-only provider (active rows preferred, as a
- * departed duplicate must not make a current provider ambiguous); otherwise the
- * label exactly as submitted.
+ * The label to store for a survey's therapist answer. "Name (OFFICE)" when the
+ * name resolves to exactly one single-office provider (active rows preferred,
+ * as a departed duplicate must not make a current provider ambiguous);
+ * otherwise the label exactly as submitted.
  */
-export function corpOnlyLabel(label: string, providers: readonly CorpRuleProviderRow[]): string {
+export function singleOfficeLabel(label: string, providers: readonly CorpRuleProviderRow[]): string {
   const bare = providerNameFromLabel(label);
   if (bare === "") return label;
   const named = providers.filter((p) => normalizeName(p.name ?? "") === normalizeName(bare));
@@ -59,9 +80,13 @@ export function corpOnlyLabel(label: string, providers: readonly CorpRuleProvide
   const candidates = active.length > 0 ? active : named;
   if (candidates.length !== 1) return label;
   const p = candidates[0];
-  if (!isCorpOnly(p.location, p.survey_locations)) return label;
-  return surveyProviderLabel(p.name.trim(), "CORP");
+  const office = singleSurveyOffice(p.location, p.survey_locations);
+  if (!office) return label;
+  return surveyProviderLabel(p.name.trim(), office);
 }
+
+/** The original name of the rule (2026-10-07), kept for its callers and tests. */
+export const corpOnlyLabel = singleOfficeLabel;
 
 /**
  * corpOnlyLabel() against crm_providers. FAILS OPEN: a lookup that cannot run
@@ -77,11 +102,11 @@ export async function surveyLabelForWrite(label: string): Promise<string> {
         WHERE lower(regexp_replace(trim(name), '\\s+', ' ', 'g')) = $1`,
       [normalizeName(bare)],
     );
-    const next = corpOnlyLabel(label, rows as CorpRuleProviderRow[]);
-    if (next !== label) console.log("[survey] therapist label set to CORP (provider is Corp-only)");
+    const next = singleOfficeLabel(label, rows as CorpRuleProviderRow[]);
+    if (next !== label) console.log("[survey] therapist label set to the provider's only survey office");
     return next;
   } catch (e) {
-    console.error(`[survey] Corp-only label check failed, label kept: ${e instanceof Error ? e.message : "unknown"}`);
+    console.error(`[survey] single-office label check failed, label kept: ${e instanceof Error ? e.message : "unknown"}`);
     return label;
   }
 }

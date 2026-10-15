@@ -291,6 +291,11 @@ export interface AggregateWarning {
  */
 export interface SurveyDataRow {
   submissionId: number;
+  /**
+   * The legal name the client typed on the survey, as stored. STAFF-ONLY: it
+   * reaches only the export's Data sheet (split into first / last there).
+   */
+  clientName: string;
   /** The YYYY-MM-DD the period filter used. */
   date: string;
   form: SurveyModality;
@@ -575,8 +580,10 @@ export function aggregateSurveys(input: AggregateInput): SurveyAggregate {
     const agg = providerAcc[key];
     agg.surveyCount++;
 
+    const typedName = (payload as { client?: { name?: unknown } }).client?.name;
     dataRows.push({
       submissionId: sub.id,
+      clientName: typeof typedName === "string" ? typedName : "",
       date,
       form: modality,
       variant,

@@ -759,6 +759,7 @@ export async function getAllSyncContacts(): Promise<SyncContact[]> {
       custody_doc_status AS "custodyDocStatus",
       hold_active AS "holdActive",
       hold_reason AS "holdReason",
+      scheduled_appointment_date AS "scheduledAppointmentDate",
       referral_source AS "referralSource",
       prior_services AS "priorServices",
       prior_provider AS "priorProvider",

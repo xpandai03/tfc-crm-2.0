@@ -36,7 +36,7 @@ import {
   SURVEY_SOURCE,
   languageFromParam,
 } from "@shared/survey-questions";
-import { REASON_SHORT, isMatchReason } from "@shared/survey-match-reasons";
+import { surveyRowState } from "@shared/survey-row-state";
 import { attachFailureText, attachIneligibleText } from "@shared/survey-attach-reasons";
 
 interface FormSubmission {
@@ -328,30 +328,6 @@ function RawPayloadModal({
 }
 
 /**
- * Why a row is waiting, shown on the row itself.
- *
- * The client asked for this directly: "on the error, can it say why it threw
- * the error — no date of birth found, or no name, or whatever the reason is."
- * A staff member should be able to see what a row needs from them before
- * opening it, and triage twenty rows without twenty dialogs.
- *
- * The stored value is a CODE, and the text is looked up from
- * @shared/survey-match-reasons — the same map the matcher and the review dialog
- * read. A human resolution stores its own sentence instead of a code, and that
- * is not rendered here: this line exists to explain an OUTSTANDING row.
- *
- * NO IDENTITY AND NO ANSWER CONTENT. Every string in REASON_SHORT is a fixed
- * label naming a field; none of them interpolates anything from the submission.
- */
-function MatchReasonNote({ state }: { state: MatchState | undefined }) {
-  if (!state || state.status !== "review") return null;
-  if (!isMatchReason(state.reason)) return null;
-  return (
-    <span className="text-[11px] text-amber-700/90">{REASON_SHORT[state.reason]}</span>
-  );
-}
-
-/**
  * When this row was last looked at.
  *
  * Matching runs on its own now — on arrival, and again after the overnight
@@ -376,20 +352,47 @@ function MatchCheckedNote({ state }: { state: MatchState | undefined }) {
   );
 }
 
-/** The match-state chip on a survey row. Identity state only — no answers. */
+/**
+ * The state chip on a survey row: "Filed to chart <date>", "Matched · files
+ * tonight 3:30 MT" or "Needs review: <reason>" (@shared/survey-row-state). The
+ * reason the client asked to see on the row ("why it threw the error") now
+ * rides in the chip. A row not yet matched, or matched to no contact, keeps
+ * MatchBadge's chip. Codes, dates and fixed labels only — never identity.
+ */
+function SurveyStateBadge({ id, state, attach }: { id: number; state: MatchState | undefined; attach: AttachState | undefined }) {
+  const row = surveyRowState(state, attach);
+  if (!row) return <MatchBadge state={state} />;
+  if (row.kind === "filed") {
+    return (
+      <Badge className="text-[10px] px-1.5 py-0 shrink-0 gap-1 bg-sky-700 hover:bg-sky-700" data-testid={`survey-state-${id}`}>
+        <CheckCircle2 className="h-2.5 w-2.5" /> {row.text}
+      </Badge>
+    );
+  }
+  if (row.kind === "files_tonight") {
+    return (
+      <Badge
+        className="text-[10px] px-1.5 py-0 shrink-0 gap-1 bg-emerald-600 hover:bg-emerald-600"
+        data-testid={`survey-state-${id}`}
+        title={state?.resolvedBy ? "Matched (confirmed by staff)" : undefined}
+      >
+        <UserCheck className="h-2.5 w-2.5" /> {row.text}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0 gap-1 border-amber-500 text-amber-700" data-testid={`survey-state-${id}`}>
+      <UserSearch className="h-2.5 w-2.5" /> {row.text}
+    </Badge>
+  );
+}
+
+/** The match-state chip for a row with no state yet, or matched to no contact. */
 function MatchBadge({ state }: { state: MatchState | undefined }) {
   if (!state) {
     return (
       <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0 gap-1">
         <UserSearch className="h-2.5 w-2.5" /> Not yet matched
-      </Badge>
-    );
-  }
-  if (state.status === "matched") {
-    return (
-      <Badge className="text-[10px] px-1.5 py-0 shrink-0 gap-1 bg-emerald-600 hover:bg-emerald-600">
-        <UserCheck className="h-2.5 w-2.5" />
-        {state.resolvedBy ? "Matched (confirmed)" : "Matched"}
       </Badge>
     );
   }
@@ -819,8 +822,13 @@ export default function Submissions() {
                             {surveyLanguage(sub).toUpperCase()}
                           </Badge>
                         )}
-                        {isSurveySubmission(sub) && <MatchBadge state={stateFor(sub.id)} />}
-                        {isSurveySubmission(sub) && <MatchReasonNote state={stateFor(sub.id)} />}
+                        {isSurveySubmission(sub) && (
+                          <SurveyStateBadge
+                            id={sub.id}
+                            state={stateFor(sub.id)}
+                            attach={attachFor(sub.id)}
+                          />
+                        )}
                         {isSurveySubmission(sub) && <MatchCheckedNote state={stateFor(sub.id)} />}
                       </div>
                       <span

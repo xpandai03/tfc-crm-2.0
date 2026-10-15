@@ -260,9 +260,10 @@ export function registerSurveyPublicRoutes(app: Express): void {
       const timing = completionTimingProblem(input.formLoadedAt, now);
       if (timing === "too-fast") {
         console.warn("[survey] REJECTED: completed implausibly fast");
+        // Literal (= SURVEY_TOO_FAST_MESSAGE): the copy test reads route strings.
         return res
           .status(429)
-          .json({ error: "That was submitted too quickly. Please try again." });
+          .json({ error: "Please review your answers and submit again." });
       }
       if (timing === "stale") {
         console.warn("[survey] REJECTED: stale form load");
