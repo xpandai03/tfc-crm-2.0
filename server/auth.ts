@@ -3,6 +3,7 @@ import { Strategy as OpenIDConnectStrategy } from "passport-openidconnect";
 import type { Express, Request, Response, NextFunction } from "express";
 import session from "express-session";
 import MemoryStore from "memorystore";
+import { loginUrlFor, safeReturnPath } from "@shared/safe-return-path";
 
 // User type for session
 export interface AuthUser {
@@ -207,6 +208,9 @@ function setupAuthRoutes(app: Express): void {
   // Login route - initiates OIDC flow
   app.get("/auth/login", (req: Request, res: Response, next: NextFunction) => {
     console.log("[AUTH] Login route hit");
+    // Where to go after sign-in: a contact or submission page only
+    // (shared/safe-return-path.ts). Anything else is dropped, never followed.
+    rememberReturnTo(req);
     // The session id IS the session to anyone holding it, and req.headers.cookie
     // carried tfc.sid verbatim. Whether a session and a cookie were present is
     // the whole diagnostic value; the values themselves were the leak.
@@ -263,6 +267,10 @@ function setupAuthRoutes(app: Express): void {
         console.log("[AUTH]   Authorization code received: yes");
       }
 
+      // Read BEFORE req.logIn: passport 0.7 regenerates the session on login,
+      // which drops anything stored in it.
+      const returnTo = takeReturnTo(req);
+
       passport.authenticate("azure-ad", (err: any, user: any, info: any) => {
         console.log("[AUTH] Passport authenticate result:");
         console.log("[AUTH]   Error:", err);
@@ -292,7 +300,9 @@ function setupAuthRoutes(app: Express): void {
           }
 
           console.log("[AUTH] User logged in successfully:", user.email);
-          return res.redirect("/");
+          // The page they asked for (contact / submission), else home.
+          console.log("[AUTH]   Returning to:", returnTo ? returnTo.replace(/\d+/g, "<id>") : "/");
+          return res.redirect(returnTo ?? "/");
         });
       })(req, res, next);
     }
@@ -338,6 +348,26 @@ function setupAuthRoutes(app: Express): void {
   });
 }
 
+/**
+ * Keep a safe ?returnTo= on the session for the callback. Re-checked here:
+ * the query string is the user's to edit.
+ */
+export function rememberReturnTo(req: Request): void {
+  const safe = safeReturnPath(req.query?.returnTo);
+  const s = req.session as unknown as { returnTo?: string } | undefined;
+  if (!s) return;
+  if (safe) s.returnTo = safe;
+  else delete s.returnTo;
+}
+
+/** The stored return path (re-checked), removed from the session. */
+export function takeReturnTo(req: Request): string | null {
+  const s = req.session as unknown as { returnTo?: string } | undefined;
+  const safe = safeReturnPath(s?.returnTo);
+  if (s) delete s.returnTo;
+  return safe;
+}
+
 // Middleware to require authentication
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   if (req.isAuthenticated()) {
@@ -350,8 +380,9 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
     return;
   }
 
-  // For page requests, redirect to login
-  res.redirect("/auth/login");
+  // For page requests, redirect to login — carrying the page when it is a
+  // contact or a submission, so sign-in returns there (a Teams link).
+  res.redirect(req.method === "GET" ? loginUrlFor(req.originalUrl) : "/auth/login");
 }
 
 // Middleware to skip auth for specific paths
