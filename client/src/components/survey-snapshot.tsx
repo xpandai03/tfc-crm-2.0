@@ -80,6 +80,10 @@ interface PatientPull {
   lastAttemptAt: string | null;
   lastAttemptOk: boolean | null;
   lastFailure: string | null;
+  /** The agent's daily selector smoke: "TN layout changed: …", or null. */
+  tnLayout?: string | null;
+  /** "TN password expires in N days", or null. */
+  tnPassword?: string | null;
 }
 
 /**
@@ -102,9 +106,10 @@ function PatientPullLine({ pull }: { pull: PatientPull | null }) {
   const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "never");
   const stale = !pull.capturedAt || Date.now() - new Date(pull.capturedAt).getTime() > PULL_STALE_MS;
   const failed = pull.lastAttemptOk === false;
+  const agentWarning = !!(pull.tnLayout || pull.tnPassword);
   return (
     <p
-      className={`text-[11px] ${failed || stale ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}
+      className={`text-[11px] ${failed || stale || agentWarning ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}
       data-testid="patient-pull-health"
     >
       TherapyNotes patient list: {pull.rows.toLocaleString()} patients, read {when(pull.capturedAt)}.
@@ -113,6 +118,8 @@ function PatientPullLine({ pull }: { pull: PatientPull | null }) {
         : stale
           ? " This is more than a day old — the nightly read has not refreshed it."
           : ""}
+      {pull.tnLayout ? ` ${pull.tnLayout}.` : ""}
+      {pull.tnPassword ? ` ${pull.tnPassword}.` : ""}
     </p>
   );
 }

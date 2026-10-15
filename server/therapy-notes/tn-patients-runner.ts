@@ -27,7 +27,7 @@
 import { logActivity } from "../activity/db";
 import { replaceTnPatients, tnPatientStats, type TnPatientRow } from "./tn-patients-db";
 
-const TN_AGENT_BASE_URL =
+export const TN_AGENT_BASE_URL =
   process.env.TN_AGENT_BASE_URL ||
   (process.env.TN_AGENT_URL || "").replace(/\/api\/tn\/.*$/, "") ||
   "https://axiom-browser-agent-clone-production.up.railway.app";
