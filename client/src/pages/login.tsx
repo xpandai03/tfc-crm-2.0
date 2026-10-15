@@ -1,6 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
+import { loginUrlFor } from "@shared/safe-return-path";
 
 export default function Login() {
   const [location] = useLocation();
@@ -9,8 +10,10 @@ export default function Login() {
   const params = new URLSearchParams(window.location.search);
   const error = params.get("error");
 
+  // Back to this page after sign-in when it is a contact or a submission
+  // (shared/safe-return-path.ts); otherwise home.
   const handleLogin = () => {
-    window.location.href = "/auth/login";
+    window.location.href = loginUrlFor(window.location.pathname + window.location.search);
   };
 
   return (

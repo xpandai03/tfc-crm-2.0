@@ -145,8 +145,10 @@ console.log("\n[4] Authentication itself is untouched");
     /const publicPaths = \[[\s\S]*?"\/auth\/login",[\s\S]*?"\/api\/internal\/tn-progress\/",[\s\S]*?\];/.test(code));
   check("requireAuth still gates /api/ with a 401",
     /req\.path\.startsWith\("\/api\/"\)[\s\S]{0,140}res\.status\(401\)/.test(code));
+  // 2026-10-15: the login route now carries a contact/submission page as
+  // ?returnTo= (shared/safe-return-path.ts); it is still the login route.
   check("requireAuth still redirects pages to the login route",
-    /res\.redirect\("\/auth\/login"\);/.test(code));
+    /res\.redirect\(req\.method === "GET" \? loginUrlFor\(req\.originalUrl\) : "\/auth\/login"\);/.test(code));
   check("the allowed-domain list is unchanged",
     /\["tfc\.help", "thefamilyconnection\.org", "tfc\.health"\]/.test(code));
   check("the session cookie is still httpOnly and secure in production",
