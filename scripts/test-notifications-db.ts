@@ -67,17 +67,20 @@ async function main() {
 
   // -------------------------------------------------------------------------
   console.log("\nboot: v245's muted seed, then this release's one-time unmute");
-  // Production as v245 left it: seven staff seeded muted, Lane unmuted by hand.
+  // Production as v245 left it (2026-10-15): Sandra and Erica still seed-muted;
+  // Chantel and Victoria muted THEMSELVES; Amaya, Lane and Nona switched on.
   await pool.query(`CREATE TABLE notification_preferences (
       email TEXT PRIMARY KEY, muted BOOLEAN NOT NULL DEFAULT FALSE, updated_by TEXT,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
   await pool.query(
     `INSERT INTO notification_preferences (email, muted, updated_by)
      SELECT unnest($1::text[]), TRUE, 'seed'`,
-    [["amayac@tfc.health", "chantel@tfc.health", "ebenavidez@tfc.health", "nbockius@tfc.health",
-      "sandra@tfc.health", "victoria@tfc.health"]],
+    [["ebenavidez@tfc.health", "sandra@tfc.health"]],
   );
-  await pool.query(`INSERT INTO notification_preferences (email, muted, updated_by) VALUES ('lsego@tfc.health', FALSE, 'raunek@tfc.health')`);
+  await pool.query(`INSERT INTO notification_preferences (email, muted, updated_by) VALUES
+    ('chantel@tfc.health', TRUE, 'chantel@tfc.health'), ('victoria@tfc.health', TRUE, 'victoria@tfc.health'),
+    ('amayac@tfc.health', FALSE, 'amayac@tfc.health'), ('lsego@tfc.health', FALSE, 'lsego@tfc.health'),
+    ('nbockius@tfc.health', FALSE, 'nbockius@tfc.health')`);
   const logs: string[] = [];
   const origLog = console.log;
   console.log = (...a: unknown[]) => { logs.push(a.join(" ")); origLog(...a); };
@@ -85,11 +88,14 @@ async function main() {
   console.log = origLog;
   const prefs = await db.listPreferences();
   eq("seven staff on the list", prefs.length, 7);
-  ok("all seven unmuted after the first boot", prefs.every((p) => !p.muted), JSON.stringify(prefs));
-  eq("the six that were muted are marked by the release", prefs.filter((p) => p.updatedBy === db.STAFF_UNMUTE_KEY).map((p) => p.email).sort(),
-    ["amayac@tfc.health", "chantel@tfc.health", "ebenavidez@tfc.health", "nbockius@tfc.health", "sandra@tfc.health", "victoria@tfc.health"]);
-  ok("the boot log names the seven staff unmuted",
-    logs.some((l) => /staff unmuted \(one time/.test(l) && /7 staff now unmuted/.test(l) && /lsego@tfc\.health/.test(l) && /switched off mute for 6/.test(l)), logs.join(" | "));
+  eq("the seed's mutes are lifted (Sandra, Erica)", prefs.filter((p) => p.updatedBy === db.STAFF_UNMUTE_KEY).map((p) => p.email).sort(),
+    ["ebenavidez@tfc.health", "sandra@tfc.health"]);
+  eq("people who muted themselves stay muted (Chantel, Victoria)", prefs.filter((p) => p.muted).map((p) => p.email).sort(),
+    ["chantel@tfc.health", "victoria@tfc.health"]);
+  eq("five of seven now receive", prefs.filter((p) => !p.muted).length, 5);
+  ok("the boot log reports all seven staff",
+    logs.some((l) => /staff unmute \(one time/.test(l) && /seed mutes lifted for 2: ebenavidez@tfc\.health, sandra@tfc\.health/.test(l)
+      && /5 of 7 staff now receive/.test(l) && /kept muted by their own choice: chantel@tfc\.health, victoria@tfc\.health/.test(l)), logs.join(" | "));
   ok("developer not seeded, so not muted", !(await db.isMuted("raunek@tfc.health")));
   await db.setMuted("sandra@tfc.health", true, "raunek@tfc.health");
   const again = await db.applyStaffUnmuteOnce();

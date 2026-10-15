@@ -120,12 +120,13 @@ export const STAFF_UNMUTE_KEY = "unmute-staff-2026-10-15";
 
 /**
  * Staff were seeded MUTED (v245) until the client sent its message format. It
- * did (2026-10-15), so on the first boot of that release every rule recipient
- * is unmuted ONCE. The key in notification_migrations means a later boot never
- * touches the switches again: anyone muted afterwards on /admin/notifications
- * stays muted. The per-person switch and NOTIFICATIONS_ENABLED are unchanged.
+ * did (2026-10-15), so on the first boot of that release the SEED's mutes are
+ * lifted ONCE. A person who muted THEMSELVES (updated_by is their own address,
+ * or anyone's but 'seed') keeps that choice — Raunek, 2026-10-15. The key in
+ * notification_migrations means a later boot never touches the switches again.
+ * The per-person switch and NOTIFICATIONS_ENABLED are unchanged.
  */
-export async function applyStaffUnmuteOnce(): Promise<{ applied: boolean; unmuted: string[]; staff: string[] }> {
+export async function applyStaffUnmuteOnce(): Promise<{ applied: boolean; unmuted: string[]; staff: string[]; keptMuted: string[] }> {
   const pool = getPool();
   await pool.query(`
     CREATE TABLE IF NOT EXISTS notification_migrations (
@@ -144,28 +145,35 @@ export async function applyStaffUnmuteOnce(): Promise<{ applied: boolean; unmute
     );
     if (claimed.rowCount === 0) {
       await client.query("COMMIT");
-      return { applied: false, unmuted: [], staff };
+      return { applied: false, unmuted: [], staff, keptMuted: [] };
     }
     const { rows } = await client.query(
       `UPDATE notification_preferences
           SET muted = FALSE, updated_by = $2, updated_at = NOW()
-        WHERE email = ANY($1::text[]) AND muted = TRUE
+        WHERE email = ANY($1::text[]) AND muted = TRUE AND updated_by = 'seed'
         RETURNING email`,
       [staff, STAFF_UNMUTE_KEY],
     );
     const unmuted = (rows as Array<{ email: string }>).map((r) => r.email).sort();
+    const state = await client.query(
+      `SELECT email, muted FROM notification_preferences WHERE email = ANY($1::text[]) ORDER BY email`,
+      [staff],
+    );
+    const keptMuted = (state.rows as Array<{ email: string; muted: boolean }>).filter((r) => r.muted).map((r) => r.email);
+    const on = staff.filter((e) => !keptMuted.includes(e));
     await client.query(`UPDATE notification_migrations SET detail = $2 WHERE key = $1`,
-      [STAFF_UNMUTE_KEY, JSON.stringify({ unmuted, staff })]);
+      [STAFF_UNMUTE_KEY, JSON.stringify({ unmuted, keptMuted, staff })]);
     await client.query("COMMIT");
     console.log(
-      `[notify] staff unmuted (one time, ${STAFF_UNMUTE_KEY}): ${staff.length} staff now unmuted — ` +
-        `${staff.join(", ")}; switched off mute for ${unmuted.length}: ${unmuted.join(", ") || "none"}`,
+      `[notify] staff unmute (one time, ${STAFF_UNMUTE_KEY}): seed mutes lifted for ${unmuted.length}: ` +
+        `${unmuted.join(", ") || "none"}; ${on.length} of ${staff.length} staff now receive: ${on.join(", ") || "none"}; ` +
+        `kept muted by their own choice: ${keptMuted.join(", ") || "none"}`,
     );
-    return { applied: true, unmuted, staff };
+    return { applied: true, unmuted, staff, keptMuted };
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
     console.error(`[notify] one-time staff unmute FAILED: ${e instanceof Error ? e.message : "unknown"}`);
-    return { applied: false, unmuted: [], staff };
+    return { applied: false, unmuted: [], staff, keptMuted: [] };
   } finally {
     client.release();
   }
