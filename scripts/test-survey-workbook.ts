@@ -18,7 +18,8 @@
 import { unzipSync, strFromU8 } from "fflate";
 import { writeFileSync } from "fs";
 import { aggregateSurveys, type RosterEntry, type SubmissionInput } from "../server/survey/aggregate";
-import { DATA_FIXED_HEADERS, dataColumns, buildSurveyWorkbook, sheetNameFor } from "../server/survey/workbook";
+import { DATA_FIXED_HEADERS, DATA_TRAILING_HEADER, dataColumns, buildSurveyWorkbook, sheetNameFor } from "../server/survey/workbook";
+import { splitLegalName } from "../shared/legal-name-split";
 import { questionsFor } from "../shared/survey-questions";
 
 // ===========================================================================
@@ -474,9 +475,10 @@ console.log("\n[9] Structure, wording and the trailing space");
   check("Survey Analysis keeps its trailing space",
     sheetNames[1] === "Survey Analysis " && wb.sheets["Survey Analysis"] === undefined);
   eq("...and the reader sees the same name", wb.names[1], "Survey Analysis ");
-  // The Data sheet: the raw surveys (client spec, 2026-10-06). One row per
-  // counted survey, one column per question (plus its comment column), after
-  // Submission ID, Date, Form, Provider, Location, Language.
+  // The Data sheet: the raw surveys (client spec, 2026-10-06; names 2026-10-15).
+  // One row per counted survey: Client First Name, Client Last Name, Date,
+  // Form, Provider, Location, Language, one column per question (plus its
+  // comment column), and Submission ID last.
   const data = wb.sheets["Data"];
   const cols = dataColumns();
   const colName = (i: number) => {
@@ -484,22 +486,29 @@ console.log("\n[9] Structure, wording and the trailing space");
     while (n > 0) { const m = (n - 1) % 26; out = String.fromCharCode(65 + m) + out; n = Math.floor((n - 1) / 26); }
     return out;
   };
-  eq("Data: the six fixed headers come first",
-    DATA_FIXED_HEADERS.map((_, i) => String(data[`${colName(i)}1`]?.v)), DATA_FIXED_HEADERS);
-  eq("Data: one header per column, nothing past the last",
-    [String(data[`${colName(DATA_FIXED_HEADERS.length + cols.length - 1)}1`]?.v ?? ""), data[`${colName(DATA_FIXED_HEADERS.length + cols.length)}1`]],
-    [cols[cols.length - 1].header, undefined]);
+  eq("Data: the seven fixed headers come first, names leading",
+    DATA_FIXED_HEADERS.map((_, i) => String(data[`${colName(i)}1`]?.v)),
+    ["Client First Name", "Client Last Name", "Date", "Form", "Provider", "Location", "Language"]);
+  const idCol = DATA_FIXED_HEADERS.length + cols.length;
+  eq("Data: Submission ID is the LAST column, nothing past it",
+    [String(data[`${colName(idCol - 1)}1`]?.v ?? ""), String(data[`${colName(idCol)}1`]?.v ?? ""), data[`${colName(idCol + 1)}1`]],
+    [cols[cols.length - 1].header, DATA_TRAILING_HEADER, undefined]);
   check("Data: every question of both forms has exactly one answer column",
     (() => {
       const keys = cols.filter((c) => c.kind === "answer").map((c) => c.key);
       const all = new Set([...questionsFor("in-person"), ...questionsFor("telehealth")].map((q) => q.key));
       return keys.length === all.size && keys.every((k) => all.has(k));
     })());
-  eq("Data: one row per counted survey", Object.keys(data).filter((k) => /^A\d+$/.test(k)).length - 1, a.dataRows.length);
-  eq("Data: rows are in submission order by date, ids in column A",
-    a.dataRows.map((_, i) => data[`A${i + 2}`]?.v), a.dataRows.map((r) => r.submissionId));
+  eq("Data: one row per counted survey", Object.keys(data).filter((k) => /^C\d+$/.test(k)).length - 1, a.dataRows.length);
+  eq("Data: rows are in submission order by date, ids in the last column",
+    a.dataRows.map((_, i) => data[`${colName(idCol)}${i + 2}`]?.v), a.dataRows.map((r) => r.submissionId));
+  eq("Data: first and last name from the legal name typed on the survey",
+    a.dataRows.map((_, i) => [data[`A${i + 2}`]?.v ?? "", data[`B${i + 2}`]?.v ?? ""]),
+    a.dataRows.map((r) => { const n = splitLegalName(r.clientName); return [n.first, n.last]; }));
+  check("Data: every fixture row has a first and a last name",
+    a.dataRows.every((_, i) => !!data[`A${i + 2}`]?.v && !!data[`B${i + 2}`]?.v));
   check("Data: provider, location and form are filled on every row",
-    a.dataRows.every((_, i) => !!data[`D${i + 2}`] && data[`C${i + 2}`] !== undefined));
+    a.dataRows.every((_, i) => !!data[`E${i + 2}`] && data[`D${i + 2}`] !== undefined));
   const overallCol = DATA_FIXED_HEADERS.length + cols.findIndex((c) => c.kind === "answer" && c.key === "overallRating");
   eq("Data: a 0-10 rating lands as a number under its own question",
     a.dataRows.map((_, i) => typeof data[`${colName(overallCol)}${i + 2}`]?.v).every((t) => t === "number"), true);

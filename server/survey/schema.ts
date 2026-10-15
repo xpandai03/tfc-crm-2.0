@@ -53,8 +53,18 @@ export const SURVEY_MAX_BODY_BYTES = 64 * 1024;
  * A submission arriving faster than this after the page rendered was not typed
  * by a person. Soft signal only — the client reports its own load time, so it
  * is forgeable; it costs nothing and catches unsophisticated scripted posts.
+ *
+ * 20 seconds since 2026-10-15 (was 5): the form is seven screens of questions,
+ * and nobody reads and answers it in under 20s. A device clock running ahead
+ * of the server's still reads as too fast (see completionTimingProblem).
  */
-export const SURVEY_MIN_COMPLETION_MS = 5000;
+export const SURVEY_MIN_COMPLETION_MS = 20_000;
+
+/**
+ * What the client is told when the check trips. It must not imply bot
+ * detection: the one client who saw the old wording was a person.
+ */
+export const SURVEY_TOO_FAST_MESSAGE = "Please review your answers and submit again.";
 
 /** A load time further in the past than this is stale or fabricated. */
 const SURVEY_MAX_COMPLETION_MS = 12 * 60 * 60 * 1000;

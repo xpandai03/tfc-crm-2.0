@@ -220,7 +220,7 @@ export default function Waitlist() {
       serviceType: [...SERVICE_TYPES, ...AGE_BANDS],
     },
     canUseStaffFilter: canStaffFilter,
-    validSortFields: ["daysOnWaitlist", "dateAdded", "name"],
+    validSortFields: ["daysOnWaitlist", "dateAdded", "initialAppointment", "name"],
   }), [canStaffFilter]);
 
   const restored: RestoreResult = useMemo(() => {

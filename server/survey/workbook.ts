@@ -42,6 +42,7 @@
  * would put #DIV/0! on every row of the analysis sheet.
  */
 
+import { splitLegalName } from "@shared/legal-name-split";
 import * as XLSX from "xlsx";
 import { addBordersAndBoldHeaders, type HeaderRefs } from "./xlsx-borders";
 import {
@@ -842,7 +843,14 @@ function buildProviderSheet(p: ProviderAggregate, known: ActiveCountCell | undef
 // Data — the raw surveys
 // ============================================================================
 
-export const DATA_FIXED_HEADERS = ["Submission ID", "Date", "Form", "Provider", "Location", "Language"];
+/**
+ * The Data sheet's leading columns. The client's first and last name, from the
+ * legal name typed on the survey (2026-10-15: the export is staff-only), then
+ * the survey's own fields; one column per question follows, and the
+ * submission id is the LAST column, kept for traceability.
+ */
+export const DATA_FIXED_HEADERS = ["Client First Name", "Client Last Name", "Date", "Form", "Provider", "Location", "Language"];
+export const DATA_TRAILING_HEADER = "Submission ID";
 
 const LANGUAGE_LABEL: Record<string, string> = { en: "English", es: "Spanish" };
 
@@ -894,20 +902,25 @@ function buildDataSheet(agg: SurveyAggregate): BuiltSheet {
     s.header(col, 0, c.header);
     if (c.telehealthWording) s.comment(col, 0, `Telehealth form wording: ${c.telehealthWording}`);
   });
+  const idCol = DATA_FIXED_HEADERS.length + cols.length;
+  s.header(idCol, 0, DATA_TRAILING_HEADER);
   agg.dataRows.forEach((r, i) => {
     const row = i + 1;
-    s.num(0, row, r.submissionId);
-    s.text(1, row, r.date);
-    s.text(2, row, r.form);
-    s.text(3, row, r.provider);
-    s.text(4, row, r.office);
-    s.text(5, row, LANGUAGE_LABEL[r.language] ?? r.language);
+    const name = splitLegalName(r.clientName);
+    if (name.first) s.text(0, row, name.first);
+    if (name.last) s.text(1, row, name.last);
+    s.text(2, row, r.date);
+    s.text(3, row, r.form);
+    s.text(4, row, r.provider);
+    s.text(5, row, r.office);
+    s.text(6, row, LANGUAGE_LABEL[r.language] ?? r.language);
     cols.forEach((c, j) => {
       const col = DATA_FIXED_HEADERS.length + j;
       const v = c.kind === "answer" ? r.answers[c.key] : r.comments[c.key];
       if (typeof v === "number") s.num(col, row, v);
       else if (typeof v === "string" && v !== "") s.text(col, row, v);
     });
+    s.num(idCol, row, r.submissionId);
   });
   return { ws: s.finish(), headers: s.headers() };
 }
@@ -961,9 +974,10 @@ export function buildSurveyWorkbook(
     if (headers.length > 0) headerRefs.push({ sheetIndex: names.length, refs: headers });
   }
 
-  // Raw data, as the client specified on 2026-10-06: one row per survey, one
-  // column per question, plus date, form, provider, location, language and
-  // submission id. Same rows as every other sheet (agg.dataRows).
+  // Raw data, as the client specified on 2026-10-06 (names added 2026-10-15):
+  // one row per survey — client first and last name, date, form, provider,
+  // location, language, one column per question, submission id last. Same
+  // rows as every other sheet (agg.dataRows).
   const data = buildDataSheet(agg);
   add(data.ws, "Data", data.headers);
 

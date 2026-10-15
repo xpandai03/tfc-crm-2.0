@@ -67,7 +67,10 @@ export type ActivityType =
   | "survey_deleted"
   // A survey's stored therapist label moved to another office (the Corp-only
   // backfill). Metadata: submissionId, provider, from, to. Never the client.
-  | "survey_relabelled";
+  | "survey_relabelled"
+  // A provider's survey office set changed by a one-time migration (Amanda
+  // Plotner -> {LL}, 2026-10-15). Metadata: from, to, reason. Staff names only.
+  | "provider_survey_offices_set";
 
 export interface LogActivityParams {
   type: ActivityType;
@@ -644,6 +647,11 @@ function formatActivitySummary(
     case "survey_relabelled":
       return `Client survey #${String(metadata.submissionId ?? "?")} for ${String(metadata.provider || "a provider")} ` +
         `moved from ${String(metadata.from || "no office")} to ${String(metadata.to || "?")}`;
+
+    case "provider_survey_offices_set": {
+      const list = (v: unknown) => (Array.isArray(v) && v.length ? v.join(", ") : "none");
+      return `${entityName || "A provider"}'s survey offices set from ${list(metadata.from)} to ${list(metadata.to)}`;
+    }
 
     case "report_exported": {
       // Referral report builder — PHI-identified export audit entry. No PHI in

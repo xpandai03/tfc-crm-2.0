@@ -393,6 +393,10 @@ function resolveBuildInfo(): { commit: string; source: string } {
     // Corp-only providers' past surveys relabelled CORP (server/survey/corp-labels.ts,
     // migrations/backfill-corp-survey-labels.sql). Idempotent; never fatal to boot.
     await (await import("./survey/corp-labels")).applyCorpSurveyLabelBackfill();
+    // Amanda Plotner under Los Lunas "for now" (server/survey/plotner-ll.ts,
+    // migrations/backfill-plotner-ll.sql): her offices -> {LL} once, then her
+    // ABQ-labelled surveys -> LL while that holds. Never fatal to boot.
+    await (await import("./survey/plotner-ll")).applyPlotnerLosLunas();
     // Three strikes applies at once to surveys already refused nightly
     // (server/survey/attach-strikes.ts). Never fatal to boot.
     void import("./survey/attach-strikes").then((m) => m.sweepStrikes()).catch((e) =>

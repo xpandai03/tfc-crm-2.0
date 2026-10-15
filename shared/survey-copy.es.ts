@@ -359,8 +359,8 @@ export const MESSAGE_COPY: Record<string, string> = {
   "That response is too long to submit.": "Esa respuesta es demasiado larga para enviarla.",
   "Some answers were missing or invalid. Please check the form.":
     "Faltan algunas respuestas o no son válidas. Por favor, revise el formulario.",
-  "That was submitted too quickly. Please try again.":
-    "Se envió demasiado rápido. Por favor, inténtelo de nuevo.",
+  "Please review your answers and submit again.":
+    "Por favor, revise sus respuestas y envíelas de nuevo.",
   "This form has been open too long. Please reload and start again.":
     "Este formulario ha estado abierto demasiado tiempo. Por favor, vuelva a cargar la página y comience de nuevo.",
   "We have received a lot of responses from this network. Please try again later.":

@@ -57,7 +57,7 @@ const baseContact = (over: any = {}) => ({
 });
 
 // ---------------------------------------------------------------- config shape
-eq("35 columns (11 default + 24 optional)", WAITLIST_COLUMNS.length, 35);
+eq("36 columns (11 default + 25 optional)", WAITLIST_COLUMNS.length, 36);
 // The 11 stock columns must remain first and in their exact original order —
 // that is the pixel-identical guarantee for a non-customizing user.
 eq("stock 11 lead the default order", ALL_COLUMN_IDS_IN_DEFAULT_ORDER.slice(0, 11),
@@ -65,7 +65,7 @@ eq("stock 11 lead the default order", ALL_COLUMN_IDS_IN_DEFAULT_ORDER.slice(0, 1
 // A user with no saved prefs must see exactly the pre-feature table.
 eq("11 visible by default (identical to pre-feature)", DEFAULT_VISIBLE_COLUMN_IDS, 
   ["name","umbrella","status","daysWaiting","service","insurance","modality","assignedTo","assignedProvider","paperwork","household"]);
-eq("24 optional columns, all default-hidden", WAITLIST_COLUMNS.filter((c) => !c.defaultVisible).length, 24);
+eq("25 optional columns, all default-hidden", WAITLIST_COLUMNS.filter((c) => !c.defaultVisible).length, 25);
 // Phase 2 picker set.
 for (const id of ["lastContact","insurancePlan","insuranceStatus","referralSource","referralStatus",
                   "preferredContact","age","gender","city","county","state","zipCode",
@@ -92,8 +92,9 @@ ok("name is alwaysVisible", !!WAITLIST_COLUMNS_BY_ID.name.alwaysVisible);
 ok("only name is alwaysVisible", WAITLIST_COLUMNS.filter((c) => c.alwaysVisible).length === 1);
 ok("every column has a unique id", new Set(WAITLIST_COLUMNS.map((c) => c.id)).size === WAITLIST_COLUMNS.length);
 ok("order values are unique", new Set(WAITLIST_COLUMNS.map((c) => c.order)).size === WAITLIST_COLUMNS.length);
-ok("only name and daysWaiting have custom headers",
-   WAITLIST_COLUMNS.filter((c) => c.header).map((c) => c.id).join() === "name,daysWaiting");
+// Date Added and Initial appointment date (2026-10-15) sort from their headers too.
+ok("only name, daysWaiting and the two date columns have custom headers",
+   WAITLIST_COLUMNS.filter((c) => c.header).map((c) => c.id).join() === "name,daysWaiting,dateAdded,initialAppointment");
 
 // -------------------------------------------------------- width/padding parity
 // These are the exact classes the hand-written header carried.

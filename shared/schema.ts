@@ -175,6 +175,9 @@ export const waitlistContactSchema = z.object({
   custodyDocStatus: z.string().nullable().optional(),
   holdActive: z.boolean().optional(),
   holdReason: z.string().nullable().optional(),
+  // The scheduled initial appointment (ISO 'YYYY-MM-DD'), for the optional
+  // "Initial appointment date" column. Same field the scheduling card shows.
+  scheduledAppointmentDate: z.string().nullable().optional(),
   reasonForTherapy: z.array(z.string()).optional(), // Reason(s) for seeking services (for insights aggregation)
   language: z.string().nullable().optional(), // Preferred service language ("English"/"Spanish"); for wait-list filter
   patientDob: z.string().nullable().optional(), // Patient date of birth (YYYY-MM-DD or MM/DD/YYYY)

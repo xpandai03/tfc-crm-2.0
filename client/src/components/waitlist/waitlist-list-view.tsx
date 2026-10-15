@@ -38,6 +38,7 @@ import {
   WAITLIST_COLUMNS,
   WAITLIST_COLUMNS_BY_ID,
   buildProviderDisplayMap,
+  compareOptionalIsoDate,
   type SortField,
   type SortDirection,
   type WaitlistCellCtx,
@@ -596,6 +597,11 @@ export function WaitlistListView({
   // Sort contacts
   const sortedContacts = useMemo(() => {
     return [...filteredContacts].sort((a, b) => {
+      // Contacts with no appointment sort last whichever way, so this one
+      // returns its own direction-aware result.
+      if (sortField === "initialAppointment") {
+        return compareOptionalIsoDate(a.scheduledAppointmentDate, b.scheduledAppointmentDate, sortDirection);
+      }
       let comparison = 0;
 
       switch (sortField) {
