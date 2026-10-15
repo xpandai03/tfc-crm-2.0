@@ -243,6 +243,9 @@ export interface TnPullHealth {
   lastAttemptAt: string | null;
   lastAttemptOk: boolean | null;
   lastFailure: string | null;
+  /** From the agent's daily selector smoke (snapshot.ts, shared/tn-agent-smoke.ts). */
+  tnLayout?: string | null;
+  tnPassword?: string | null;
 }
 
 export async function tnPullHealth(): Promise<TnPullHealth> {

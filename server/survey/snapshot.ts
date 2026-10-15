@@ -47,6 +47,8 @@ import { UNKNOWN_OFFICE, activeCountProviderId } from "./aggregate";
 import { surveyOfficeRank } from "@shared/survey-locations";
 import { loadSurveyPeriodData, type SurveyExportRange, type SurveyPeriodData } from "./export";
 import { tnPullHealth, type TnPullHealth } from "../therapy-notes/tn-patients-db";
+import { fetchAgentSmoke } from "../therapy-notes/agent-smoke";
+import { smokeHealthText } from "@shared/tn-agent-smoke";
 
 /** One provider's line in the snapshot. */
 export interface SnapshotProviderRow {
@@ -113,8 +115,14 @@ export function percent(surveys: number, active: number | null): number | null {
 
 export async function buildSurveySnapshot(range: SurveyExportRange): Promise<SurveySnapshot> {
   const data = await loadSurveyPeriodData(range);
-  // Its own read, and never fatal: the snapshot's figures do not depend on it.
-  const patientPull = await tnPullHealth().catch(() => null);
+  // Its own reads, and never fatal: the snapshot's figures do not depend on
+  // them. The agent's last selector smoke adds "TN layout changed: …" / "TN
+  // password expires in N days" to the same line (shared/tn-agent-smoke.ts).
+  const [health, smoke] = await Promise.all([
+    tnPullHealth().catch(() => null),
+    fetchAgentSmoke().catch(() => null),
+  ]);
+  const patientPull = health ? { ...health, ...smokeHealthText(smoke) } : null;
   return renderSurveySnapshot(range, data, patientPull);
 }
 
