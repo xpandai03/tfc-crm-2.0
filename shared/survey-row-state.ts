@@ -5,11 +5,14 @@
  * One of three states replaces it, on every survey row and therefore in the
  * review queue (a filter over the same list):
  *
- *   Filed to chart <date>            the attach is confirmed on the chart;
+ *   Filed to TherapyNotes <date>     the attach is confirmed on the chart;
  *                                    "(staff)" when a person pressed the button
- *   Matched · files tonight 3:30 MT  matched to a client, not yet filed — the
- *                                    nightly batch (03:30 Mountain) will file it
+ *   Matched to CRM contact · files to TherapyNotes tonight 3:30 AM MT
+ *                                    matched, not yet filed — the nightly batch
+ *                                    (03:30 Mountain) will file it
  *   Needs review: <reason>           in the review queue, with its short reason
+ *
+ * Every label names its system (CRM or TherapyNotes) — client copy, 2026-10-15.
  *
  * A row with no match yet, or matched to no contact, keeps its existing chip
  * (null here). The filters and their counts are not touched.
@@ -35,7 +38,7 @@ export type SurveyRowState =
   | { kind: "files_tonight"; text: string }
   | { kind: "needs_review"; text: string };
 
-export const FILES_TONIGHT_TEXT = "Matched · files tonight 3:30 MT";
+export const FILES_TONIGHT_TEXT = "Matched to CRM contact · files to TherapyNotes tonight 3:30 AM MT";
 
 /** "Oct 14" in Mountain time (the practice's day). */
 export function filedDate(iso: string): string {
@@ -48,7 +51,7 @@ export function surveyRowState(match: RowMatch | undefined, attach: RowAttach | 
   if (attach?.status === "attached") {
     const when = filedDate(attach.finishedAt ?? attach.startedAt);
     const staff = attach.trigger === "manual" ? " (staff)" : "";
-    return { kind: "filed", text: `Filed to chart${when ? ` ${when}` : ""}${staff}` };
+    return { kind: "filed", text: `Filed to TherapyNotes${when ? ` ${when}` : ""}${staff}` };
   }
   if (match?.status === "review") {
     const why = isMatchReason(match.reason) ? REASON_SHORT[match.reason] : "see details";

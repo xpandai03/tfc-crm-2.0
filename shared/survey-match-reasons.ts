@@ -267,6 +267,12 @@ export const REASON_LABEL: Record<MatchReason, string> = {
 };
 
 /** Short chip text for a dense list row. Full sentence lives in REASON_LABEL. */
+/**
+ * The short reason a review chip shows after "Needs review: " (shared/survey-
+ * row-state.ts) — the ONLY place it is read, so the Submissions rows and the
+ * review queue agree. 2026-10-15: the client's wording names the system
+ * (CRM or TherapyNotes) for the reasons it listed; the rest are unchanged.
+ */
 export const REASON_SHORT: Record<MatchReason, string> = {
   name_dob: "Name + DOB",
   name_dob_email: "Name + DOB + email",
@@ -276,25 +282,25 @@ export const REASON_SHORT: Record<MatchReason, string> = {
 
   unparseable_dob: "Date of birth unreadable",
   no_name: "No name given",
-  no_candidates: "No contact with this name",
+  no_candidates: "no contact with this name in CRM",
   dob_mismatch: "Date of birth did not match",
   phone_contradiction: "Phone points elsewhere",
-  email_contradiction: "Email points elsewhere",
+  email_contradiction: "email matches a different CRM contact",
   multiple_candidates: "Several matches, no therapist given",
   provider_no_match: "Several matches, therapist matched none",
   provider_ambiguous: "Several matches, therapist matched more than one",
   duplicate_contact: "Duplicate CRM contacts",
   duplicate_chart: "Duplicate TN chart",
 
-  attach_clinician_mismatch: "Chart clinician differs",
+  attach_clinician_mismatch: "therapist doesn't match TherapyNotes chart",
   attach_clinician_unassigned: "Chart has no clinician",
-  attach_phone_mismatch: "Chart phone differs",
+  attach_phone_mismatch: "phone differs from TherapyNotes chart",
   attach_dob_mismatch: "Chart date of birth differs",
   attach_name_mismatch: "Chart name differs",
   attach_chart_not_in_search: "Matched chart not found in search",
-  attach_multiple_charts: "Several charts share name + DOB",
-  attach_dob_implausible: "Year of birth looks wrong",
-  attach_repeated_patient_not_found: "Not found in TN, 3 nights",
+  attach_multiple_charts: "more than one possible TherapyNotes chart",
+  attach_dob_implausible: "year of birth looks wrong",
+  attach_repeated_patient_not_found: "not found in TherapyNotes 3 nights in a row",
   attach_repeated_result_set_possibly_truncated: "TN search too broad, 3 nights",
   attach_repeated_field_unreadable: "Chart field unreadable, 3 nights",
   attach_repeated_agent_rejected_request: "Automation refused, 3 nights",

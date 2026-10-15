@@ -107,9 +107,9 @@ export const ATTACH_FAILURE_TEXT: Record<AttachFailureReason, string> = {
     `The date of birth on the survey does not match the chart, so nothing was ` +
     `filed. ${FALL_BACK}`,
   phone_mismatch:
-    `The phone number on the survey does not match the mobile number on the ` +
-    `chart. If the client gave a home number this is expected and nothing is ` +
-    `wrong. ${FALL_BACK}`,
+    `The phone number on the survey doesn't match the mobile number on the ` +
+    `TherapyNotes chart. If the client gave a home number this is expected. ` +
+    `${FALL_BACK}`,
   clinician_mismatch:
     `The therapist named on the survey is not one of the therapists assigned to ` +
     `this patient in TherapyNotes, so nothing was filed. ${FALL_BACK}`,

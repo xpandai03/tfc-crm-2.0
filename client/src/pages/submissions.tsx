@@ -353,8 +353,8 @@ function MatchCheckedNote({ state }: { state: MatchState | undefined }) {
 }
 
 /**
- * The state chip on a survey row: "Filed to chart <date>", "Matched · files
- * tonight 3:30 MT" or "Needs review: <reason>" (@shared/survey-row-state). The
+ * The state chip on a survey row: "Filed to TherapyNotes <date>", "Matched to CRM contact · files to TherapyNotes
+ * tonight 3:30 AM MT" or "Needs review: <reason>" (@shared/survey-row-state). The
  * reason the client asked to see on the row ("why it threw the error") now
  * rides in the chip. A row not yet matched, or matched to no contact, keeps
  * MatchBadge's chip. Codes, dates and fixed labels only — never identity.
@@ -399,7 +399,7 @@ function MatchBadge({ state }: { state: MatchState | undefined }) {
   if (state.status === "no_contact") {
     return (
       <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0 gap-1">
-        <UserX className="h-2.5 w-2.5" /> No contact
+        <UserX className="h-2.5 w-2.5" /> No CRM contact
       </Badge>
     );
   }
@@ -488,12 +488,12 @@ function AttachButton({
       ) : attached ? (
         <>
           <CheckCircle2 className="h-3 w-3 mr-1" />
-          Filed to chart
+          Filed to TherapyNotes
         </>
       ) : (
         <>
           <Upload className="h-3 w-3 mr-1" />
-          File to chart
+          File to TherapyNotes
         </>
       )}
     </Button>
@@ -730,8 +730,8 @@ export default function Submissions() {
                 ["all", "All", allSubmissions.length],
                 ["surveys", "All surveys", surveyCount],
                 ["review", "Needs review", reviewCount],
-                ["matched", "Matched", counts.matched],
-                ["no_contact", "No contact", counts.no_contact],
+                ["matched", "Matched (CRM)", counts.matched],
+                ["no_contact", "No CRM contact", counts.no_contact],
               ] as const).map(([key, label, n]) => (
                 <Button
                   key={key}
@@ -813,9 +813,11 @@ export default function Submissions() {
               return (
                 <Card key={sub.id} className="overflow-hidden">
                   <CardContent className="px-4 py-3 space-y-1.5">
-                    {/* Top row: title + badges + timestamp */}
+                    {/* Top row: title + badges + timestamp. The badges WRAP to a
+                        second line rather than squeezing the client's name: the
+                        state chip names both systems now and is long. */}
                     <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
                         <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                         <span className="font-medium text-sm truncate">{summary.title}</span>
                         <Badge variant={typeBadge.variant} className="text-[10px] px-1.5 py-0 shrink-0">
@@ -913,8 +915,8 @@ export default function Submissions() {
                         >
                           <UserSearch className="h-3 w-3 mr-1" />
                           {!stateFor(sub.id) || stateFor(sub.id)?.status === "review"
-                            ? "Review identity"
-                            : "Change match"}
+                            ? "Review match"
+                            : "Change CRM contact"}
                         </Button>
                       )}
                       {isSurveySubmission(sub) && (
