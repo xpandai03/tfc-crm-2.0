@@ -105,6 +105,7 @@ export async function initNotificationTables(): Promise<void> {
       [seed],
     );
   }
+  await applyStaffUnmuteOnce();
   // A crash mid-send leaves rows in 'sending'. Put them back; at worst one
   // message is delivered twice, which beats never.
   await pool.query(
@@ -112,6 +113,62 @@ export async function initNotificationTables(): Promise<void> {
       WHERE status = 'sending' AND next_attempt_at < NOW() - INTERVAL '5 minutes'`,
   );
   console.log("[notify] Tables initialized");
+}
+
+/** The one-time step below; its key is recorded so it never runs again. */
+export const STAFF_UNMUTE_KEY = "unmute-staff-2026-10-15";
+
+/**
+ * Staff were seeded MUTED (v245) until the client sent its message format. It
+ * did (2026-10-15), so on the first boot of that release every rule recipient
+ * is unmuted ONCE. The key in notification_migrations means a later boot never
+ * touches the switches again: anyone muted afterwards on /admin/notifications
+ * stays muted. The per-person switch and NOTIFICATIONS_ENABLED are unchanged.
+ */
+export async function applyStaffUnmuteOnce(): Promise<{ applied: boolean; unmuted: string[]; staff: string[] }> {
+  const pool = getPool();
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS notification_migrations (
+      key        TEXT        PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      detail     TEXT
+    )
+  `);
+  const staff = notificationRecipients();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const claimed = await client.query(
+      `INSERT INTO notification_migrations (key) VALUES ($1) ON CONFLICT (key) DO NOTHING RETURNING key`,
+      [STAFF_UNMUTE_KEY],
+    );
+    if (claimed.rowCount === 0) {
+      await client.query("COMMIT");
+      return { applied: false, unmuted: [], staff };
+    }
+    const { rows } = await client.query(
+      `UPDATE notification_preferences
+          SET muted = FALSE, updated_by = $2, updated_at = NOW()
+        WHERE email = ANY($1::text[]) AND muted = TRUE
+        RETURNING email`,
+      [staff, STAFF_UNMUTE_KEY],
+    );
+    const unmuted = (rows as Array<{ email: string }>).map((r) => r.email).sort();
+    await client.query(`UPDATE notification_migrations SET detail = $2 WHERE key = $1`,
+      [STAFF_UNMUTE_KEY, JSON.stringify({ unmuted, staff })]);
+    await client.query("COMMIT");
+    console.log(
+      `[notify] staff unmuted (one time, ${STAFF_UNMUTE_KEY}): ${staff.length} staff now unmuted — ` +
+        `${staff.join(", ")}; switched off mute for ${unmuted.length}: ${unmuted.join(", ") || "none"}`,
+    );
+    return { applied: true, unmuted, staff };
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error(`[notify] one-time staff unmute FAILED: ${e instanceof Error ? e.message : "unknown"}`);
+    return { applied: false, unmuted: [], staff };
+  } finally {
+    client.release();
+  }
 }
 
 // ---------------------------------------------------------------------------

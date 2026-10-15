@@ -24,7 +24,7 @@ import {
   setMuted,
   type NotificationRow,
 } from "./db";
-import { TEST_NOTIFICATION_TEXT } from "./messages";
+import { testNotificationText } from "./messages";
 import { kickNotificationWorker, notificationsEnabled, teamsNotifyUrl } from "./worker";
 
 /** The only recipient the key-authed smoke route will post to. */
@@ -35,7 +35,7 @@ export async function sendTestNotification(recipient: string, timeoutMs = 20_000
   const status = !notificationsEnabled() ? "disabled" : !teamsNotifyUrl() ? "no_url" : "pending";
   const { id } = await enqueueNotification({
     recipient: email,
-    text: TEST_NOTIFICATION_TEXT,
+    text: testNotificationText(),
     event: "test",
     dedupeKey: `test|${Date.now()}`,
     ruleIds: ["test"],

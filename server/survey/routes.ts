@@ -109,6 +109,21 @@ function setSurveyPageHeaders(res: Response): void {
   res.setHeader("Cache-Control", "no-store, must-revalidate");
 }
 
+
+/**
+ * The two survey fields the Teams message names (2026-10-15): "CRM: [name on
+ * survey] has submitted survey for [provider]" — the legal name the client
+ * typed and the provider label Submissions shows. Nothing else from the survey
+ * leaves the CRM.
+ */
+function surveyNotificationExtras(sub: { payload?: unknown } | null | undefined): { surveyName: string | null; providerLabel: string | null } {
+  const doc = (sub?.payload ?? {}) as { client?: { name?: unknown }; answers?: { therapist?: unknown } };
+  return {
+    surveyName: typeof doc.client?.name === "string" ? doc.client.name : null,
+    providerLabel: typeof doc.answers?.therapist === "string" ? doc.answers.therapist : null,
+  };
+}
+
 export function registerSurveyPublicRoutes(app: Express): void {
   const surveyDir = resolveSurveyDir();
 
@@ -358,6 +373,7 @@ export function registerSurveyPublicRoutes(app: Express): void {
             submissionId: id,
             contactId: sub?.contactId ?? null,
             actor: "system",
+            extras: surveyNotificationExtras(sub),
           }))
           .catch((e) => console.error(
             `[survey] notification FAILED for id=${id}:`,

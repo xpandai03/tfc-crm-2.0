@@ -67,10 +67,11 @@ export async function planNotifications(
 ): Promise<EnqueueInput[]> {
   const matches = evaluateNotificationRules(ctx);
   if (matches.length === 0) return [];
-  const text = buildNotificationText(ctx, extras ?? {});
   const dedupeKey = dedupeKeyFor(ctx, extras?.entityKey);
   const rows: EnqueueInput[] = [];
   for (const m of matches) {
+    // Per recipient: a 202 move reads "VACCN Client …" only for the VACCN rule.
+    const text = buildNotificationText(ctx, extras ?? {}, m.ruleIds);
     let status: NotificationStatus = "pending";
     if (!opts.enabled) status = "disabled";
     else if (sameEmail(ctx.actor, m.recipient)) status = "self";
