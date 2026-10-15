@@ -155,8 +155,11 @@ for (const r of ATTACH_FAILURE_REASONS) {
   }
 }
 // The two expected refusals must read as expected, not as breakage.
+// Client copy, 2026-10-15: names TherapyNotes, says a home number is expected.
 ok("phone_mismatch says a home number is expected",
-  /home number this is expected and nothing is\s+wrong/.test(ATTACH_FAILURE_TEXT.phone_mismatch));
+  ATTACH_FAILURE_TEXT.phone_mismatch ===
+    "The phone number on the survey doesn't match the mobile number on the TherapyNotes chart. " +
+    "If the client gave a home number this is expected. Download the PDF and attach it in TherapyNotes by hand.");
 ok("patient_not_found says a middle name explains it",
   /middle name/.test(ATTACH_FAILURE_TEXT.patient_not_found)
   && /Nothing is wrong with the survey/.test(ATTACH_FAILURE_TEXT.patient_not_found));
