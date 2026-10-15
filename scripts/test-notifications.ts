@@ -7,6 +7,7 @@
  *
  * NO PHI: ZZTEST names, synthetic numbers.
  */
+import { readFileSync } from "fs";
 import {
   NOTIFICATION_RULES,
   evaluateNotificationRules,
@@ -18,7 +19,9 @@ import {
 import {
   buildNotificationText,
   containsPhiPattern,
-  shortName,
+  link,
+  linkFormat,
+  testNotificationText,
 } from "../server/notifications/messages";
 import { dedupeKeyFor, planNotifications, processNotificationEvent } from "../server/notifications/emit";
 import { drainOnce, notificationsEnabled, retryDelayMs, type DeliveryStore } from "../server/notifications/worker";
@@ -54,7 +57,7 @@ const who = (ctx: NotificationContext) => evaluateNotificationRules(ctx).map((m)
 async function main() {
   // -------------------------------------------------------------------------
   console.log("\nrules table");
-  eq("one rule per line of the client's list (18)", NOTIFICATION_RULES.length, 18);
+  eq("one rule per line of the client's list (18) + five note rules", NOTIFICATION_RULES.length, 23);
   eq("rule ids are unique", new Set(NOTIFICATION_RULES.map((r) => r.id)).size, NOTIFICATION_RULES.length);
   eq("recipients are the seven named staff", notificationRecipients(), [...STAFF].sort());
 
@@ -106,43 +109,93 @@ async function main() {
   eq("provider availability → Sandra only", who({ ...survey, type: "provider_availability.submitted" }), [SANDRA]);
 
   // -------------------------------------------------------------------------
-  console.log("\nmessages");
-  eq("shortName First Last", shortName("ZZTEST Alpha"), "ZZTEST A.");
-  eq("shortName Last, First", shortName("Bravo, Zed"), "Zed B.");
-  eq("shortName single", shortName("Zed"), "Zed");
-  eq("shortName empty", shortName(""), "Unnamed contact");
-  eq("shortName strips digits and parentheses", shortName("Zed Quux (01/02/2010) 5055550100"), "Zed Q.");
-  process.env.APP_URL = "https://crm.example.invalid/";
-  const s202 = buildNotificationText(statusCtx(200, 202, { name: "Zed Quux", contactId: 990123 }));
-  eq("status message format", s202, "Status change: Zed Q. · now Scheduled · https://crm.example.invalid/contact/990123");
-  eq("assigned message format", buildNotificationText({ ...assignCtx(null, NONA), contact: contact({ name: "Zed Quux", contactId: 7, statusCode: 200, assignedTo: NONA }) }),
-    "Assigned to you: Zed Q. · Ready to Schedule · https://crm.example.invalid/contact/7");
-  eq("survey unmatched", buildNotificationText(survey), "Survey submitted: unmatched · survey #41 · https://crm.example.invalid/submissions");
-  eq("survey matched", buildNotificationText({ ...survey, contact: contact({ name: "Zed Quux", contactId: 9 }) }),
-    "Survey submitted: Zed Q. · survey #41 · https://crm.example.invalid/contact/9");
-  eq("RFS", buildNotificationText({ ...survey, type: "rfs.submitted", submissionId: 77, contact: contact({ name: "Zed Quux", contactId: 9 }) }, { source: "website form" }),
-    "New RFS: Zed Q. · RFS #77 (website form) · https://crm.example.invalid/contact/9");
-  eq("provider availability", buildNotificationText({ ...survey, type: "provider_availability.submitted" }, { providerName: "ZZTEST Provider", acceptingClients: 3 }),
-    "Provider availability: ZZTEST Provider · accepting 3 new clients · https://crm.example.invalid/providers");
+  // -------------------------------------------------------------------------
+  console.log("\nnote added (2026-10-15)");
+  const noteCtx = (assignedTo: string | null, actor = "zztest.actor@example.invalid"): NotificationContext => ({
+    type: "contact.note_added", actor, contact: contact({ assignedTo }), before: {}, after: {},
+  });
+  for (const r of [LANE, NONA, ERICA, VICTORIA, AMAYA]) eq(`note on a contact assigned to ${r} → ${r} only`, who(noteCtx(r)), [r]);
+  eq("note on Sandra's contact → nobody (not on the list)", who(noteCtx(SANDRA)), []);
+  eq("note on Chantel's contact → nobody (not on the list)", who(noteCtx(CHANTEL)), []);
+  eq("note on an unassigned contact → nobody", who(noteCtx(null)), []);
+  eq("note on a contact assigned to someone else → nobody", who(noteCtx("zz.other@example.invalid")), []);
+  eq("assignee match is case-insensitive", who(noteCtx("LSego@TFC.health")), [LANE]);
 
-  console.log("\nPHI never in text");
-  const nasty = contact({ name: "Zed Quux 01/02/2010 (505) 555-0100 zz@example.invalid", contactId: 990777, insurancePayer: "VACCN" });
-  const texts = [
-    buildNotificationText({ ...statusCtx(200, 202), contact: nasty }),
-    buildNotificationText({ ...assignCtx(null, LANE), contact: nasty }),
-    buildNotificationText({ ...survey, contact: nasty }),
-    buildNotificationText({ ...survey, type: "rfs.submitted", contact: nasty }, { source: "website form" }),
+  // -------------------------------------------------------------------------
+  console.log("\nmessages: the client's templates, exactly");
+  process.env.APP_URL = "https://crm.example.invalid/";
+  const zed = (over: Partial<NotificationContact> = {}) => contact({ name: "Zed  Quux", contactId: 990123, ...over });
+  const md = (label: string, id: number) => `[${label}](https://crm.example.invalid/contact/${id})`;
+  const by = { actorName: "Zz Staffer" };
+  eq("assigned", buildNotificationText({ ...assignCtx(null, NONA), contact: zed({ assignedTo: NONA }) }, {}, ["nona.assigned"], "markdown"),
+    `CRM: ${md("Zed Quux", 990123)} has been assigned to you`);
+  eq("provider availability (Sandra): provider name linked to the submission",
+    buildNotificationText({ ...survey, type: "provider_availability.submitted", submissionId: 77 }, { providerName: "Zz Provider", acceptingClients: 3 }, ["sandra.provider_availability"], "markdown"),
+    "CRM: [Zz Provider](https://crm.example.invalid/submissions?submission=77) has submitted a request for clients");
+  eq("status 300 (Sandra)", buildNotificationText(statusCtx(200, 300, { name: "Zed Quux", contactId: 990123 }), by, ["sandra.status_300"], "markdown"),
+    `CRM: ${md("Zed Quux", 990123)} has been submitted for review`);
+  eq("status 202, assigned to the recipient", buildNotificationText(statusCtx(200, 202, { name: "Zed Quux", contactId: 990123 }), by, ["nona.assigned_202"], "markdown"),
+    `CRM: ${md("Zed Quux", 990123)} has been scheduled by Zz Staffer`);
+  eq("status 202, VACCN (Lane)", buildNotificationText(statusCtx(200, 202, { name: "Zed Quux", contactId: 990123, insurancePayer: "VACCN" }), by, ["lane.vaccn_202"], "markdown"),
+    `CRM: VACCN Client ${md("Zed Quux", 990123)} has been scheduled by Zz Staffer`);
+  eq("status 202, VACCN AND assigned to Lane → the VACCN wording", buildNotificationText(statusCtx(200, 202, { name: "Zed Quux", contactId: 990123, insurancePayer: "VACCN" }), by, ["lane.assigned_202", "lane.vaccn_202"], "markdown"),
+    `CRM: VACCN Client ${md("Zed Quux", 990123)} has been scheduled by Zz Staffer`);
+  eq("status 200 (Lane)", buildNotificationText(statusCtx(100, 200, { name: "Zed Quux", contactId: 990123 }), by, ["lane.status_200"], "markdown"),
+    `CRM: ${md("Zed Quux", 990123)} has been moved to ready to schedule`);
+  eq("survey (Lane): name on survey + provider label, no link",
+    buildNotificationText(survey, { surveyName: "Zed  Quux", providerLabel: "Zz Provider (LL)" }, ["lane.survey"], "markdown"),
+    "CRM: Zed Quux has submitted survey for Zz Provider (LL)");
+  ok("survey text carries no link", !/https?:|\]\(/.test(buildNotificationText(survey, { surveyName: "Zed Quux", providerLabel: "Zz P" }, [], "markdown")));
+  eq("new RFS (Erica)", buildNotificationText({ ...survey, type: "rfs.submitted", submissionId: 78, contact: zed() }, { source: "website form" }, ["erica.rfs"], "markdown"),
+    `CRM: A new RFS has been submitted for ${md("Zed Quux", 990123)}`);
+  eq("note added", buildNotificationText({ ...noteCtx(LANE), contact: zed({ assignedTo: LANE }) }, by, ["lane.note"], "markdown"),
+    `CRM: A new note has been added to ${md("Zed Quux", 990123)} by Zz Staffer`);
+  eq("[user] unknown (a sync-made change) → 'a staff member'", buildNotificationText(statusCtx(200, 202, { name: "Zed Quux", contactId: 990123 }), {}, ["nona.assigned_202"], "markdown"),
+    `CRM: ${md("Zed Quux", 990123)} has been scheduled by a staff member`);
+
+  console.log("\nlinks: markdown by default, HTML by setting");
+  eq("default format is markdown", linkFormat({}), "markdown");
+  eq("NOTIFY_LINK_FORMAT=html", linkFormat({ NOTIFY_LINK_FORMAT: "HTML" }), "html");
+  eq("markdown link", link("Zed Quux", "https://crm.example.invalid/contact/9", "markdown"), "[Zed Quux](https://crm.example.invalid/contact/9)");
+  eq("markdown escapes brackets in a name", link("Zed [Q]", "https://x.invalid/c/9", "markdown"), "[Zed \\[Q\\]](https://x.invalid/c/9)");
+  eq("HTML link", link("Zed Quux", "https://crm.example.invalid/contact/9", "html"), '<a href="https://crm.example.invalid/contact/9">Zed Quux</a>');
+  eq("HTML escapes a name", link("Zed & <Q>", "https://x.invalid/c/9", "html"), '<a href="https://x.invalid/c/9">Zed &amp; &lt;Q&gt;</a>');
+  eq("assigned, HTML", buildNotificationText({ ...assignCtx(null, NONA), contact: zed({ assignedTo: NONA }) }, {}, ["nona.assigned"], "html"),
+    'CRM: <a href="https://crm.example.invalid/contact/990123">Zed Quux</a> has been assigned to you');
+  eq("note added, HTML escapes [user] too", buildNotificationText({ ...noteCtx(LANE), contact: zed({ assignedTo: LANE }) }, { actorName: "Zz & Co" }, ["lane.note"], "html"),
+    'CRM: A new note has been added to <a href="https://crm.example.invalid/contact/990123">Zed Quux</a> by Zz &amp; Co');
+  ok("the test message carries one link (markdown)", /\[TFC CRM\]\(https:\/\/crm\.example\.invalid\/\)/.test(testNotificationText("markdown")));
+  ok("the test message carries one link (HTML)", /<a href="https:\/\/crm\.example\.invalid\/">TFC CRM<\/a>/.test(testNotificationText("html")));
+
+  const surveyRoutes = readFileSync("server/survey/routes.ts", "utf8");
+  const helper = surveyRoutes.slice(surveyRoutes.indexOf("function surveyNotificationExtras"), surveyRoutes.indexOf("function surveyNotificationExtras") + 600);
+  ok("survey emit passes the typed name and provider label (surveyNotificationExtras)",
+    /extras: surveyNotificationExtras\(sub\)/.test(surveyRoutes) && /doc\.client\?\.name/.test(helper) && /doc\.answers\?\.therapist/.test(helper));
+  ok("…and nothing else from the survey", !/dateOfBirth|phone|email|comments|overallRating/.test(helper));
+  const subsPage = readFileSync("client/src/pages/submissions.tsx", "utf8");
+  ok("Submissions opens /submissions?submission=<id> (the provider-availability link)",
+    /new URLSearchParams\(window\.location\.search\)\.get\("submission"\)/.test(subsPage) && /setSelectedSubmission\(hit\)/.test(subsPage));
+
+  console.log("\nPHI: name and link only; anything else is withheld");
+  const clean = [
+    buildNotificationText({ ...assignCtx(null, LANE), contact: zed() }, {}, [], "markdown"),
+    buildNotificationText({ ...noteCtx(LANE), contact: zed() }, by, [], "html"),
+    buildNotificationText(statusCtx(200, 202, { name: "Zed Quux", contactId: 9_001_234 }), by, [], "markdown"),
   ];
-  for (const t of texts) {
-    ok(`no DOB/phone/email pattern: "${t.slice(0, 40)}…"`, !containsPhiPattern(t), t);
-    ok("no payer in text", !/vaccn/i.test(t));
-  }
-  ok("backstop catches a date", containsPhiPattern("Status change: Zed 01/02/2010"));
-  ok("backstop catches a phone", containsPhiPattern("Zed (505) 555-0100"));
-  ok("backstop catches a dashed phone", containsPhiPattern("Zed 505-555-0100"));
-  ok("backstop catches an email", containsPhiPattern("Zed zz@example.invalid"));
-  ok("backstop catches a long id", containsPhiPattern("member 123456789"));
-  ok("backstop ignores the link's contact id", !containsPhiPattern("Zed · https://x.invalid/contact/9001234"));
+  for (const t of clean) ok(`a clean text passes: "${t.slice(0, 40)}…"`, !containsPhiPattern(t), t);
+  const nasty = contact({ name: "Zed Quux 01/02/2010 (505) 555-0100 zz@example.invalid", contactId: 990777, insurancePayer: "VACCN" });
+  for (const t of [
+    buildNotificationText({ ...statusCtx(200, 202), contact: nasty }, by, ["nona.assigned_202"], "markdown"),
+    buildNotificationText({ ...assignCtx(null, LANE), contact: nasty }, {}, [], "html"),
+    buildNotificationText(survey, { surveyName: "Zed 505-555-0100", providerLabel: "P" }, [], "markdown"),
+  ]) ok(`a name field carrying a DOB/phone/email is caught: "${t.slice(0, 30)}…"`, containsPhiPattern(t), t);
+  const nastyNote = await planNotifications({ ...noteCtx(LANE), contact: { ...nasty, assignedTo: LANE } }, by, {
+    enabled: true, hasUrl: true, isMuted: () => false });
+  eq("…and that recipient's row is withheld, not sent", nastyNote.map((r) => [r.status, r.text]), [["blocked", "[withheld: text failed the PHI check]"]]);
+  ok("no template reads DOB, phone, insurance or note text (source)", (() => {
+    const src = readFileSync("server/notifications/messages.ts", "utf8").split("export function containsPhiPattern")[0];
+    return !/dob|dateOfBirth|phone|insurancePayer|note\.|preview|content/i.test(src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, ""));
+  })());
 
   // -------------------------------------------------------------------------
   console.log("\nper-recipient decisions");
@@ -161,6 +214,14 @@ async function main() {
     ["disabled", "disabled"]);
   eq("no webhook: dropped", (await planNotifications(vaccnNona, {}, opts({ hasUrl: false }))).map((r) => r.status),
     ["no_url", "no_url"]);
+  eq("per-recipient text: Lane gets the VACCN wording, Nona the plain one",
+    (await planNotifications(vaccnNona, { actorName: "Zz Staffer" }, opts())).map((r) => [r.recipient, r.text.startsWith("CRM: VACCN Client ")]),
+    [[LANE, true], [NONA, false]]);
+  eq("note: the author is never told about their own note",
+    (await planNotifications({ type: "contact.note_added", actor: LANE, contact: contact({ assignedTo: LANE }), before: {}, after: {} }, {}, opts())).map((r) => [r.recipient, r.status]),
+    [[LANE, "self"]]);
+  eq("note: dedupe key per contact", dedupeKeyFor({ type: "contact.note_added", actor: null, contact: contact(), before: {}, after: {} }),
+    "contact.note_added|contact:990001");
   eq("self: Nona moved her own contact → not told; Lane still told",
     (await planNotifications(statusCtx(200, 202, { assignedTo: NONA, insurancePayer: "VACCN" }, NONA), {}, opts())).map((r) => [r.recipient, r.status]),
     [[LANE, "pending"], [NONA, "self"]]);

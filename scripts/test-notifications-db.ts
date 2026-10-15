@@ -10,6 +10,7 @@
  *
  * NO PHI: ZZTEST contacts. The webhook is a local server; nothing leaves the machine.
  */
+import { readFileSync } from "fs";
 import http from "http";
 
 const url = process.env.DATABASE_URL ?? "";
@@ -62,19 +63,47 @@ async function main() {
 
   await sync.initSyncTables();
   await activity.initActivityTable();
-  await pool.query(`DROP TABLE IF EXISTS notifications, notification_preferences`);
+  await pool.query(`DROP TABLE IF EXISTS notifications, notification_preferences, notification_migrations`);
 
   // -------------------------------------------------------------------------
-  console.log("\nboot seeding");
+  console.log("\nboot: v245's muted seed, then this release's one-time unmute");
+  // Production as v245 left it (2026-10-15): Sandra and Erica still seed-muted;
+  // Chantel and Victoria muted THEMSELVES; Amaya, Lane and Nona switched on.
+  await pool.query(`CREATE TABLE notification_preferences (
+      email TEXT PRIMARY KEY, muted BOOLEAN NOT NULL DEFAULT FALSE, updated_by TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+  await pool.query(
+    `INSERT INTO notification_preferences (email, muted, updated_by)
+     SELECT unnest($1::text[]), TRUE, 'seed'`,
+    [["ebenavidez@tfc.health", "sandra@tfc.health"]],
+  );
+  await pool.query(`INSERT INTO notification_preferences (email, muted, updated_by) VALUES
+    ('chantel@tfc.health', TRUE, 'chantel@tfc.health'), ('victoria@tfc.health', TRUE, 'victoria@tfc.health'),
+    ('amayac@tfc.health', FALSE, 'amayac@tfc.health'), ('lsego@tfc.health', FALSE, 'lsego@tfc.health'),
+    ('nbockius@tfc.health', FALSE, 'nbockius@tfc.health')`);
+  const logs: string[] = [];
+  const origLog = console.log;
+  console.log = (...a: unknown[]) => { logs.push(a.join(" ")); origLog(...a); };
   await db.initNotificationTables();
+  console.log = origLog;
   const prefs = await db.listPreferences();
-  eq("seven staff seeded", prefs.length, 7);
-  ok("all seeded muted", prefs.every((p) => p.muted && p.updatedBy === "seed"));
+  eq("seven staff on the list", prefs.length, 7);
+  eq("the seed's mutes are lifted (Sandra, Erica)", prefs.filter((p) => p.updatedBy === db.STAFF_UNMUTE_KEY).map((p) => p.email).sort(),
+    ["ebenavidez@tfc.health", "sandra@tfc.health"]);
+  eq("people who muted themselves stay muted (Chantel, Victoria)", prefs.filter((p) => p.muted).map((p) => p.email).sort(),
+    ["chantel@tfc.health", "victoria@tfc.health"]);
+  eq("five of seven now receive", prefs.filter((p) => !p.muted).length, 5);
+  ok("the boot log reports all seven staff",
+    logs.some((l) => /staff unmute \(one time/.test(l) && /seed mutes lifted for 2: ebenavidez@tfc\.health, sandra@tfc\.health/.test(l)
+      && /5 of 7 staff now receive/.test(l) && /kept muted by their own choice: chantel@tfc\.health, victoria@tfc\.health/.test(l)), logs.join(" | "));
   ok("developer not seeded, so not muted", !(await db.isMuted("raunek@tfc.health")));
-  await db.setMuted("sandra@tfc.health", false, "raunek@tfc.health");
+  await db.setMuted("sandra@tfc.health", true, "raunek@tfc.health");
+  const again = await db.applyStaffUnmuteOnce();
   await db.initNotificationTables();
-  ok("a later boot does not re-mute an unmuted person", !(await db.isMuted("sandra@tfc.health")));
+  ok("the unmute runs ONCE: a later boot leaves a re-muted person muted", again.applied === false && await db.isMuted("sandra@tfc.health"));
   ok("init is idempotent (tables exist, no throw)", true);
+  const fresh = (await pool.query(`SELECT COUNT(*)::int AS n FROM notification_migrations WHERE key = $1`, [db.STAFF_UNMUTE_KEY])).rows[0].n;
+  eq("one migration row", fresh, 1);
   // Unmute everyone for the event tests below.
   for (const p of prefs) await db.setMuted(p.email, false, "zztest");
 
@@ -169,7 +198,10 @@ async function main() {
   eq("VACCN contact assigned to Nona →202: Lane and Nona, both sent",
     r.map((x) => [x.recipient, x.status]), [["lsego@tfc.health", "sent"], ["nbockius@tfc.health", "sent"]]);
   eq("webhook received two messages", received.length, 2);
-  eq("message text", r[0].text, "Status change: ZZTEST V. · now Scheduled · https://crm.example.invalid/contact/990311");
+  eq("Lane's text: the VACCN template", r[0].text,
+    "CRM: VACCN Client [ZZTEST Vaccn](https://crm.example.invalid/contact/990311) has been scheduled by a staff member");
+  eq("Nona's text: the assignee template", r[1].text,
+    "CRM: [ZZTEST Vaccn](https://crm.example.invalid/contact/990311) has been scheduled by a staff member");
 
   emit.emitNotificationEvent({ type: "contact.status_changed", contactId: 990311, before: { statusCode: 201 }, after: { statusCode: 202 }, actor: "zztest@example.invalid" });
   await settle();
@@ -223,6 +255,33 @@ async function main() {
   await sleep(200);
   await pool.query(`ALTER TABLE notifications_gone RENAME TO notifications`);
   ok("a broken queue is logged, not thrown (process still alive)", true);
+
+  // -------------------------------------------------------------------------
+  console.log("\nnote added, end to end");
+  await pool.query(`DELETE FROM notifications`);
+  received.length = 0;
+  emit.emitNotificationEvent({ type: "contact.note_added", contactId: 990312, actor: "nbockius@tfc.health", extras: { actorName: "Zz Nona" } });
+  await settle();
+  r = await rows();
+  eq("a note on Lane's contact by Nona → Lane, sent", r.map((x) => [x.recipient, x.status]), [["lsego@tfc.health", "sent"]]);
+  eq("…with the note template, no note text", r[0].text,
+    "CRM: A new note has been added to [ZZTEST Plain](https://crm.example.invalid/contact/990312) by Zz Nona");
+  await pool.query(`DELETE FROM notifications`);
+  emit.emitNotificationEvent({ type: "contact.note_added", contactId: 990312, actor: "lsego@tfc.health", extras: { actorName: "Zz Lane" } });
+  await settle();
+  eq("Lane's own note → logged 'self', not sent", (await rows()).map((x) => [x.recipient, x.status]), [["lsego@tfc.health", "self"]]);
+  await pool.query(`DELETE FROM notifications`);
+  emit.emitNotificationEvent({ type: "contact.note_added", contactId: 990313, actor: "nbockius@tfc.health" });
+  await settle();
+  eq("a note on an unassigned contact → no row", (await rows()).length, 0);
+  const routesSrc = readFileSync("server/routes.ts", "utf8");
+  const addNote = routesSrc.slice(routesSrc.indexOf('app.post("/api/add-note"'), routesSrc.indexOf('app.post("/api/add-note"') + 4000);
+  ok("POST /api/add-note emits contact.note_added after the write", /appendSyncContactNote[\s\S]*type: "contact\.note_added"/.test(addNote));
+  const emitCall = addNote.slice(addNote.indexOf('type: "contact.note_added"'), addNote.indexOf("});", addNote.indexOf('type: "contact.note_added"')));
+  ok("…and passes no note text to the event", emitCall.length > 0 && !/\bnote\b|preview|content/.test(emitCall), emitCall);
+  const systemNotes = routesSrc.match(/appendSyncContactNote\(\s*contactId,\s*`\[System\]/g) ?? [];
+  eq("the two [System] timeline writers do not emit it", systemNotes.length, 2);
+  eq("exactly one emit site for note_added", (routesSrc.match(/type: "contact\.note_added"/g) ?? []).length, 1);
 
   await pool.query(`DELETE FROM sync_contacts WHERE contact_id = ANY($1)`, [[...IDS, 990315]]);
   await closePool();

@@ -2470,6 +2470,8 @@ export async function registerRoutes(
             before: { statusCode: prev?.statusCode ?? null },
             after: { statusCode },
             actor: (req as any).user?.email || "system",
+            // [user] in "… has been scheduled by [user]"
+            extras: { actorName: (req as any).user?.name || null },
           });
         } catch (e) {
           // Cache failure is non-fatal — n8n sync will reconcile.
@@ -2596,6 +2598,17 @@ export async function registerRoutes(
           console.warn(`[add-note] Activity log failed for contactId ${contactId} (non-blocking)`);
         }
         boardCache = null;
+
+        // Teams: the contact's assignee is told a note was added (never the
+        // author, never the note's text). After the write; returns at once.
+        // This is the ONLY path that adds a staff note; the "[System] …"
+        // timeline lines elsewhere are the CRM's own and notify no one.
+        emitNotificationEvent({
+          type: "contact.note_added",
+          contactId,
+          actor: (req as any).user?.email || "system",
+          extras: { actorName: (req as any).user?.name || null },
+        });
 
         // CRM write succeeded — return success immediately
         // n8n/Excel sync is fire-and-forget (side effect, not user-blocking)

@@ -1,7 +1,8 @@
 /**
  * Teams notification rules — who is told, about what.
  *
- * ONE ENTRY PER LINE of the client's list (notifications request, 2026-10-06).
+ * ONE ENTRY PER LINE of the client's list (notifications request, 2026-10-06;
+ * the note rules 2026-10-15).
  * Each rule names one recipient, one event type, and a condition over the
  * event. A single event can satisfy several rules for the same person (Lane's
  * "assigned to me moved to 202" and "any VACCN contact moved to 202" can both
@@ -22,6 +23,9 @@ export const NOTIFICATION_EVENT_TYPES = [
   "survey.submitted",
   "rfs.submitted",
   "provider_availability.submitted",
+  // A staff member added a note to a contact (POST /api/add-note) — not the
+  // "[System] …" timeline lines the CRM writes itself. 2026-10-15.
+  "contact.note_added",
 ] as const;
 export type NotificationEventType = typeof NOTIFICATION_EVENT_TYPES[number];
 
@@ -89,6 +93,13 @@ export function isVaccnPayer(payer: string | null | undefined): boolean {
 const vaccnContactMovedInto = (code: number) => (ctx: NotificationContext) =>
   movedInto(code)(ctx) && isVaccnPayer(ctx.contact?.insurancePayer);
 
+/**
+ * A note on a contact currently assigned to `recipient`. The author is never
+ * told about their own note: the planner marks actor === recipient "self".
+ */
+const noteOnAssignedContact = (recipient: string) => (ctx: NotificationContext) =>
+  sameEmail(ctx.contact?.assignedTo, recipient);
+
 const always = () => true;
 
 // ---------------------------------------------------------------------------
@@ -127,12 +138,16 @@ export const NOTIFICATION_RULES: readonly NotificationRule[] = [
     description: "Any contact moves to 200 Ready to Schedule", when: movedInto(200) },
   { id: "lane.survey", recipient: LANE, event: "survey.submitted",
     description: "A survey is submitted", when: always },
+  { id: "lane.note", recipient: LANE, event: "contact.note_added",
+    description: "A note is added to a contact assigned to Lane", when: noteOnAssignedContact(LANE) },
 
   // Nona
   { id: "nona.assigned", recipient: NONA, event: "contact.assigned",
     description: "A contact is assigned to Nona", when: assignedTo(NONA) },
   { id: "nona.assigned_202", recipient: NONA, event: "contact.status_changed",
     description: "A contact assigned to Nona moves to 202 Scheduled", when: assignedContactMovedInto(NONA, 202) },
+  { id: "nona.note", recipient: NONA, event: "contact.note_added",
+    description: "A note is added to a contact assigned to Nona", when: noteOnAssignedContact(NONA) },
 
   // Erica
   { id: "erica.assigned", recipient: ERICA, event: "contact.assigned",
@@ -141,18 +156,25 @@ export const NOTIFICATION_RULES: readonly NotificationRule[] = [
     description: "A contact assigned to Erica moves to 202 Scheduled", when: assignedContactMovedInto(ERICA, 202) },
   { id: "erica.rfs", recipient: ERICA, event: "rfs.submitted",
     description: "A new RFS is submitted to the CRM", when: always },
+  { id: "erica.note", recipient: ERICA, event: "contact.note_added",
+    description: "A note is added to a contact assigned to Erica", when: noteOnAssignedContact(ERICA) },
 
   // Victoria
   { id: "victoria.assigned", recipient: VICTORIA, event: "contact.assigned",
     description: "A contact is assigned to Victoria", when: assignedTo(VICTORIA) },
   { id: "victoria.assigned_202", recipient: VICTORIA, event: "contact.status_changed",
     description: "A contact assigned to Victoria moves to 202 Scheduled", when: assignedContactMovedInto(VICTORIA, 202) },
+  { id: "victoria.note", recipient: VICTORIA, event: "contact.note_added",
+    description: "A note is added to a contact assigned to Victoria", when: noteOnAssignedContact(VICTORIA) },
 
   // Amaya
   { id: "amaya.assigned", recipient: AMAYA, event: "contact.assigned",
     description: "A contact is assigned to Amaya", when: assignedTo(AMAYA) },
   { id: "amaya.assigned_202", recipient: AMAYA, event: "contact.status_changed",
     description: "A contact assigned to Amaya moves to 202 Scheduled", when: assignedContactMovedInto(AMAYA, 202) },
+  { id: "amaya.note", recipient: AMAYA, event: "contact.note_added",
+    description: "A note is added to a contact assigned to Amaya", when: noteOnAssignedContact(AMAYA) },
+  // Sandra and Chantel are NOT told about notes (client, 2026-10-15).
 ];
 
 /** Everyone any rule can reach. Seeded MUTED on first boot (server/notifications/db.ts). */

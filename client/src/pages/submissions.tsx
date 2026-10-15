@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PageLayout } from "@/components/layout/page-layout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -632,6 +632,18 @@ export default function Submissions() {
   });
 
   const allSubmissions = data?.submissions ?? [];
+
+  // Deep link: /submissions?submission=<id> opens that row's detail — the link
+  // a Teams "provider availability" message carries. Once, when the list loads.
+  const deepLinkDone = useRef(false);
+  useEffect(() => {
+    if (deepLinkDone.current || !data) return;
+    deepLinkDone.current = true;
+    const wanted = Number(new URLSearchParams(window.location.search).get("submission"));
+    if (!Number.isInteger(wanted) || wanted <= 0) return;
+    const hit = data.submissions.find((sub) => sub.id === wanted);
+    if (hit) setSelectedSubmission(hit);
+  }, [data]);
   const sourceRows = surveysOnly ? surveyData?.submissions ?? [] : allSubmissions;
   const states = matchData?.states ?? {};
   const counts = matchData?.counts;
