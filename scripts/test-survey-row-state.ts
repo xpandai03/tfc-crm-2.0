@@ -44,6 +44,10 @@ eq("an attach in progress is not 'filed'", surveyRowState(matched, running)?.kin
 eq("not yet matched keeps its own chip", surveyRowState(undefined, undefined), null);
 eq("matched to no contact keeps its own chip", surveyRowState(noContact, undefined), null);
 eq("the date is the Mountain-time day (04:01Z Oct 15 = Oct 14 MT)", filedDate("2026-10-15T04:01:10Z"), "Oct 14");
+// /api/survey/attach/states sends Date.toString() text, not ISO (prod runs in UTC).
+eq("the API's Date.toString() form parses (UTC server)",
+  filedDate("Thu Oct 15 2026 09:31:15 GMT+0000 (Coordinated Universal Time)"), "Oct 15");
+eq("…and from a server in another zone", filedDate("Wed Oct 14 2026 21:01:10 GMT-0700 (Pacific Daylight Time)"), "Oct 14");
 eq("an unreadable date drops the date, not the state", surveyRowState(matched, { ...nightly, finishedAt: "x", startedAt: "y" })?.text, "Filed to chart");
 
 console.log("\n[3] Wired; filters and counts unchanged");
