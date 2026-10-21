@@ -10,9 +10,9 @@
  * CORS on this app is wildcard-open (server/index.ts:45-54), so it is readable
  * from any origin.
  *
- * So this selects four columns (survey_locations only to expand the list) and
- * nothing else, with its own SQL rather than
- * a projection over the staff query — a later column added to CrmProvider then
+ * So this selects five columns (survey_locations only to expand the list,
+ * show_on_survey only to drop hidden providers) and nothing else, with its own
+ * SQL rather than a projection over the staff query — a later column added to CrmProvider then
  * cannot leak here by inheritance.
  */
 
@@ -28,18 +28,22 @@ export interface PublicProviderEntry {
 }
 
 /**
- * Active providers, name-ordered — the same ordering the TherapyNotes form
- * used, so the list a client sees is in the order the practice expects.
+ * Active providers shown on the survey, name-ordered — the same ordering the
+ * TherapyNotes form used, so the list a client sees is in the order the practice expects.
  *
  * ONE ENTRY PER SURVEY OFFICE (shared/survey-locations.ts). A therapist seen at
  * two offices is offered twice, "Name (ABQ)" and "Name (LL)", so the stored
  * answer says which office the client saw them at. Everyone else is offered
  * once, under survey_locations if set, else under location — unchanged.
+ *
+ * "Show on survey" off (crm_providers.show_on_survey = false) drops the provider
+ * from both forms, both languages: they all read this one list. The provider
+ * stays active everywhere else.
  */
 export async function getPublicProviderRoster(): Promise<PublicProviderEntry[]> {
   const pool = getPool();
   const result = await pool.query(`
-    SELECT name, credentials, location, survey_locations
+    SELECT name, credentials, location, survey_locations, show_on_survey
     FROM crm_providers
     WHERE is_active = true
     ORDER BY name ASC
@@ -53,12 +57,15 @@ export interface ProviderRosterRow {
   credentials: string | null;
   location: string | null;
   survey_locations: string[] | null;
+  /** false = hidden from the survey. Absent/NULL reads as shown. */
+  show_on_survey?: boolean | null;
 }
 
-/** The pure half: provider rows → dropdown entries, one per survey office. */
+/** The pure half: provider rows → dropdown entries, one per survey office; hidden providers skipped. */
 export function rosterEntriesFromRows(rows: ProviderRosterRow[]): PublicProviderEntry[] {
   const out: PublicProviderEntry[] = [];
   for (const row of rows) {
+    if (row.show_on_survey === false) continue;
     const name = (row.name ?? "").trim();
     if (name.length === 0) continue;
     const credentials = (row.credentials ?? "").trim();

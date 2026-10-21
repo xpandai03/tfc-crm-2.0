@@ -29,6 +29,7 @@ function getEventIcon(type: string) {
     case "contact_updated":
     case "survey_relabelled":
     case "provider_survey_offices_set":
+    case "provider_survey_visibility_set":
       return <Pencil className="h-4 w-4 text-purple-500" />;
     case "document_uploaded":
       return <FileText className="h-4 w-4 text-sky-600" />;

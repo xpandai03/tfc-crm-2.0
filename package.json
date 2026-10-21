@@ -60,6 +60,8 @@
     "test:snapshot": "tsx scripts/test-survey-snapshot.ts",
     "test:survey-corp-labels-db": "tsx --tsconfig tsconfig.test.json scripts/test-survey-corp-labels-db.ts",
     "test:survey-locations": "tsx --tsconfig tsconfig.test.json scripts/test-survey-locations.ts",
+    "test:survey-visibility": "tsx --tsconfig tsconfig.test.json scripts/test-survey-visibility.ts",
+    "test:survey-visibility-db": "tsx --tsconfig tsconfig.test.json scripts/test-survey-visibility-db.ts",
     "test:attach-review": "tsx scripts/test-attach-review-and-pull-health.ts",
     "test:intake": "tsx scripts/test-intake-rfs.ts",
     "test:referral-agreement": "tsx --tsconfig tsconfig.test.json scripts/test-referral-count-agreement.ts",

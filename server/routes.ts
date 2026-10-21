@@ -3645,6 +3645,7 @@ export async function registerRoutes(
             credentials: cp.credentials,
             location: cp.location,
             surveyLocations: cp.surveyLocations ?? [],
+            showOnSurvey: cp.showOnSurvey,
             email: cp.email,
             ageGroups: crmAgeGroups,
             notes: cp.notes,
@@ -3861,9 +3862,17 @@ export async function registerRoutes(
         surveyLocations = Array.from(new Set(raw.map((c: string) => c.trim().toUpperCase())));
       }
 
+      // Show on survey: a plain boolean. False hides the provider from the client
+      // survey and its reports only (server/survey/roster.ts, aggregate.ts).
+      const showOnSurvey = req.body.showOnSurvey;
+      if (showOnSurvey !== undefined && typeof showOnSurvey !== "boolean") {
+        return res.status(400).json({ error: "showOnSurvey must be true or false" });
+      }
+
       // Diff fields to know what changed
       const fieldsUpdated: string[] = [];
       if (surveyLocations !== undefined && JSON.stringify(surveyLocations) !== JSON.stringify(existing.surveyLocations ?? [])) fieldsUpdated.push("survey locations");
+      if (showOnSurvey !== undefined && showOnSurvey !== existing.showOnSurvey) fieldsUpdated.push(showOnSurvey ? "shown on survey" : "hidden from survey");
       if (name !== undefined && name.trim() !== existing.name) fieldsUpdated.push("name");
       if (credentials !== undefined && credentials.trim() !== existing.credentials) fieldsUpdated.push("credentials");
       if (location !== undefined && location.trim() !== existing.location) fieldsUpdated.push("location");
@@ -3878,6 +3887,7 @@ export async function registerRoutes(
         credentials,
         location,
         surveyLocations,
+        showOnSurvey,
         email,
         specialties,
         ageGroups,
