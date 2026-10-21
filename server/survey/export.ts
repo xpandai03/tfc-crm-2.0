@@ -125,6 +125,7 @@ export async function loadSurveyPeriodData(
     office: p.location ?? "",
     surveyLocations: p.surveyLocations ?? null,
     isActive: p.isActive,
+    showOnSurvey: p.showOnSurvey,
   }));
 
   const submissions: SubmissionInput[] = rows.map((r) => ({

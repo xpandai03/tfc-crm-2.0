@@ -397,6 +397,9 @@ function resolveBuildInfo(): { commit: string; source: string } {
     // migrations/backfill-plotner-ll.sql): her offices -> {LL} once, then her
     // ABQ-labelled surveys -> LL while that holds. Never fatal to boot.
     await (await import("./survey/plotner-ll")).applyPlotnerLosLunas();
+    // Angelica Villicana off the client survey, once (server/survey/villicana-hidden.ts,
+    // migrations/add-provider-show-on-survey.sql). Never fatal to boot.
+    console.log(`[survey-visibility] Angelica Villicana one-time hide: ${await (await import("./survey/villicana-hidden")).applyVillicanaHidden()}`);
     // Three strikes applies at once to surveys already refused nightly
     // (server/survey/attach-strikes.ts). Never fatal to boot.
     void import("./survey/attach-strikes").then((m) => m.sweepStrikes()).catch((e) =>

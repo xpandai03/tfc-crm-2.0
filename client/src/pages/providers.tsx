@@ -92,6 +92,8 @@ interface Provider {
   crmId?: number;
   /** CRM providers only: survey offices (shared/survey-locations.ts). [] = same as location. */
   surveyLocations?: string[];
+  /** CRM providers only: offered on the client survey. Absent = shown. */
+  showOnSurvey?: boolean;
   email?: string | null;
   specialties?: string[];
   crmAgeGroups?: string[];
@@ -739,6 +741,8 @@ interface EditFormState {
   location: string;
   /** Survey offices; [] = same as location. CRM providers only. */
   surveyLocations: string[];
+  /** Offered on the client survey. CRM providers only. */
+  showOnSurvey: boolean;
   email: string;
   // Age-group capabilities: { "Adults (18+)": { "Anxiety": "x", "Trauma": "x - Slow" }, ... }
   ageGroupCaps: Record<string, Record<string, CapState>>;
@@ -756,7 +760,7 @@ function buildInitialState(provider: Provider | null): EditFormState {
       ageGroupCaps[group] = {};
       for (const s of specs) ageGroupCaps[group][s] = "";
     }
-    return { name: "", credentials: "", location: "", surveyLocations: [], email: "", ageGroupCaps, selectedInsurances: new Set(), notes: "" };
+    return { name: "", credentials: "", location: "", surveyLocations: [], showOnSurvey: true, email: "", ageGroupCaps, selectedInsurances: new Set(), notes: "" };
   }
 
   // Build caps from provider's existing ageGroups data. The API now returns
@@ -796,6 +800,7 @@ function buildInitialState(provider: Provider | null): EditFormState {
     credentials: provider.credentials || "",
     location: provider.location || "",
     surveyLocations: provider.surveyLocations ?? [],
+    showOnSurvey: provider.showOnSurvey !== false,
     email: provider.email || "",
     ageGroupCaps,
     selectedInsurances: insuranceSet,
@@ -931,6 +936,7 @@ function ProviderFormModal({
             credentials: state.credentials.trim(),
             location: state.location.trim(),
             surveyLocations: state.surveyLocations,
+            showOnSurvey: state.showOnSurvey,
             email: state.email.trim(),
             specialties: uniqueSpecs,
             // Send the real per-skill matrix (x / x-Slow), mirroring the roster
@@ -1146,6 +1152,17 @@ function ProviderFormModal({
                 </div>
                 <p className="text-[11px] text-muted-foreground mt-1">
                   Offered on the client survey once per office ticked. None ticked = same as Location.
+                </p>
+                <label className="flex items-center gap-1.5 text-sm cursor-pointer mt-2">
+                  <Checkbox
+                    checked={state.showOnSurvey}
+                    onCheckedChange={(on) => setState(p => ({ ...p, showOnSurvey: on === true }))}
+                    data-testid="show-on-survey"
+                  />
+                  Show on survey
+                </label>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Unticked = not offered on the client survey and left out of survey reports, except for periods that already have their surveys. Nothing else changes.
                 </p>
               </div>
             )}

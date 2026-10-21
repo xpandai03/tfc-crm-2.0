@@ -177,6 +177,11 @@ export interface RosterEntry {
   /** crm_providers.survey_locations. NULL/[] = same as office. */
   surveyLocations?: string[] | null;
   isActive: boolean;
+  /**
+   * crm_providers.show_on_survey. false = no empty row or tab: the provider
+   * appears only in a period that has their surveys. Absent = shown.
+   */
+  showOnSurvey?: boolean;
 }
 
 /** A stored survey row, narrowed to what this reads. */
@@ -318,7 +323,10 @@ export interface SurveyAggregate {
   submissionsInPeriod: number;
   /** Office buckets present, in template order, unknown last. */
   offices: string[];
-  /** One per ACTIVE provider, always — including those with nothing. */
+  /**
+   * One per ACTIVE provider, always — including those with nothing — except a
+   * provider hidden from the survey, who appears only with surveys in period.
+   */
   providers: ProviderAggregate[];
   /** Providers named in submissions who are not on the active roster. */
   departed: ProviderAggregate[];
@@ -427,7 +435,11 @@ export function aggregateSurveys(input: AggregateInput): SurveyAggregate {
 
   // One bucket per survey office, so a provider offered at two offices shows
   // two rows (and two tabs) even in a period where one of them has nothing.
-  input.roster.filter((p) => p.isActive).forEach((p) => {
+  //
+  // Hidden from the survey ("Show on survey" off) = no empty bucket. Their
+  // surveys in this period still open one below, as active, so a period that
+  // has them keeps their row, tab and counts.
+  input.roster.filter((p) => p.isActive && p.showOnSurvey !== false).forEach((p) => {
     const offices = surveyOfficesFor(p.office, p.surveyLocations);
     (offices.length > 0 ? offices : [UNKNOWN_OFFICE]).forEach((office) => {
       ensureProvider(bucketKey(p, office), {

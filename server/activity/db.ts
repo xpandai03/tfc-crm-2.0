@@ -70,7 +70,10 @@ export type ActivityType =
   | "survey_relabelled"
   // A provider's survey office set changed by a one-time migration (Amanda
   // Plotner -> {LL}, 2026-10-15). Metadata: from, to, reason. Staff names only.
-  | "provider_survey_offices_set";
+  | "provider_survey_offices_set"
+  // A provider's "Show on survey" flag changed by a one-time migration (Angelica
+  // Villicana hidden, 2026-10-21). Metadata: from, to, reason. Staff names only.
+  | "provider_survey_visibility_set";
 
 export interface LogActivityParams {
   type: ActivityType;
@@ -652,6 +655,9 @@ function formatActivitySummary(
       const list = (v: unknown) => (Array.isArray(v) && v.length ? v.join(", ") : "none");
       return `${entityName || "A provider"}'s survey offices set from ${list(metadata.from)} to ${list(metadata.to)}`;
     }
+
+    case "provider_survey_visibility_set":
+      return `${entityName || "A provider"} ${metadata.to === false ? "hidden from" : "shown on"} the client survey`;
 
     case "report_exported": {
       // Referral report builder — PHI-identified export audit entry. No PHI in
