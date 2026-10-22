@@ -45,7 +45,7 @@ import {
 import { getSubmissionById, insertSubmission } from "../sync/db";
 import { emitNotificationEvent } from "../notifications/emit";
 import { logActivity } from "../activity/db";
-import { getPublicProviderRoster } from "./roster";
+import { getPublicProviderRoster, therapistHiddenFromSurvey } from "./roster";
 import {
   SURVEY_MAX_BODY_BYTES,
   buildSurveyPayload,
@@ -296,6 +296,18 @@ export function registerSurveyPublicRoutes(app: Express): void {
       if (identity) {
         console.warn(`[survey] REJECTED: identity field failed validation (${identity.field})`);
         return res.status(400).json({ field: identity.field, error: identity.message });
+      }
+
+      // A provider hidden from the survey after this form was loaded: the tab
+      // still offers them and nothing reloads the list. Refuse, so the client
+      // reloads and picks again from today's list (./roster.ts). No name in
+      // the log line; the provider is staff, but the line stays generic.
+      if (await therapistHiddenFromSurvey((input.answers as Record<string, unknown>).therapist as string | undefined)) {
+        console.warn("[survey] REJECTED: therapist hidden from the survey (stale form)");
+        return res.status(409).json({
+          field: "therapist",
+          error: "The therapist you picked is no longer on this form. Please reload the page and pick your therapist again.",
+        });
       }
 
       // Rate limit is checked AFTER validation so a malformed request cannot

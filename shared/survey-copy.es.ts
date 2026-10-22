@@ -365,6 +365,8 @@ export const MESSAGE_COPY: Record<string, string> = {
     "Este formulario ha estado abierto demasiado tiempo. Por favor, vuelva a cargar la página y comience de nuevo.",
   "We have received a lot of responses from this network. Please try again later.":
     "Hemos recibido muchas respuestas desde esta red. Por favor, inténtelo más tarde.",
+  "The therapist you picked is no longer on this form. Please reload the page and pick your therapist again.":
+    "El terapeuta que eligió ya no está en este formulario. Por favor, vuelva a cargar la página y elija a su terapeuta de nuevo.",
   "We could not save your response. Please try again.":
     "No pudimos guardar su respuesta. Por favor, inténtelo de nuevo.",
   "We could not save your response just now. Please try again.":

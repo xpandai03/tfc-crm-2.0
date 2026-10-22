@@ -62,6 +62,7 @@
     "test:survey-locations": "tsx --tsconfig tsconfig.test.json scripts/test-survey-locations.ts",
     "test:survey-visibility": "tsx --tsconfig tsconfig.test.json scripts/test-survey-visibility.ts",
     "test:survey-visibility-db": "tsx --tsconfig tsconfig.test.json scripts/test-survey-visibility-db.ts",
+    "test:survey-change-therapist-db": "tsx --tsconfig tsconfig.test.json scripts/test-survey-change-therapist-db.ts",
     "test:attach-review": "tsx scripts/test-attach-review-and-pull-health.ts",
     "test:intake": "tsx scripts/test-intake-rfs.ts",
     "test:referral-agreement": "tsx --tsconfig tsconfig.test.json scripts/test-referral-count-agreement.ts",
