@@ -6584,6 +6584,45 @@ export async function registerRoutes(
     }
   });
 
+  // Change the therapist on a survey (2026-10-22). Any signed-in staff member,
+  // as for delete above. Only providers who are active and shown on the
+  // survey are offered or accepted; one survey_relabelled activity row per
+  // change (server/survey/relabel.ts). Nothing changes in TherapyNotes.
+  app.get("/api/survey/therapist-options", async (req: any, res) => {
+    if (!req.user?.email) return res.status(401).json({ error: "Sign in to change a survey." });
+    try {
+      const { getTherapistOptions } = await import("./survey/relabel");
+      return res.json({ options: await getTherapistOptions() });
+    } catch (error) {
+      console.error("[survey] therapist options failed:", error instanceof Error ? error.message : "unknown");
+      return res.status(500).json({ error: "Could not load the therapist list." });
+    }
+  });
+
+  app.post("/api/survey/submissions/:submissionId(\\d+)/therapist", async (req: any, res) => {
+    const submissionId = parseInt(req.params.submissionId, 10);
+    const actorEmail = (req.user?.email as string) || "";
+    if (!actorEmail) return res.status(401).json({ error: "Sign in to change a survey." });
+    const { to, from } = req.body ?? {};
+    if (typeof to !== "string" || to.trim() === "" || (from !== null && typeof from !== "string")) {
+      return res.status(400).json({ error: "Pick a therapist from the list." });
+    }
+    try {
+      const { relabelSurveyTherapist } = await import("./survey/relabel");
+      const result = await relabelSurveyTherapist({ submissionId, toLabel: to, expectedFrom: from, actor: actorEmail });
+      if (!result.ok) {
+        const status = result.code === "not_found" ? 404 : result.code === "label_changed" ? 409 : 400;
+        return res.status(status).json({ error: result.message, code: result.code });
+      }
+      console.log(`[survey] therapist changed id=${submissionId} provider=${result.providerId}`);
+      return res.json(result);
+    } catch (error) {
+      console.error(`[survey] therapist change failed for id=${submissionId}:`,
+        error instanceof Error ? error.message : "unknown");
+      return res.status(500).json({ error: "The therapist could not be changed." });
+    }
+  });
+
   // Unified form ingestion — any form can POST here
   app.post("/api/submissions", async (req, res) => {
     try {

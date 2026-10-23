@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, ExternalLink, Code2, FileText, Inbox, FileUp, Download, UserCheck, UserSearch, UserX, RefreshCw, Upload, CheckCircle2, AlertTriangle, Trash2 } from "lucide-react";
+import { Loader2, ExternalLink, Code2, FileText, Inbox, FileUp, Download, UserCheck, UserSearch, UserX, RefreshCw, Upload, CheckCircle2, AlertTriangle, Trash2, UserCog } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,6 +27,7 @@ import {
 import { SurveyMatchReviewDialog } from "@/components/survey-match-review";
 import { SurveyExportDialog } from "@/components/survey-export-dialog";
 import { SurveySnapshot } from "@/components/survey-snapshot";
+import { SurveyChangeTherapistDialog, type ChangeTherapistTarget } from "@/components/survey-change-therapist";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessReferralUpload } from "@shared/access-control";
@@ -506,6 +507,8 @@ export default function Submissions() {
   const [reviewingId, setReviewingId] = useState<number | null>(null);
   /** The survey awaiting a delete confirmation. */
   const [deleteTarget, setDeleteTarget] = useState<FormSubmission | null>(null);
+  /** The survey whose therapist is being changed. */
+  const [therapistTarget, setTherapistTarget] = useState<ChangeTherapistTarget | null>(null);
   const [matchFilter, setMatchFilter] = useState<MatchFilter>("all");
   const [exportOpen, setExportOpen] = useState(false);
   const { toast } = useToast();
@@ -948,6 +951,28 @@ export default function Submissions() {
                           </Button>
                         </a>
                       )}
+                      {/* SURVEY ROWS ONLY: move the survey to the therapist the
+                          client meant. Confirmed in a dialog; nothing changes in
+                          TherapyNotes. */}
+                      {isSurveySubmission(sub) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => {
+                            const t = ((sub.payload ?? {}) as { answers?: { therapist?: unknown } }).answers?.therapist;
+                            setTherapistTarget({
+                              id: sub.id,
+                              current: typeof t === "string" && t.trim() ? t : null,
+                              filed: attachFor(sub.id)?.status === "attached",
+                            });
+                          }}
+                          data-testid={`button-change-therapist-${sub.id}`}
+                        >
+                          <UserCog className="h-3 w-3 mr-1" />
+                          Change therapist
+                        </Button>
+                      )}
                       {/* SURVEY ROWS ONLY: an intake submission is never deleted
                           from here. Confirmed in a dialog that names the row. */}
                       {isSurveySubmission(sub) && (
@@ -1029,6 +1054,8 @@ export default function Submissions() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <SurveyChangeTherapistDialog target={therapistTarget} onClose={() => setTherapistTarget(null)} />
 
       {/* Survey workbook export — range picker and download. */}
       <SurveyExportDialog open={exportOpen} onOpenChange={setExportOpen} />

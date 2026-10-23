@@ -78,3 +78,28 @@ export function rosterEntriesFromRows(rows: ProviderRosterRow[]): PublicProvider
   }
   return out;
 }
+
+/**
+ * The stale-tab guard (2026-10-22). A form loaded before a provider was hidden
+ * still offers them, and nothing on the client reloads the list. So a
+ * submission naming a provider is refused when every ACTIVE provider of that
+ * name is hidden from the survey. A name with no active provider at all (a
+ * departure, a typo) is left alone, as before: that is the review queue's job.
+ *
+ * Pure half: the matching rows' flags → hidden or not.
+ */
+export function isHiddenOnSurvey(rows: Array<{ show_on_survey: boolean | null }>): boolean {
+  return rows.length > 0 && rows.every((r) => r.show_on_survey === false);
+}
+
+/** True when the therapist answer names a provider hidden from the survey. */
+export async function therapistHiddenFromSurvey(label: string | null | undefined): Promise<boolean> {
+  const name = (label ?? "").replace(/\s*\([^()]*\)\s*$/, "").trim().replace(/\s+/g, " ").toLowerCase();
+  if (name === "") return false;
+  const { rows } = await getPool().query(
+    `SELECT show_on_survey FROM crm_providers
+      WHERE is_active = true AND lower(regexp_replace(trim(name), '\\s+', ' ', 'g')) = $1`,
+    [name],
+  );
+  return isHiddenOnSurvey(rows);
+}
